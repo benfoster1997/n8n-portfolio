@@ -1,0 +1,267 @@
+{
+  "id": "portfolioInvoice1",
+  "name": "Invoice & Receipt → Structured Data",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "a1000000-0000-4000-8000-000000000001",
+      "name": "Run Demo",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [-220, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Three deliberately messy supplier documents.\n// Real inputs arrive from Gmail attachments, a Drive folder or a webhook —\n// this node is swapped for that trigger at deployment. Kept inline so the\n// workflow runs end-to-end with no credentials beyond the model.\n\nconst samples = [\n  {\n    source: 'email:accounts@northgate-supplies.co.uk',\n    invoiceText: `NORTHGATE SUPPLIES LTD\\n17 Bramble Way, Colchester, CO2 8RT\\nVAT Reg: GB 412 8876 21\\n\\nINVOICE  NG-2026-0417\\nDate: 14/07/2026\\nDue: 30 days\\n\\nQty  Description                  Unit     Amount\\n12   A4 copier paper (box)        4.75     57.00\\n3    Toner cartridge TN-247BK    68.40    205.20\\n1    Delivery                     6.50      6.50\\n\\nSubtotal        268.70\\nVAT @ 20%        53.74\\nTOTAL DUE       322.44 GBP`\n  },\n  {\n    source: 'upload:receipt_scan_0912.jpg',\n    invoiceText: `Cafe Rosetta\\n88 High Street, Chelmsford\\n\\n09 Jul 2026   14:32\\n\\n2x Flat white          6.40\\n1x Toasted sandwich    5.95\\n\\nTotal            12.35\\nIncl VAT          2.06\\nCARD ****4417`\n  },\n  {\n    source: 'email:billing@meridian-cloud.io',\n    invoiceText: `Meridian Cloud Services\\nInvoice MER-88213\\nIssued 1 July 2026\\n\\nPlatform subscription, July 2026 ......... 240.00\\nOverage (18 GB @ 0.40) ....................  7.20\\n\\nNet 247.20\\nVAT 20% 49.44\\nGross 296.64\\n\\nCurrency: EUR\\nPaid by direct debit`\n  }\n];\n\nreturn samples.map(s => ({ json: s }));"
+      },
+      "id": "a1000000-0000-4000-8000-000000000002",
+      "name": "Load Sample Documents",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {
+        "text": "={{ $json.invoiceText }}",
+        "schemaType": "fromAttributes",
+        "attributes": {
+          "attributes": [
+            {
+              "name": "supplier_name",
+              "type": "string",
+              "description": "The trading name of the business that issued the document. Not the customer.",
+              "required": true
+            },
+            {
+              "name": "document_reference",
+              "type": "string",
+              "description": "Invoice or receipt number. If the document has no reference at all, return an empty string.",
+              "required": false
+            },
+            {
+              "name": "issue_date",
+              "type": "string",
+              "description": "The date the document was issued, exactly as written on the document. Do not reformat it.",
+              "required": true
+            },
+            {
+              "name": "currency",
+              "type": "string",
+              "description": "Three-letter ISO currency code. Infer from the symbol or country if not stated explicitly.",
+              "required": false
+            },
+            {
+              "name": "net_amount",
+              "type": "number",
+              "description": "Total excluding VAT. If only a gross total and a VAT figure are shown, subtract to get this.",
+              "required": false
+            },
+            {
+              "name": "vat_amount",
+              "type": "number",
+              "description": "The VAT or tax amount. Return 0 if the document shows no VAT.",
+              "required": false
+            },
+            {
+              "name": "gross_amount",
+              "type": "number",
+              "description": "The total actually payable, including VAT.",
+              "required": true
+            }
+          ]
+        },
+        "options": {
+          "systemPromptTemplate": "You extract accounting fields from supplier invoices and receipts.\n\nRules:\n- Return only what is present on the document. Never invent a value to fill a field.\n- Amounts are numbers with no currency symbols, no thousands separators.\n- If a field is genuinely absent, return an empty string for text or 0 for numbers. Do not guess.\n- The supplier is whoever issued the document, never the customer being billed."
+        }
+      },
+      "id": "a1000000-0000-4000-8000-000000000003",
+      "name": "Extract Fields",
+      "type": "@n8n/n8n-nodes-langchain.informationExtractor",
+      "typeVersion": 1.2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-2.5-flash",
+        "options": {
+          "temperature": 0
+        }
+      },
+      "id": "a1000000-0000-4000-8000-000000000004",
+      "name": "Gemini 2.5 Flash",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1.1,
+      "position": [280, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Deterministic validation. The model reads the document; this node decides\n// whether a human needs to look at it. Arithmetic is never left to the model.\n\nconst TOLERANCE = 0.02; // pennies of rounding drift we accept\n\nfunction toIsoDate(raw) {\n  if (!raw) return null;\n  const s = String(raw).trim();\n\n  // 14/07/2026 or 14-07-26  (UK order: day first)\n  const numeric = s.match(/^(\\d{1,2})[\\/\\-.](\\d{1,2})[\\/\\-.](\\d{2,4})$/);\n  if (numeric) {\n    let [, d, m, y] = numeric;\n    if (y.length === 2) y = '20' + y;\n    const iso = `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;\n    return Number.isNaN(Date.parse(iso)) ? null : iso;\n  }\n\n  // 09 Jul 2026 / 1 July 2026\n  // Formatted from LOCAL date parts, never toISOString(): under BST a date\n  // parsed as local midnight converts back to 23:00 the previous day in UTC,\n  // which silently books an invoice into the wrong period.\n  const parsed = new Date(s);\n  if (!Number.isNaN(parsed.getTime())) {\n    const y = parsed.getFullYear();\n    const mo = String(parsed.getMonth() + 1).padStart(2, '0');\n    const day = String(parsed.getDate()).padStart(2, '0');\n    return `${y}-${mo}-${day}`;\n  }\n\n  return null;\n}\n\nconst out = [];\n\nfor (const item of $input.all()) {\n  const d = item.json;\n  const reasons = [];\n\n  const net = Number(d.net_amount) || 0;\n  const vat = Number(d.vat_amount) || 0;\n  const gross = Number(d.gross_amount) || 0;\n\n  // 1. Does the arithmetic hold?\n  if (gross > 0 && net > 0 && Math.abs(net + vat - gross) > TOLERANCE) {\n    reasons.push(`Totals do not reconcile: ${net.toFixed(2)} + ${vat.toFixed(2)} != ${gross.toFixed(2)}`);\n  }\n\n  // 2. Reconstruct net where the document only showed gross and VAT.\n  let netFinal = net;\n  if (net === 0 && gross > 0) {\n    netFinal = Number((gross - vat).toFixed(2));\n    reasons.push('Net not stated on document; derived as gross minus VAT');\n  }\n\n  // 3. Is the VAT rate plausible for a UK document?\n  if (netFinal > 0 && vat > 0) {\n    const rate = (vat / netFinal) * 100;\n    const plausible = [0, 5, 20].some(r => Math.abs(rate - r) < 1.5);\n    if (!plausible) reasons.push(`Unusual VAT rate: ${rate.toFixed(1)}%`);\n  }\n\n  // 4. Date must be parseable into something an accounts system will accept.\n  const isoDate = toIsoDate(d.issue_date);\n  if (!isoDate) reasons.push(`Unreadable date: \"${d.issue_date}\"`);\n\n  // 5. Required fields actually present.\n  if (!d.supplier_name) reasons.push('Supplier name missing');\n  if (!gross) reasons.push('Gross total missing');\n  if (!d.document_reference) reasons.push('No document reference (common on till receipts)');\n\n  out.push({\n    json: {\n      supplier: d.supplier_name || null,\n      reference: d.document_reference || null,\n      date: isoDate,\n      date_raw: d.issue_date || null,\n      currency: (d.currency || 'GBP').toUpperCase(),\n      net: netFinal,\n      vat,\n      gross,\n      source: item.json.source ?? $('Load Sample Documents').all()[out.length]?.json?.source ?? null,\n      review_required: reasons.length > 0,\n      review_reasons: reasons\n    }\n  });\n}\n\nreturn out;"
+      },
+      "id": "a1000000-0000-4000-8000-000000000005",
+      "name": "Validate & Normalise",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [520, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-review",
+              "leftValue": "={{ $json.review_required }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a1000000-0000-4000-8000-000000000006",
+      "name": "Needs Human Review?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [760, 300]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "includeOtherFields": true,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "set-flag",
+              "name": "status",
+              "value": "needs_review",
+              "type": "string"
+            },
+            {
+              "id": "set-summary",
+              "name": "review_summary",
+              "value": "={{ $json.review_reasons.join('; ') }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a1000000-0000-4000-8000-000000000007",
+      "name": "Flag for Review",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1000, 200]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "includeOtherFields": true,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "set-ok",
+              "name": "status",
+              "value": "ready_to_export",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a1000000-0000-4000-8000-000000000008",
+      "name": "Ready to Export",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1000, 400]
+    },
+    {
+      "parameters": {
+        "content": "## 1. Input\n\nSample documents are inlined so the workflow runs with no credentials except the model.\n\nAt deployment this node is replaced by the client's real source — Gmail attachments, a Drive folder, or a webhook from their finance tool.",
+        "height": 260,
+        "width": 300,
+        "color": 7
+      },
+      "id": "a1000000-0000-4000-8000-000000000009",
+      "name": "Note Input",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-40, -40]
+    },
+    {
+      "parameters": {
+        "content": "## 2. Extraction\n\nThe model reads unstructured text and returns typed fields.\n\nTemperature is 0 and the prompt forbids inventing values — an absent field comes back empty rather than plausible-looking and wrong.",
+        "height": 260,
+        "width": 300,
+        "color": 4
+      },
+      "id": "a1000000-0000-4000-8000-000000000010",
+      "name": "Note Extraction",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [280, -40]
+    },
+    {
+      "parameters": {
+        "content": "## 3. Validation — the part that matters\n\nArithmetic is never left to the model. This node re-checks that net + VAT equals gross, derives net where only gross was shown, sanity-checks the VAT rate against UK bands, and normalises dates to ISO.\n\nAnything it cannot verify is flagged, not silently accepted.",
+        "height": 300,
+        "width": 340,
+        "color": 3
+      },
+      "id": "a1000000-0000-4000-8000-000000000011",
+      "name": "Note Validation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [600, -80]
+    },
+    {
+      "parameters": {
+        "content": "## 4. Two outcomes\n\nClean rows go straight to export. Anything doubtful is flagged with the specific reason, so a human checks three documents rather than three hundred.\n\nThat split is the whole value: the automation is trusted because it says when not to trust it.",
+        "height": 280,
+        "width": 320,
+        "color": 5
+      },
+      "id": "a1000000-0000-4000-8000-000000000012",
+      "name": "Note Output",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [980, -60]
+    }
+  ],
+  "connections": {
+    "Run Demo": {
+      "main": [[{ "node": "Load Sample Documents", "type": "main", "index": 0 }]]
+    },
+    "Load Sample Documents": {
+      "main": [[{ "node": "Extract Fields", "type": "main", "index": 0 }]]
+    },
+    "Extract Fields": {
+      "main": [[{ "node": "Validate & Normalise", "type": "main", "index": 0 }]]
+    },
+    "Gemini 2.5 Flash": {
+      "ai_languageModel": [[{ "node": "Extract Fields", "type": "ai_languageModel", "index": 0 }]]
+    },
+    "Validate & Normalise": {
+      "main": [[{ "node": "Needs Human Review?", "type": "main", "index": 0 }]]
+    },
+    "Needs Human Review?": {
+      "main": [
+        [{ "node": "Flag for Review", "type": "main", "index": 0 }],
+        [{ "node": "Ready to Export", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

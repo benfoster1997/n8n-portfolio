@@ -1,0 +1,366 @@
+{
+  "id": "portfolioTriage01",
+  "name": "Inbound Enquiry Triage & Reply Drafter",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "b2000000-0000-4000-8000-000000000001",
+      "name": "Run Demo",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [-260, 340]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Four enquiries of the kind a small service business actually receives.\n// In production this node is replaced by a Webhook (contact form) or a Gmail\n// trigger — everything downstream is unchanged.\n\nconst samples = [\n  {\n    received_at: '2026-07-28T09:14:00Z',\n    from: 'l.hartley@brightpath-dental.co.uk',\n    subject: 'Automating our appointment reminders',\n    enquiryText: `Hi,\\n\\nWe run three dental practices in Essex and we are still phoning patients to remind them about appointments. It is eating about 15 hours a week of reception time and we still get no-shows.\\n\\nWe use Dentally for bookings and Twilio for texts already. Is this something you could connect up so reminders go out automatically, with a confirm or reschedule reply?\\n\\nWe would want it live before the end of September. Budget is somewhere around 2,000 to 3,000 pounds if that is realistic.\\n\\nLouise Hartley\\nPractice Manager`\n  },\n  {\n    received_at: '2026-07-28T11:02:00Z',\n    from: 'ops@vantage-logistics.com',\n    subject: 'Re: workflow stopped last night',\n    enquiryText: `Morning — the stock sync you set up threw an error at about 23:40 and has not run since. Nothing has changed our end as far as I know. Can you take a look today? We are flying blind on stock levels until it is back.\\n\\nThanks, Dan`\n  },\n  {\n    received_at: '2026-07-28T11:40:00Z',\n    from: 'growth@leadrocket-outreach.biz',\n    subject: 'Quick question',\n    enquiryText: `Hi there,\\n\\nI came across your profile and wanted to reach out. We help agencies book 30-50 qualified calls per month on autopilot using our proven AI outreach system.\\n\\nWorth a quick 15 min chat this week?\\n\\nUnsubscribe here.`\n  },\n  {\n    received_at: '2026-07-28T14:26:00Z',\n    from: 'r.okafor@nimbus-talent.co.uk',\n    subject: 'Automation Engineer role — 65k, hybrid Cambridge',\n    enquiryText: `Hi,\\n\\nI am recruiting for an Automation Engineer position with a scale-up near Cambridge. Salary to 65k, hybrid three days on site. Your background looked like a strong fit.\\n\\nAre you open to a conversation?\\n\\nRachel Okafor, Nimbus Talent`\n  }\n];\n\nreturn samples.map(s => ({ json: s }));"
+      },
+      "id": "b2000000-0000-4000-8000-000000000002",
+      "name": "Load Sample Enquiries",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-40, 340]
+    },
+    {
+      "parameters": {
+        "inputText": "={{ $json.subject }}\n\n{{ $json.enquiryText }}",
+        "categories": {
+          "categories": [
+            {
+              "category": "new_project",
+              "description": "A prospective client describing work they want built or automated. Includes anyone asking about price, scope or availability for new work."
+            },
+            {
+              "category": "existing_client_support",
+              "description": "An existing client reporting that something already delivered has broken, stopped or needs changing."
+            },
+            {
+              "category": "sales_pitch_or_spam",
+              "description": "Unsolicited bulk outreach selling a service, lead generation, SEO or marketing. Not a genuine enquiry about the recipient's services."
+            },
+            {
+              "category": "recruitment",
+              "description": "A recruiter or employer offering a permanent or contract job rather than buying a service."
+            }
+          ]
+        },
+        "options": {
+          "fallback": "other",
+          "systemPromptTemplate": "Classify the enquiry by what the sender wants from the recipient. Judge intent, not tone or politeness — a well-written sales pitch is still a sales pitch, and a blunt one-line message from an existing client is still support."
+        }
+      },
+      "id": "b2000000-0000-4000-8000-000000000003",
+      "name": "Classify Intent",
+      "type": "@n8n/n8n-nodes-langchain.textClassifier",
+      "typeVersion": 1.1,
+      "position": [220, 340]
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-2.5-flash",
+        "options": {
+          "temperature": 0
+        }
+      },
+      "id": "b2000000-0000-4000-8000-000000000004",
+      "name": "Gemini 2.5 Flash",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1.1,
+      "position": [420, 780]
+    },
+    {
+      "parameters": {
+        "text": "={{ $json.subject }}\n\n{{ $json.enquiryText }}",
+        "schemaType": "fromAttributes",
+        "attributes": {
+          "attributes": [
+            {
+              "name": "contact_name",
+              "type": "string",
+              "description": "The sender's name as signed off. Empty string if not given.",
+              "required": false
+            },
+            {
+              "name": "organisation",
+              "type": "string",
+              "description": "The company or organisation the sender represents. Empty string if not stated.",
+              "required": false
+            },
+            {
+              "name": "problem_summary",
+              "type": "string",
+              "description": "One sentence, in plain English, describing the operational problem they want solved.",
+              "required": true
+            },
+            {
+              "name": "systems_mentioned",
+              "type": "string",
+              "description": "Comma-separated list of named software, tools or platforms mentioned. Empty string if none.",
+              "required": false
+            },
+            {
+              "name": "budget_stated",
+              "type": "number",
+              "description": "The budget figure in GBP if one is given. Use the lower end of any range. Return 0 if no budget is mentioned.",
+              "required": false
+            },
+            {
+              "name": "deadline_mentioned",
+              "type": "string",
+              "description": "Any date or timeframe the sender needs the work by, exactly as written. Empty string if none.",
+              "required": false
+            },
+            {
+              "name": "manual_hours_claimed",
+              "type": "number",
+              "description": "Hours per week of manual work the sender says the problem costs them. Return 0 if not stated.",
+              "required": false
+            }
+          ]
+        },
+        "options": {
+          "systemPromptTemplate": "Extract only what the sender actually wrote. Never infer a budget, a deadline or an hour count that is not stated — a wrong number here leads to a wrong quote."
+        }
+      },
+      "id": "b2000000-0000-4000-8000-000000000005",
+      "name": "Extract Details",
+      "type": "@n8n/n8n-nodes-langchain.informationExtractor",
+      "typeVersion": 1.2,
+      "position": [560, 140]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Deterministic prioritisation. The model reads and extracts; the ranking\n// rules live here in plain code so they are auditable and adjustable by the\n// client without touching a prompt.\n\nconst SCORING = {\n  budgetTiers: [\n    { min: 2000, points: 40, label: 'budget >= 2k' },\n    { min: 750,  points: 28, label: 'budget >= 750' },\n    { min: 1,    points: 15, label: 'budget stated' }\n  ],\n  painPerHour: 1.5,     // points per claimed manual hour per week\n  painCap: 25,\n  deadlinePoints: 15,\n  systemsPoints: 10,    // named tools => a concrete, scopeable integration\n  identifiedPoints: 5\n};\n\nconst out = [];\n\nfor (const item of $input.all()) {\n  const d = item.json;\n  const reasons = [];\n  let score = 0;\n\n  const budget = Number(d.budget_stated) || 0;\n  const tier = SCORING.budgetTiers.find(t => budget >= t.min);\n  if (tier) { score += tier.points; reasons.push(`${tier.label} (+${tier.points})`); }\n  else reasons.push('no budget stated (+0)');\n\n  const hours = Number(d.manual_hours_claimed) || 0;\n  if (hours > 0) {\n    const pts = Math.min(Math.round(hours * SCORING.painPerHour), SCORING.painCap);\n    score += pts;\n    reasons.push(`${hours}h/week manual pain (+${pts})`);\n  }\n\n  if (d.deadline_mentioned) {\n    score += SCORING.deadlinePoints;\n    reasons.push(`deadline \"${d.deadline_mentioned}\" (+${SCORING.deadlinePoints})`);\n  }\n\n  const systems = (d.systems_mentioned || '').split(',').map(s => s.trim()).filter(Boolean);\n  if (systems.length) {\n    score += SCORING.systemsPoints;\n    reasons.push(`${systems.length} named system(s) (+${SCORING.systemsPoints})`);\n  }\n\n  if (d.contact_name && d.organisation) {\n    score += SCORING.identifiedPoints;\n    reasons.push(`identified sender (+${SCORING.identifiedPoints})`);\n  }\n\n  const priority = score >= 70 ? 'A — reply today'\n                 : score >= 40 ? 'B — reply within 48h'\n                 : 'C — reply when convenient';\n\n  // Questions that must be answered before this can be quoted at a fixed price.\n  const blockers = [];\n  if (!budget) blockers.push('No budget indicated — ask for a range before scoping');\n  if (!systems.length) blockers.push('No systems named — cannot assess integration effort');\n  if (!d.deadline_mentioned) blockers.push('No deadline — confirm urgency');\n\n  out.push({\n    json: {\n      ...d,\n      systems_list: systems,\n      lead_score: score,\n      priority,\n      score_reasons: reasons,\n      scoping_blockers: blockers,\n      original_from: $('Load Sample Enquiries').item.json.from,\n      original_subject: $('Load Sample Enquiries').item.json.subject\n    }\n  });\n}\n\nreturn out;"
+      },
+      "id": "b2000000-0000-4000-8000-000000000006",
+      "name": "Score & Prioritise",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [800, 140]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Write a short reply to this enquiry, to be reviewed and sent by a freelance automation developer.\n\nWhat they wrote:\n---\n{{ $('Load Sample Enquiries').item.json.enquiryText }}\n---\n\nWhat was understood:\n- Problem: {{ $json.problem_summary }}\n- Systems named: {{ $json.systems_list.join(', ') || 'none named' }}\n- Budget stated: {{ $json.budget_stated ? '£' + $json.budget_stated : 'none stated' }}\n- Deadline: {{ $json.deadline_mentioned || 'none stated' }}\n- Still unknown: {{ $json.scoping_blockers.join('; ') || 'nothing material' }}\n\nRules for the reply:\n- 90 to 130 words. Plain English. No marketing language.\n- Open by restating their problem accurately, so they can see it was read properly.\n- Say concretely how the problem would be approached, referencing the systems they actually named.\n- Never claim past clients, past projects, years of experience, team size or results. There are none to cite. Write from capability, not history.\n- Never state a price, a delivery date or a guarantee.\n- End with exactly one question — the single unknown that most affects the quote.\n- Sign off as Ben. No job title.\n\nReturn only the reply text.",
+        "batching": {}
+      },
+      "id": "b2000000-0000-4000-8000-000000000007",
+      "name": "Draft Suggested Reply",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.7,
+      "position": [1040, 140]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "includeOtherFields": true,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "s-queue",
+              "name": "queue",
+              "value": "new_business — REVIEW AND SEND MANUALLY",
+              "type": "string"
+            },
+            {
+              "id": "s-draft",
+              "name": "draft_reply",
+              "value": "={{ $json.text }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "b2000000-0000-4000-8000-000000000008",
+      "name": "Queue for Human Review",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1280, 140]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "includeOtherFields": true,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "s-sup",
+              "name": "queue",
+              "value": "support — existing client, check SLA",
+              "type": "string"
+            },
+            {
+              "id": "s-sup-p",
+              "name": "priority",
+              "value": "A — reply today",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "b2000000-0000-4000-8000-000000000009",
+      "name": "Support Queue",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [560, 380]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "includeOtherFields": true,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "s-spam",
+              "name": "queue",
+              "value": "discard — bulk outreach, no action",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "b2000000-0000-4000-8000-000000000010",
+      "name": "Discard",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [560, 520]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "includeOtherFields": true,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "s-rec",
+              "name": "queue",
+              "value": "recruitment — no action unless actively looking",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "b2000000-0000-4000-8000-000000000011",
+      "name": "Recruitment",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [560, 660]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "includeOtherFields": true,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "s-other",
+              "name": "queue",
+              "value": "unclassified — read manually",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "b2000000-0000-4000-8000-000000000012",
+      "name": "Unclassified",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [560, 800]
+    },
+    {
+      "parameters": {
+        "content": "## 1. Intake\n\nSamples inline so the workflow runs with only a model credential.\n\nIn production this is a Webhook from the contact form, or a Gmail trigger on the inbox.",
+        "height": 240,
+        "width": 300,
+        "color": 7
+      },
+      "id": "b2000000-0000-4000-8000-000000000013",
+      "name": "Note Intake",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-80, 20]
+    },
+    {
+      "parameters": {
+        "content": "## 2. Classify by intent\n\nFive outputs. Only genuine new business goes down the expensive path — the other four are handled cheaply and never reach the model again.\n\nJudging intent rather than tone is what stops a polite sales pitch being treated as a lead.",
+        "height": 260,
+        "width": 320,
+        "color": 4
+      },
+      "id": "b2000000-0000-4000-8000-000000000014",
+      "name": "Note Classify",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [180, 20]
+    },
+    {
+      "parameters": {
+        "content": "## 3. Extract, then score in code\n\nThe model extracts only what was written — it is explicitly forbidden from inventing a budget or a deadline.\n\nRanking then happens in plain JavaScript, not in a prompt: auditable, adjustable by the client, and identical every run. It also lists what is still unknown, so nothing gets quoted blind.",
+        "height": 300,
+        "width": 360,
+        "color": 3
+      },
+      "id": "b2000000-0000-4000-8000-000000000015",
+      "name": "Note Score",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [620, -220]
+    },
+    {
+      "parameters": {
+        "content": "## 4. Draft — never send\n\nA reply is drafted and queued for a human. Nothing is sent automatically, and the prompt forbids claiming experience or quoting a price.\n\nThat boundary is deliberate. Auto-replying to prospects is how automation loses a client its reputation.",
+        "height": 280,
+        "width": 340,
+        "color": 5
+      },
+      "id": "b2000000-0000-4000-8000-000000000016",
+      "name": "Note Draft",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [1040, -200]
+    }
+  ],
+  "connections": {
+    "Run Demo": {
+      "main": [[{ "node": "Load Sample Enquiries", "type": "main", "index": 0 }]]
+    },
+    "Load Sample Enquiries": {
+      "main": [[{ "node": "Classify Intent", "type": "main", "index": 0 }]]
+    },
+    "Gemini 2.5 Flash": {
+      "ai_languageModel": [
+        [
+          { "node": "Classify Intent", "type": "ai_languageModel", "index": 0 },
+          { "node": "Extract Details", "type": "ai_languageModel", "index": 0 },
+          { "node": "Draft Suggested Reply", "type": "ai_languageModel", "index": 0 }
+        ]
+      ]
+    },
+    "Classify Intent": {
+      "main": [
+        [{ "node": "Extract Details", "type": "main", "index": 0 }],
+        [{ "node": "Support Queue", "type": "main", "index": 0 }],
+        [{ "node": "Discard", "type": "main", "index": 0 }],
+        [{ "node": "Recruitment", "type": "main", "index": 0 }],
+        [{ "node": "Unclassified", "type": "main", "index": 0 }]
+      ]
+    },
+    "Extract Details": {
+      "main": [[{ "node": "Score & Prioritise", "type": "main", "index": 0 }]]
+    },
+    "Score & Prioritise": {
+      "main": [[{ "node": "Draft Suggested Reply", "type": "main", "index": 0 }]]
+    },
+    "Draft Suggested Reply": {
+      "main": [[{ "node": "Queue for Human Review", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}
