@@ -40,12 +40,12 @@ an automation to cost a business more than it saves.
 
 **Requirements:** n8n (tested on 2.32.6, Node 22 LTS) and a Google AI Studio API key.
 The key is free and needs no card: <https://aistudio.google.com/apikey>. Both workflows use
-`gemini-2.5-flash` at temperature 0, and a full run of either costs nothing on the free tier.
+`gemini-3-flash-preview` at temperature 0, and a full run of either costs nothing on the free tier.
 
 1. Start n8n and open <http://localhost:5678>.
 2. **Credentials → Add credential → Google Gemini (PaLM) API**, paste the key, save.
 3. **Workflows → Import from File** and choose a `workflow.json`.
-4. Open the *Gemini 2.5 Flash* node and select the credential you just created.
+4. Open the *Gemini Chat Model* node and select the credential you just created.
 5. Click **Test workflow**.
 
 No other credentials are needed. Sample inputs are inlined in the first Code node of each

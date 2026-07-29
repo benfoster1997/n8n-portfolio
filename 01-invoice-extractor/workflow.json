@@ -8,7 +8,10 @@
       "name": "Run Demo",
       "type": "n8n-nodes-base.manualTrigger",
       "typeVersion": 1,
-      "position": [-220, 300]
+      "position": [
+        -220,
+        300
+      ]
     },
     {
       "parameters": {
@@ -18,7 +21,10 @@
       "name": "Load Sample Documents",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [0, 300]
+      "position": [
+        0,
+        300
+      ]
     },
     {
       "parameters": {
@@ -71,37 +77,53 @@
           ]
         },
         "options": {
-          "systemPromptTemplate": "You extract accounting fields from supplier invoices and receipts.\n\nRules:\n- Return only what is present on the document. Never invent a value to fill a field.\n- Amounts are numbers with no currency symbols, no thousands separators.\n- If a field is genuinely absent, return an empty string for text or 0 for numbers. Do not guess.\n- The supplier is whoever issued the document, never the customer being billed."
+          "systemPromptTemplate": "You extract accounting fields from supplier invoices and receipts.\n\nRules:\n- Return only what is present on the document. Never invent a value to fill a field.\n- Amounts are numbers with no currency symbols, no thousands separators.\n- If a field is genuinely absent, return an empty string for text or 0 for numbers. Do not guess.\n- The supplier is whoever issued the document, never the customer being billed.",
+          "batching": {
+            "batchSize": 1,
+            "delayBetweenBatches": 1500
+          }
         }
       },
       "id": "a1000000-0000-4000-8000-000000000003",
       "name": "Extract Fields",
       "type": "@n8n/n8n-nodes-langchain.informationExtractor",
       "typeVersion": 1.2,
-      "position": [240, 300]
+      "position": [
+        240,
+        300
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
     },
     {
       "parameters": {
-        "modelName": "models/gemini-2.5-flash",
+        "modelName": "models/gemini-3-flash-preview",
         "options": {
           "temperature": 0
         }
       },
       "id": "a1000000-0000-4000-8000-000000000004",
-      "name": "Gemini 2.5 Flash",
+      "name": "Gemini Chat Model",
       "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
       "typeVersion": 1.1,
-      "position": [280, 500]
+      "position": [
+        280,
+        500
+      ]
     },
     {
       "parameters": {
-        "jsCode": "// Deterministic validation. The model reads the document; this node decides\n// whether a human needs to look at it. Arithmetic is never left to the model.\n\nconst TOLERANCE = 0.02; // pennies of rounding drift we accept\n\nfunction toIsoDate(raw) {\n  if (!raw) return null;\n  const s = String(raw).trim();\n\n  // 14/07/2026 or 14-07-26  (UK order: day first)\n  const numeric = s.match(/^(\\d{1,2})[\\/\\-.](\\d{1,2})[\\/\\-.](\\d{2,4})$/);\n  if (numeric) {\n    let [, d, m, y] = numeric;\n    if (y.length === 2) y = '20' + y;\n    const iso = `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;\n    return Number.isNaN(Date.parse(iso)) ? null : iso;\n  }\n\n  // 09 Jul 2026 / 1 July 2026\n  // Formatted from LOCAL date parts, never toISOString(): under BST a date\n  // parsed as local midnight converts back to 23:00 the previous day in UTC,\n  // which silently books an invoice into the wrong period.\n  const parsed = new Date(s);\n  if (!Number.isNaN(parsed.getTime())) {\n    const y = parsed.getFullYear();\n    const mo = String(parsed.getMonth() + 1).padStart(2, '0');\n    const day = String(parsed.getDate()).padStart(2, '0');\n    return `${y}-${mo}-${day}`;\n  }\n\n  return null;\n}\n\nconst out = [];\n\nfor (const item of $input.all()) {\n  const d = item.json;\n  const reasons = [];\n\n  const net = Number(d.net_amount) || 0;\n  const vat = Number(d.vat_amount) || 0;\n  const gross = Number(d.gross_amount) || 0;\n\n  // 1. Does the arithmetic hold?\n  if (gross > 0 && net > 0 && Math.abs(net + vat - gross) > TOLERANCE) {\n    reasons.push(`Totals do not reconcile: ${net.toFixed(2)} + ${vat.toFixed(2)} != ${gross.toFixed(2)}`);\n  }\n\n  // 2. Reconstruct net where the document only showed gross and VAT.\n  let netFinal = net;\n  if (net === 0 && gross > 0) {\n    netFinal = Number((gross - vat).toFixed(2));\n    reasons.push('Net not stated on document; derived as gross minus VAT');\n  }\n\n  // 3. Is the VAT rate plausible for a UK document?\n  if (netFinal > 0 && vat > 0) {\n    const rate = (vat / netFinal) * 100;\n    const plausible = [0, 5, 20].some(r => Math.abs(rate - r) < 1.5);\n    if (!plausible) reasons.push(`Unusual VAT rate: ${rate.toFixed(1)}%`);\n  }\n\n  // 4. Date must be parseable into something an accounts system will accept.\n  const isoDate = toIsoDate(d.issue_date);\n  if (!isoDate) reasons.push(`Unreadable date: \"${d.issue_date}\"`);\n\n  // 5. Required fields actually present.\n  if (!d.supplier_name) reasons.push('Supplier name missing');\n  if (!gross) reasons.push('Gross total missing');\n  if (!d.document_reference) reasons.push('No document reference (common on till receipts)');\n\n  out.push({\n    json: {\n      supplier: d.supplier_name || null,\n      reference: d.document_reference || null,\n      date: isoDate,\n      date_raw: d.issue_date || null,\n      currency: (d.currency || 'GBP').toUpperCase(),\n      net: netFinal,\n      vat,\n      gross,\n      source: item.json.source ?? $('Load Sample Documents').all()[out.length]?.json?.source ?? null,\n      review_required: reasons.length > 0,\n      review_reasons: reasons\n    }\n  });\n}\n\nreturn out;"
+        "jsCode": "// Deterministic validation. The model reads the document; this node decides\n// whether a human needs to look at it. Arithmetic is never left to the model.\n\nconst TOLERANCE = 0.02; // pennies of rounding drift we accept\n\nfunction toIsoDate(raw) {\n  if (!raw) return null;\n  const s = String(raw).trim();\n\n  // 14/07/2026 or 14-07-26  (UK order: day first)\n  const numeric = s.match(/^(\\d{1,2})[\\/\\-.](\\d{1,2})[\\/\\-.](\\d{2,4})$/);\n  if (numeric) {\n    let [, d, m, y] = numeric;\n    if (y.length === 2) y = '20' + y;\n    const iso = `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;\n    return Number.isNaN(Date.parse(iso)) ? null : iso;\n  }\n\n  // 09 Jul 2026 / 1 July 2026\n  // Formatted from LOCAL date parts, never toISOString(): under BST a date\n  // parsed as local midnight converts back to 23:00 the previous day in UTC,\n  // which silently books an invoice into the wrong period.\n  const parsed = new Date(s);\n  if (!Number.isNaN(parsed.getTime())) {\n    const y = parsed.getFullYear();\n    const mo = String(parsed.getMonth() + 1).padStart(2, '0');\n    const day = String(parsed.getDate()).padStart(2, '0');\n    return `${y}-${mo}-${day}`;\n  }\n\n  return null;\n}\n\nconst out = [];\n\nfor (const item of $input.all()) {\n  // The Information Extractor nests its result under `output`. Accept either\n  // shape so this node also works when fed a flat object (e.g. from tests, or\n  // from a different extraction step).\n  const d = item.json.output ?? item.json;\n  const reasons = [];\n\n  const net = Number(d.net_amount) || 0;\n  const vat = Number(d.vat_amount) || 0;\n  const gross = Number(d.gross_amount) || 0;\n\n  // 1. Does the arithmetic hold?\n  if (gross > 0 && net > 0 && Math.abs(net + vat - gross) > TOLERANCE) {\n    reasons.push(`Totals do not reconcile: ${net.toFixed(2)} + ${vat.toFixed(2)} != ${gross.toFixed(2)}`);\n  }\n\n  // 2. Reconstruct net where the document only showed gross and VAT.\n  let netFinal = net;\n  if (net === 0 && gross > 0) {\n    netFinal = Number((gross - vat).toFixed(2));\n    reasons.push('Net not stated on document; derived as gross minus VAT');\n  }\n\n  // 3. Is the VAT rate plausible for a UK document?\n  if (netFinal > 0 && vat > 0) {\n    const rate = (vat / netFinal) * 100;\n    const plausible = [0, 5, 20].some(r => Math.abs(rate - r) < 1.5);\n    if (!plausible) reasons.push(`Unusual VAT rate: ${rate.toFixed(1)}%`);\n  }\n\n  // 4. Date must be parseable into something an accounts system will accept.\n  const isoDate = toIsoDate(d.issue_date);\n  if (!isoDate) reasons.push(`Unreadable date: \"${d.issue_date}\"`);\n\n  // 5. Required fields actually present.\n  if (!d.supplier_name) reasons.push('Supplier name missing');\n  if (!gross) reasons.push('Gross total missing');\n  if (!d.document_reference) reasons.push('No document reference (common on till receipts)');\n\n  out.push({\n    json: {\n      supplier: d.supplier_name || null,\n      reference: d.document_reference || null,\n      date: isoDate,\n      date_raw: d.issue_date || null,\n      currency: (d.currency || 'GBP').toUpperCase(),\n      net: netFinal,\n      vat,\n      gross,\n      source: item.json.source ?? $('Load Sample Documents').all()[out.length]?.json?.source ?? null,\n      review_required: reasons.length > 0,\n      review_reasons: reasons\n    }\n  });\n}\n\nreturn out;"
       },
       "id": "a1000000-0000-4000-8000-000000000005",
       "name": "Validate & Normalise",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [520, 300]
+      "position": [
+        520,
+        300
+      ]
     },
     {
       "parameters": {
@@ -132,7 +154,10 @@
       "name": "Needs Human Review?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
-      "position": [760, 300]
+      "position": [
+        760,
+        300
+      ]
     },
     {
       "parameters": {
@@ -160,7 +185,10 @@
       "name": "Flag for Review",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
-      "position": [1000, 200]
+      "position": [
+        1000,
+        200
+      ]
     },
     {
       "parameters": {
@@ -182,7 +210,10 @@
       "name": "Ready to Export",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
-      "position": [1000, 400]
+      "position": [
+        1000,
+        400
+      ]
     },
     {
       "parameters": {
@@ -195,7 +226,10 @@
       "name": "Note Input",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
-      "position": [-40, -40]
+      "position": [
+        -40,
+        -40
+      ]
     },
     {
       "parameters": {
@@ -208,7 +242,10 @@
       "name": "Note Extraction",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
-      "position": [280, -40]
+      "position": [
+        280,
+        -40
+      ]
     },
     {
       "parameters": {
@@ -221,7 +258,10 @@
       "name": "Note Validation",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
-      "position": [600, -80]
+      "position": [
+        600,
+        -80
+      ]
     },
     {
       "parameters": {
@@ -234,29 +274,84 @@
       "name": "Note Output",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
-      "position": [980, -60]
+      "position": [
+        980,
+        -60
+      ]
     }
   ],
   "connections": {
     "Run Demo": {
-      "main": [[{ "node": "Load Sample Documents", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Load Sample Documents",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Load Sample Documents": {
-      "main": [[{ "node": "Extract Fields", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Extract Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Extract Fields": {
-      "main": [[{ "node": "Validate & Normalise", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Validate & Normalise",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
-    "Gemini 2.5 Flash": {
-      "ai_languageModel": [[{ "node": "Extract Fields", "type": "ai_languageModel", "index": 0 }]]
+    "Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Extract Fields",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Validate & Normalise": {
-      "main": [[{ "node": "Needs Human Review?", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Needs Human Review?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Needs Human Review?": {
       "main": [
-        [{ "node": "Flag for Review", "type": "main", "index": 0 }],
-        [{ "node": "Ready to Export", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Flag for Review",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Ready to Export",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     }
   },

@@ -140,6 +140,27 @@ assert('missing supplier caught',
 check('date-first ambiguity resolved as UK (1 Feb, not 2 Jan)', broken.date, '2026-02-01');
 check('legitimate zero-VAT invoice is not flagged', zeroVat.review_required, false);
 
+// --- Shape handling --------------------------------------------------------
+// Regression: the Information Extractor nests its result under `output`.
+// Reading item.json directly returned undefined for every field, and the run
+// silently flagged all three documents as unreadable instead of extracting them.
+console.log('\n  extractor output shape:\n');
+
+const wrapped = runNode(validateCode, [{
+  json: {
+    output: {
+      supplier_name: 'Northgate Supplies Ltd', document_reference: 'NG-2026-0417',
+      issue_date: '14/07/2026', currency: 'GBP',
+      net_amount: 268.70, vat_amount: 53.74, gross_amount: 322.44,
+    },
+  },
+}], { 'Load Sample Documents': [] })[0].json;
+
+check('nested {output:{...}} is read correctly', wrapped.supplier, 'Northgate Supplies Ltd');
+check('nested payload passes validation', wrapped.review_required, false);
+check('nested amounts parsed', wrapped.gross, 322.44);
+check('flat payload still works', inv.supplier, 'Northgate Supplies Ltd');
+
 // ---------------------------------------------------------------------------
 console.log('\n02-enquiry-triage — Score & Prioritise\n');
 // ---------------------------------------------------------------------------
@@ -192,6 +213,21 @@ assert('pain points are capped at 25',
 assert('missing budget flagged as a blocker',
   painNoBudget.scoping_blockers.some(b => /budget/i.test(b)),
   JSON.stringify(painNoBudget.scoping_blockers));
+
+// Same nesting regression as the invoice workflow.
+const wrappedLead = runNode(scoreCode, [{
+  json: {
+    output: {
+      contact_name: 'Louise Hartley', organisation: 'Brightpath Dental',
+      problem_summary: 'Manual appointment reminders.',
+      systems_mentioned: 'Dentally, Twilio',
+      budget_stated: 2000, deadline_mentioned: 'end of September', manual_hours_claimed: 15,
+    },
+  },
+}], { 'Load Sample Enquiries': enquirySources })[0].json;
+
+check('nested {output:{...}} scores identically', wrappedLead.lead_score, 93);
+check('nested payload keeps systems list', wrappedLead.systems_list, ['Dentally', 'Twilio']);
 
 // ---------------------------------------------------------------------------
 console.log(`\n${'-'.repeat(52)}`);
