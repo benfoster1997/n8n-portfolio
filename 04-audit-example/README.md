@@ -11,7 +11,8 @@ plus the written report I would produce after reviewing it.
 | File | What it is |
 |---|---|
 | [`naive-workflow.json`](naive-workflow.json) | The subject. 9 nodes, 2 triggers. Imports into n8n |
-| [`AUDIT-REPORT.md`](AUDIT-REPORT.md) | The deliverable — dependency map, failure-risk register, five standing checks, prioritised backlog, runbook gap list |
+| [`AUDIT-REPORT.pdf`](AUDIT-REPORT.pdf) | **The deliverable as a client would receive it** — 4 pages, typeset |
+| [`AUDIT-REPORT.md`](AUDIT-REPORT.md) | The same report in markdown, so you can read it here without downloading |
 | [`verify-findings.mjs`](verify-findings.mjs) | Proves the findings by executing the workflow's own code |
 
 ---
