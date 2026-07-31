@@ -1,6 +1,7 @@
 # n8n automation portfolio
 
-Three working n8n workflows, built to demonstrate how I approach business automation.
+Three working n8n workflows, built to demonstrate how I approach business automation,
+plus a worked example of reviewing an automation somebody else already built.
 All three run end-to-end with no paid services.
 
 **These are self-initiated demonstration projects, not client work.** Sample data is
@@ -11,6 +12,7 @@ invented. Nothing here represents a real customer.
 | 1 | [Invoice & Receipt → Structured Data](01-invoice-extractor/) | Reading messy supplier documents into clean accounting rows, with arithmetic validated in code rather than trusted to a model |
 | 2 | [Inbound Enquiry Triage & Reply Drafter](02-enquiry-triage/) | Classifying incoming enquiries by intent, scoring them by deterministic rules, and drafting replies that a human sends |
 | 3 | [Reliable Event Pipeline → Slack](03-reliable-pipeline/) | Running unattended: idempotency, a replayable dead-letter queue, an audit trail and a canary that catches silence |
+| 4 | [Audit example](04-audit-example/) | ⚠️ **Deliberately flawed — the subject, not a sample of my work.** An ordinary integration of the kind that already exists in a lot of businesses, and the written report from reviewing it |
 
 ---
 
@@ -91,6 +93,13 @@ because the first bug they caught was a date being formatted via `toISOString()`
 British Summer Time, silently booked every spelled-out invoice date one day early and could put
 an invoice in the wrong VAT quarter.
 
+The audit example carries its own verifier, which proves that report's findings by executing the
+audited workflow's code rather than asserting them:
+
+```bash
+node 04-audit-example/verify-findings.mjs
+```
+
 ## Repo layout
 
 ```
@@ -104,6 +113,11 @@ an invoice in the wrong VAT quarter.
   workflow.json
   demo-sink.mjs     node 03-reliable-pipeline/demo-sink.mjs
   README.md         includes the client runbook
+04-audit-example/
+  naive-workflow.json   deliberately flawed — the subject of the audit
+  AUDIT-REPORT.md       the deliverable: risk register, backlog, runbook gaps
+  verify-findings.mjs   node 04-audit-example/verify-findings.mjs
+  README.md
 test/
   logic-test.mjs    node test/logic-test.mjs
 ```

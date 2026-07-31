@@ -1,0 +1,238 @@
+{
+  "id": "a4000000-0000-4000-8000-00000000a401",
+  "name": "Shop Orders → Slack, Sheet & Daily Summary",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "new-order",
+        "options": {}
+      },
+      "id": "a4000000-0000-4000-8000-000000000001",
+      "name": "Order Received",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-320, 180],
+      "webhookId": "a4000000-0000-4000-8000-00000000w001"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Map the shop webhook payload into the columns the Orders sheet expects.\n// TODO: tidy this up when there's time\n\nconst out = [];\n\nfor (const item of $input.all()) {\n  const o = item.json.body || item.json;\n\n  out.push({\n    json: {\n      order_id: o.id,\n      customer: o.customer_name,\n      email: o.email,\n      value_gbp: Number(o.total),\n      sku: o.line_items[0].sku,\n      qty: o.line_items[0].quantity,\n      placed_at: new Date(o.created_at).toISOString().split('T')[0],\n    },\n  });\n}\n\nreturn out;"
+      },
+      "id": "a4000000-0000-4000-8000-000000000002",
+      "name": "Build Order Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-60, 180]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-large",
+              "leftValue": "={{ $json.value_gbp }}",
+              "rightValue": 500,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a4000000-0000-4000-8000-000000000003",
+      "name": "Large Order?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [200, 180]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://hooks.slack.com/services/T00DEMO/B00DEMO/xxxxPLACEHOLDERxxxx",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ text: 'New order ' + $json.order_id + ' — ' + $json.customer + ' — £' + $json.value_gbp }) }}",
+        "options": {}
+      },
+      "id": "a4000000-0000-4000-8000-000000000004",
+      "name": "Notify Slack",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 80]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1DEMOxxxxOrdersSheetIdxxxxDEMO",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Orders",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": []
+        },
+        "options": {}
+      },
+      "id": "a4000000-0000-4000-8000-000000000005",
+      "name": "Append to Orders Log",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [720, 180],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "SHARED-GOOGLE-001",
+          "name": "Google account (shop)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "1DEMOxxxxStockSheetIdxxxxDEMO",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Stock",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "sku": "={{ $json.sku }}",
+            "last_sold": "={{ $json.placed_at }}",
+            "qty_out": "={{ $json.qty }}"
+          },
+          "matchingColumns": ["sku"]
+        },
+        "options": {}
+      },
+      "id": "a4000000-0000-4000-8000-000000000006",
+      "name": "Update Stock Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [980, 180],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "SHARED-GOOGLE-001",
+          "name": "Google account (shop)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 7
+            }
+          ]
+        }
+      },
+      "id": "a4000000-0000-4000-8000-000000000007",
+      "name": "Daily 07:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [-320, 520]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1DEMOxxxxOrdersSheetIdxxxxDEMO",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Orders",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "a4000000-0000-4000-8000-000000000008",
+      "name": "Read Yesterday's Orders",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [-60, 520],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "SHARED-GOOGLE-001",
+          "name": "Google account (shop)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.mailservice.example/v1/send",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer demo-api-key-placeholder-not-a-real-secret"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ to: 'owner@example.com', subject: 'Yesterday\\'s orders', body: 'Orders: ' + $input.all().length }) }}",
+        "options": {}
+      },
+      "id": "a4000000-0000-4000-8000-000000000009",
+      "name": "Send Daily Summary",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [200, 520]
+    }
+  ],
+  "connections": {
+    "Order Received": {
+      "main": [[{ "node": "Build Order Summary", "type": "main", "index": 0 }]]
+    },
+    "Build Order Summary": {
+      "main": [[{ "node": "Large Order?", "type": "main", "index": 0 }]]
+    },
+    "Large Order?": {
+      "main": [
+        [{ "node": "Notify Slack", "type": "main", "index": 0 }],
+        [{ "node": "Append to Orders Log", "type": "main", "index": 0 }]
+      ]
+    },
+    "Notify Slack": {
+      "main": [[{ "node": "Append to Orders Log", "type": "main", "index": 0 }]]
+    },
+    "Append to Orders Log": {
+      "main": [[{ "node": "Update Stock Sheet", "type": "main", "index": 0 }]]
+    },
+    "Daily 07:00": {
+      "main": [[{ "node": "Read Yesterday's Orders", "type": "main", "index": 0 }]]
+    },
+    "Read Yesterday's Orders": {
+      "main": [[{ "node": "Send Daily Summary", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}
