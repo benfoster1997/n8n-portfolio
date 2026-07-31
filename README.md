@@ -1,7 +1,7 @@
 # n8n automation portfolio
 
-Two working n8n workflows, built to demonstrate how I approach business automation.
-Both run end-to-end on a free API tier with no paid services.
+Three working n8n workflows, built to demonstrate how I approach business automation.
+All three run end-to-end with no paid services.
 
 **These are self-initiated demonstration projects, not client work.** Sample data is
 invented. Nothing here represents a real customer.
@@ -10,15 +10,17 @@ invented. Nothing here represents a real customer.
 |---|---|---|
 | 1 | [Invoice & Receipt → Structured Data](01-invoice-extractor/) | Reading messy supplier documents into clean accounting rows, with arithmetic validated in code rather than trusted to a model |
 | 2 | [Inbound Enquiry Triage & Reply Drafter](02-enquiry-triage/) | Classifying incoming enquiries by intent, scoring them by deterministic rules, and drafting replies that a human sends |
+| 3 | [Reliable Event Pipeline → Slack](03-reliable-pipeline/) | Running unattended: idempotency, a replayable dead-letter queue, an audit trail and a canary that catches silence |
 
 ---
 
-## The idea behind both
+## The idea behind them
 
 The interesting part of an AI automation is not the model call. It is everything around it:
 what happens when the model is wrong, who checks, and what the business does with the output.
 
-Both workflows are built on the same three principles.
+The first two are built on the same three principles. The third is about what happens
+after handover, when nobody is watching.
 
 **The model reads; code decides.** Language models are good at pulling structure out of messy
 text and bad at arithmetic and consistency. So extraction is the model's job, and every
@@ -38,14 +40,17 @@ an automation to cost a business more than it saves.
 
 ## Running them
 
-**Requirements:** n8n (tested on 2.32.6, Node 22 LTS) and a Google AI Studio API key.
-The key is free and needs no card: <https://aistudio.google.com/apikey>. Both workflows use
-`gemini-3-flash-preview` at temperature 0, and a full run of either costs nothing on the free tier.
+**Requirements:** n8n (tested on 2.32.6, Node 22 LTS). Workflows 1 and 2 need a Google AI Studio
+API key — free, no card: <https://aistudio.google.com/apikey>. Both use `gemini-3-flash-preview`
+at temperature 0, and a full run costs nothing on the free tier. **Workflow 3 needs no key at
+all** — it uses no model.
 
 1. Start n8n and open <http://localhost:5678>.
 2. **Credentials → Add credential → Google Gemini (PaLM) API**, paste the key, save.
 3. **Workflows → Import from File** and choose a `workflow.json`.
 4. Open the *Gemini Chat Model* node and select the credential you just created.
+   (Workflow 3 has no such node — skip this step for it, but do start its demo sink:
+   `node 03-reliable-pipeline/demo-sink.mjs`.)
 5. Click **Test workflow**.
 
 No other credentials are needed. Sample inputs are inlined in the first Code node of each
@@ -81,7 +86,7 @@ from what actually runs in n8n.
 node test/logic-test.mjs
 ```
 
-29 assertions, no dependencies, no API key needed. They are also run under several timezones,
+62 assertions, no dependencies, no API key needed. They are also run under several timezones,
 because the first bug they caught was a date being formatted via `toISOString()` — which, under
 British Summer Time, silently booked every spelled-out invoice date one day early and could put
 an invoice in the wrong VAT quarter.
@@ -95,6 +100,10 @@ an invoice in the wrong VAT quarter.
 02-enquiry-triage/
   workflow.json
   README.md
+03-reliable-pipeline/
+  workflow.json
+  demo-sink.mjs     node 03-reliable-pipeline/demo-sink.mjs
+  README.md         includes the client runbook
 test/
   logic-test.mjs    node test/logic-test.mjs
 ```

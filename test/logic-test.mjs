@@ -45,17 +45,20 @@ function loadNodeCode(workflowPath, nodeName) {
  * items       - what $input.all() returns
  * nodeOutputs - what $('Node Name').all() / .item returns
  */
-function runNode(jsCode, items, nodeOutputs = {}) {
+function runNode(jsCode, items, nodeOutputs = {}, staticData = null) {
   const $input = { all: () => items };
   const $ = (name) => {
     const data = nodeOutputs[name] || [];
     return {
       all: () => data,
+      // Mirrors n8n: itemMatching(i) resolves the paired input item by index.
+      itemMatching: (i) => data[i],
       get item() { return data[runNode._pairedIndex] ?? data[0]; },
     };
   };
-  const fn = new Function('$input', '$', `${jsCode}`);
-  return fn($input, $);
+  const $getWorkflowStaticData = () => staticData;
+  const fn = new Function('$input', '$', '$getWorkflowStaticData', `${jsCode}`);
+  return fn($input, $, $getWorkflowStaticData);
 }
 
 // ---------------------------------------------------------------------------
@@ -228,6 +231,117 @@ const wrappedLead = runNode(scoreCode, [{
 
 check('nested {output:{...}} scores identically', wrappedLead.lead_score, 93);
 check('nested payload keeps systems list', wrappedLead.systems_list, ['Dentally', 'Twilio']);
+
+// ---------------------------------------------------------------------------
+console.log('\n03-reliable-pipeline — fingerprint, idempotency, DLQ, canary\n');
+// ---------------------------------------------------------------------------
+
+const WF3 = '03-reliable-pipeline/workflow.json';
+const fpCode     = loadNodeCode(WF3, 'Normalise & Fingerprint');
+const gateCode   = loadNodeCode(WF3, 'Idempotency Gate');
+const dlqCode    = loadNodeCode(WF3, 'Dead Letter Queue');
+const canaryCode = loadNodeCode(WF3, 'Canary Check');
+
+const ev = (over = {}) => ({ json: { event_id: 'evt_1', type: 'deal.stage_changed', deal: 'Acme', from: 'A', to: 'B', value_gbp: 100, ...over } });
+
+const fps = runNode(fpCode, [ev(), ev(), ev({ to: 'C' }), ev({ event_id: 'different_id' })]);
+check('identical content produces identical fingerprints', fps[0].json.fingerprint, fps[1].json.fingerprint);
+assert('changed content produces a different fingerprint', fps[0].json.fingerprint !== fps[2].json.fingerprint);
+check('a new event_id alone does NOT change the fingerprint', fps[0].json.fingerprint, fps[3].json.fingerprint);
+
+// Webhook payloads arrive nested under .body — a classic source of silent breakage.
+const wrappedWebhook = runNode(fpCode, [{ json: { body: { type: 'deal.stage_changed', deal: 'Acme', from: 'A', to: 'B', value_gbp: 100 } } }]);
+check('webhook .body payloads are unwrapped', wrappedWebhook[0].json.fingerprint, fps[0].json.fingerprint);
+
+console.log('\n  idempotency:\n');
+
+let store = {};
+const batch = runNode(fpCode, [ev({ deal: 'One' }), ev({ deal: 'Two' }), ev({ deal: 'One' }), ev({ deal: 'Three' }), ev({ deal: 'Two' })]);
+const gated = runNode(gateCode, batch, {}, store);
+const fresh = gated.filter(r => !r.json.is_duplicate);
+const dupes = gated.filter(r => r.json.is_duplicate);
+check('5 events with 2 repeats yields 3 new', fresh.length, 3);
+check('and 2 suppressed duplicates', dupes.length, 2);
+assert('duplicates report when they were first seen', typeof dupes[0].json.first_seen_at === 'string');
+
+const secondRun = runNode(gateCode, runNode(fpCode, [ev({ deal: 'One' })]), {}, store);
+check('re-running a past event later is still a duplicate', secondRun[0].json.is_duplicate, true);
+
+// TTL eviction: age an entry past 7 days and it should be treated as new again.
+const aged = {};
+const oneFp = runNode(fpCode, [ev({ deal: 'Ancient' })]);
+runNode(gateCode, oneFp, {}, aged);
+Object.keys(aged.seen).forEach(k => { aged.seen[k] = Date.now() - 8 * 24 * 60 * 60 * 1000; });
+const afterTtl = runNode(gateCode, oneFp, {}, aged);
+check('an event older than the 7-day TTL is treated as new', afterTtl[0].json.is_duplicate, false);
+
+console.log('\n  dead letter queue:\n');
+
+const dlqStore = { seen: {}, dlq: [] };
+const failingEvent = runNode(fpCode, [ev({ deal: 'Fails' })]);
+runNode(gateCode, failingEvent, {}, dlqStore);
+assert('the failing event is marked seen before delivery is attempted',
+  Object.keys(dlqStore.seen).length === 1);
+
+const dlqRows = runNode(dlqCode,
+  [{ json: { error: { message: 'connect ECONNREFUSED' } } }],
+  { 'Idempotency Gate': [{ json: failingEvent[0].json }] },
+  dlqStore);
+
+check('the failure is captured in the DLQ', dlqStore.dlq.length, 1);
+check('with the error message', dlqRows[0].json.error, 'connect ECONNREFUSED');
+assert('and the full payload needed to replay it', !!dlqRows[0].json.payload.fingerprint);
+// The interaction that is easy to get wrong: if the fingerprint stayed in the
+// seen-set, replaying the event would be silently suppressed as a duplicate and
+// the message would be lost for good.
+check('the fingerprint is RELEASED so a replay is not swallowed',
+  Object.keys(dlqStore.seen).length, 0);
+const replay = runNode(gateCode, failingEvent, {}, dlqStore);
+check('replaying after a failure is accepted, not suppressed', replay[0].json.is_duplicate, false);
+
+console.log('\n  audit trail pairing:\n');
+
+// Regression: $('Node').item inside a .map() returns the SAME item every
+// iteration, so every audit row was labelled with the first event's subject.
+// The live run delivered the right two messages but logged both as "Brightpath
+// Dental" — wrong provenance in the one artefact whose job is provenance.
+const logCode = loadNodeCode(WF3, 'Log Delivered');
+const twoSources = runNode(fpCode, [ev({ deal: 'Alpha' }), ev({ deal: 'Beta' })]);
+const logRows = runNode(logCode,
+  [{ json: { statusCode: 200 } }, { json: { statusCode: 200 } }],
+  { 'Idempotency Gate': twoSources },
+  { audit: [] });
+
+check('two deliveries produce two audit rows', logRows.length, 2);
+check('first row names the first event', logRows[0].json.subject, 'Alpha');
+check('second row names the SECOND event, not the first', logRows[1].json.subject, 'Beta');
+assert('the two rows carry different fingerprints',
+  logRows[0].json.fingerprint !== logRows[1].json.fingerprint,
+  `${logRows[0].json.fingerprint} vs ${logRows[1].json.fingerprint}`);
+
+const dlqPaired = { seen: {}, dlq: [] };
+const dlqRows2 = runNode(dlqCode,
+  [{ json: { error: { message: 'e1' } } }, { json: { error: { message: 'e2' } } }],
+  { 'Idempotency Gate': twoSources },
+  dlqPaired);
+check('DLQ rows are paired correctly too', dlqRows2.map(r => r.json.subject), ['Alpha', 'Beta']);
+
+console.log('\n  canary:\n');
+
+const never = runNode(canaryCode, [{ json: {} }], {}, {})[0].json;
+check('a pipeline that has never delivered reads as silent', never.silent, true);
+check('and reports no last delivery', never.last_delivery_at, null);
+
+const healthy = runNode(canaryCode, [{ json: {} }], {}, { lastSuccessAt: Date.now() - 2 * 3600000, dlq: [] })[0].json;
+check('a delivery 2 hours ago is healthy', healthy.silent, false);
+check('and says so', healthy.verdict, 'healthy');
+
+const stale = runNode(canaryCode, [{ json: {} }], {}, { lastSuccessAt: Date.now() - 30 * 3600000, dlq: [1, 2] })[0].json;
+check('30 hours of silence trips the alarm', stale.silent, true);
+check('and the DLQ depth is surfaced with it', stale.dlq_depth, 2);
+// 26h not 24h, so a slightly late scheduled run does not cry wolf.
+const justUnder = runNode(canaryCode, [{ json: {} }], {}, { lastSuccessAt: Date.now() - 25 * 3600000, dlq: [] })[0].json;
+check('25 hours does not false-alarm', justUnder.silent, false);
 
 // ---------------------------------------------------------------------------
 console.log(`\n${'-'.repeat(52)}`);

@@ -1,0 +1,504 @@
+{
+  "id": "portfolioPipeline",
+  "name": "Reliable Event Pipeline → Slack (idempotent, with DLQ and canary)",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "c3000000-0000-4000-8000-000000000001",
+      "name": "Run Demo",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -320,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "deal-update",
+        "options": {}
+      },
+      "id": "c3000000-0000-4000-8000-000000000002",
+      "name": "Webhook (production intake)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -320,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Five events. Two are exact duplicates of earlier ones — upstream systems\n// retry, and webhooks get replayed. One is aimed at a URL that will fail, to\n// exercise the dead-letter path.\n//\n// In production this node does not exist: the Webhook node feeds Normalise\n// directly.\n\nreturn [\n  { json: { event_id: 'evt_1001', type: 'deal.stage_changed', deal: 'Brightpath Dental', from: 'Qualified', to: 'Proposal Sent', value_gbp: 2400, owner: 'ben' } },\n  { json: { event_id: 'evt_1002', type: 'deal.stage_changed', deal: 'Vantage Logistics', from: 'Proposal Sent', to: 'Won',           value_gbp: 1800, owner: 'ben' } },\n  { json: { event_id: 'evt_1001', type: 'deal.stage_changed', deal: 'Brightpath Dental', from: 'Qualified', to: 'Proposal Sent', value_gbp: 2400, owner: 'ben' } },\n  { json: { event_id: 'evt_1003', type: 'deal.stage_changed', deal: 'Meridian Cloud',    from: 'New',       to: 'Qualified',     value_gbp: 950,  owner: 'ben', force_failure: true } },\n  { json: { event_id: 'evt_1002', type: 'deal.stage_changed', deal: 'Vantage Logistics', from: 'Proposal Sent', to: 'Won',       value_gbp: 1800, owner: 'ben' } }\n];"
+      },
+      "id": "c3000000-0000-4000-8000-000000000003",
+      "name": "Load Demo Events",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -100,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normalise to one shape, then fingerprint it.\n//\n// The fingerprint is deliberately NOT the upstream event_id alone. Some systems\n// reuse ids, some omit them, and some resend the same change under a new id.\n// Hashing the meaningful content catches all three. A pure-JS hash is used\n// rather than require('crypto') so the node runs identically in any n8n\n// deployment, including hosted ones where module access is restricted.\n\nfunction fnv1a(str) {\n  let h = 0x811c9dc5;\n  for (let i = 0; i < str.length; i++) {\n    h ^= str.charCodeAt(i);\n    h = Math.imul(h, 0x01000193) >>> 0;\n  }\n  return h.toString(16).padStart(8, '0');\n}\n\nreturn $input.all().map(item => {\n  const e = item.json.body ?? item.json;   // webhook payloads arrive under .body\n\n  const normalised = {\n    event_id:  e.event_id ?? null,\n    type:      e.type ?? 'unknown',\n    subject:   e.deal ?? e.record ?? e.name ?? 'unknown',\n    from:      e.from ?? null,\n    to:        e.to ?? null,\n    value_gbp: Number(e.value_gbp ?? 0),\n    owner:     e.owner ?? null,\n    force_failure: Boolean(e.force_failure)\n  };\n\n  // Only content-bearing fields go into the fingerprint, in a fixed order.\n  const canonical = [\n    normalised.type, normalised.subject, normalised.from,\n    normalised.to, normalised.value_gbp\n  ].join('|');\n\n  return { json: { ...normalised, fingerprint: fnv1a(canonical), canonical } };\n});"
+      },
+      "id": "c3000000-0000-4000-8000-000000000004",
+      "name": "Normalise & Fingerprint",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        140,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Idempotency gate.\n//\n// Fire the same event three times and exactly one message goes out. This is the\n// single most-requested property in the job posts and almost nobody demonstrates\n// it.\n//\n// State lives in n8n's workflow static data, which survives between executions.\n// It is capped and time-bounded so it cannot grow without limit — an unbounded\n// seen-set is a memory leak that only shows up in month four.\n\nconst TTL_MS = 7 * 24 * 60 * 60 * 1000;   // remember an event for 7 days\nconst MAX_ENTRIES = 5000;\n\nconst store = $getWorkflowStaticData('global');\nstore.seen = store.seen || {};\n\nconst now = Date.now();\n\n// Evict anything past its TTL before deciding anything.\nfor (const [k, ts] of Object.entries(store.seen)) {\n  if (now - ts > TTL_MS) delete store.seen[k];\n}\n\nconst out = [];\nfor (const item of $input.all()) {\n  const fp = item.json.fingerprint;\n  const seenAt = store.seen[fp];\n\n  if (seenAt) {\n    out.push({ json: { ...item.json, is_duplicate: true, first_seen_at: new Date(seenAt).toISOString() } });\n  } else {\n    store.seen[fp] = now;\n    out.push({ json: { ...item.json, is_duplicate: false, first_seen_at: new Date(now).toISOString() } });\n  }\n}\n\n// Hard cap: drop the oldest if the set has grown past the limit.\nconst keys = Object.keys(store.seen);\nif (keys.length > MAX_ENTRIES) {\n  keys.sort((a, b) => store.seen[a] - store.seen[b])\n      .slice(0, keys.length - MAX_ENTRIES)\n      .forEach(k => delete store.seen[k]);\n}\n\nreturn out;"
+      },
+      "id": "c3000000-0000-4000-8000-000000000005",
+      "name": "Idempotency Gate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        380,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-dup",
+              "leftValue": "={{ $json.is_duplicate }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "false",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "c3000000-0000-4000-8000-000000000006",
+      "name": "First Time Seen?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        620,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.force_failure ? 'http://localhost:9999/unreachable' : 'http://localhost:4567/slack' }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ text: $json.subject + ': ' + $json.from + ' → ' + $json.to + ' (£' + $json.value_gbp + ')', fingerprint: $json.fingerprint }) }}",
+        "options": {
+          "timeout": 8000
+        }
+      },
+      "id": "c3000000-0000-4000-8000-000000000007",
+      "name": "Deliver to Slack",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        300
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Audit trail. Every delivered event is recorded with enough detail to answer\n// \"did this actually go out, and when?\" six weeks later without guesswork.\n\nconst MAX_LOG = 500;\nconst store = $getWorkflowStaticData('global');\nstore.audit = store.audit || [];\nstore.lastSuccessAt = Date.now();\n\n// itemMatching(i) resolves the paired input item. $('Node').item does NOT\n// work inside a .map() — it returns the same item every iteration, which\n// silently mislabels every row in the audit trail.\nconst rows = $input.all().map((item, i) => {\n  const src = $('Idempotency Gate').itemMatching(i).json;\n  return {\n    at: new Date().toISOString(),\n    fingerprint: src.fingerprint,\n    subject: src.subject,\n    outcome: 'delivered',\n    status: item.json.statusCode ?? 200\n  };\n});\n\nstore.audit.push(...rows);\nif (store.audit.length > MAX_LOG) store.audit = store.audit.slice(-MAX_LOG);\n\nreturn rows.map(json => ({ json }));"
+      },
+      "id": "c3000000-0000-4000-8000-000000000008",
+      "name": "Log Delivered",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1140,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Dead-letter queue.\n//\n// A failed delivery is captured with its full payload and the error, so it can\n// be replayed after the downstream system is fixed. Without this the event is\n// simply gone and nobody finds out until a customer asks.\n\nconst MAX_DLQ = 200;\nconst store = $getWorkflowStaticData('global');\nstore.dlq = store.dlq || [];\n\nconst rows = $input.all().map((item, i) => {\n  // itemMatching(i), not .item — see the note in Log Delivered.\n  const src = $('Idempotency Gate').itemMatching(i).json;\n  return {\n    at: new Date().toISOString(),\n    fingerprint: src.fingerprint,\n    subject: src.subject,\n    outcome: 'failed',\n    error: item.json.error?.message ?? item.json.message ?? 'delivery failed',\n    payload: src,          // everything needed to replay it\n    replayable: true\n  };\n});\n\nstore.dlq.push(...rows);\nif (store.dlq.length > MAX_DLQ) store.dlq = store.dlq.slice(-MAX_DLQ);\n\n// IMPORTANT: a failed delivery must not stay marked as seen, or a replay would\n// be suppressed as a duplicate. Release the fingerprint.\nstore.seen = store.seen || {};\nfor (const r of rows) delete store.seen[r.fingerprint];\n\nreturn rows.map(json => ({ json }));"
+      },
+      "id": "c3000000-0000-4000-8000-000000000009",
+      "name": "Dead Letter Queue",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1140,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "includeOtherFields": true,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "sup-1",
+              "name": "outcome",
+              "value": "duplicate_suppressed",
+              "type": "string"
+            },
+            {
+              "id": "sup-2",
+              "name": "note",
+              "value": "={{ 'Already delivered at ' + $json.first_seen_at }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "c3000000-0000-4000-8000-000000000010",
+      "name": "Suppressed Duplicate",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        880,
+        540
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 24
+            }
+          ]
+        }
+      },
+      "id": "c3000000-0000-4000-8000-000000000011",
+      "name": "Daily Canary",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        380,
+        760
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Canary.\n//\n// The failure mode that actually costs clients money is not a loud error — it\n// is silence. A webhook quietly stops firing, and nobody notices for a fortnight.\n// This runs daily and reports if nothing has been delivered recently.\n\nconst QUIET_HOURS = 26;    // a day plus slack, so a late run does not false-alarm\n\nconst store = $getWorkflowStaticData('global');\nconst last = store.lastSuccessAt ?? null;\nconst hoursSince = last === null ? null : (Date.now() - last) / 3600000;\n\nconst silent = last === null || hoursSince > QUIET_HOURS;\n\nreturn [{\n  json: {\n    checked_at: new Date().toISOString(),\n    last_delivery_at: last === null ? null : new Date(last).toISOString(),\n    hours_since_last_delivery: hoursSince === null ? null : Math.round(hoursSince * 10) / 10,\n    dlq_depth: (store.dlq || []).length,\n    silent,\n    verdict: silent\n      ? 'NO DELIVERIES IN ' + QUIET_HOURS + 'H — the pipeline may be broken upstream'\n      : 'healthy'\n  }\n}];"
+      },
+      "id": "c3000000-0000-4000-8000-000000000012",
+      "name": "Canary Check",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        620,
+        760
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-silent",
+              "leftValue": "={{ $json.silent }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "c3000000-0000-4000-8000-000000000013",
+      "name": "Gone Quiet?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        860,
+        760
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "includeOtherFields": true,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "al-1",
+              "name": "alert",
+              "value": "PIPELINE SILENT — investigate upstream",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "c3000000-0000-4000-8000-000000000014",
+      "name": "Raise Alert",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1120,
+        700
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "includeOtherFields": true,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "hb-1",
+              "name": "status",
+              "value": "healthy",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "c3000000-0000-4000-8000-000000000015",
+      "name": "Healthy",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1120,
+        840
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Two ways in\n\nThe webhook is the production intake. The demo trigger exists so the whole thing can be run and filmed without wiring up a live CRM.\n\nBoth feed the same normalisation step, so what you see in the demo is what runs in production.",
+        "height": 280,
+        "width": 320,
+        "color": 7
+      },
+      "id": "c3000000-0000-4000-8000-000000000016",
+      "name": "Note Intake",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -360,
+        20
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Idempotency — the part buyers screen for\n\nEvents get replayed. Upstream systems retry. Without a gate here, one deal change becomes four Slack messages and the client turns the integration off.\n\nThe fingerprint hashes the event's *content*, not just its id, because some systems reuse ids and some omit them entirely.\n\nThe seen-set is TTL'd and capped — an unbounded one is a memory leak that surfaces in month four.",
+        "height": 340,
+        "width": 340,
+        "color": 4
+      },
+      "id": "c3000000-0000-4000-8000-000000000017",
+      "name": "Note Idempotency",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        200,
+        -20
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Dead letter queue\n\nWhen delivery fails after three retries, the event is captured with its full payload and the error — replayable once the downstream system is fixed.\n\nIt also **releases the fingerprint**, so the replay is not swallowed as a duplicate. That interaction between the two mechanisms is easy to get wrong and expensive to discover late.",
+        "height": 320,
+        "width": 340,
+        "color": 3
+      },
+      "id": "c3000000-0000-4000-8000-000000000018",
+      "name": "Note DLQ",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1120,
+        -20
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Canary — catching silence\n\nThe failure that costs real money is not a loud error. It is a webhook that quietly stops firing while everyone assumes it is working.\n\nThis runs daily and reports if nothing has been delivered in 26 hours, along with the current dead-letter depth.",
+        "height": 280,
+        "width": 340,
+        "color": 5
+      },
+      "id": "c3000000-0000-4000-8000-000000000019",
+      "name": "Note Canary",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        560,
+        980
+      ]
+    }
+  ],
+  "connections": {
+    "Run Demo": {
+      "main": [
+        [
+          {
+            "node": "Load Demo Events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Demo Events": {
+      "main": [
+        [
+          {
+            "node": "Normalise & Fingerprint",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook (production intake)": {
+      "main": [
+        [
+          {
+            "node": "Normalise & Fingerprint",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalise & Fingerprint": {
+      "main": [
+        [
+          {
+            "node": "Idempotency Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Idempotency Gate": {
+      "main": [
+        [
+          {
+            "node": "First Time Seen?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "First Time Seen?": {
+      "main": [
+        [
+          {
+            "node": "Deliver to Slack",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Suppressed Duplicate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Deliver to Slack": {
+      "main": [
+        [
+          {
+            "node": "Log Delivered",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Dead Letter Queue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Daily Canary": {
+      "main": [
+        [
+          {
+            "node": "Canary Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Canary Check": {
+      "main": [
+        [
+          {
+            "node": "Gone Quiet?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gone Quiet?": {
+      "main": [
+        [
+          {
+            "node": "Raise Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Healthy",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}
