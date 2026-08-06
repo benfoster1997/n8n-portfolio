@@ -86,6 +86,16 @@ weights are constants at the top of the Code node and are meant to be tuned per 
 
 ---
 
+## Runbook
+
+**→ [RUNBOOK.md](RUNBOOK.md)** — handed over with every build.
+
+Where each of the five branches sends an enquiry, how the score is actually worked out, a
+symptom-cause-fix table, and **what it will not do** — starting with the fact that it never sends
+anything. The branch worth watching in the first few weeks is *Discard*, and the runbook says so.
+
+---
+
 ## Demo video script — 90 seconds
 
 **0:00–0:12 — the problem.** Show the four sample enquiries in the first node's output.

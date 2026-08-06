@@ -65,6 +65,17 @@ wants derived values written automatically or held for approval.
 
 ---
 
+## Runbook
+
+**→ [RUNBOOK.md](RUNBOOK.md)** — handed over with every build, and the reason a maintenance
+retainer is worth buying.
+
+Written for whoever operates it, not for a developer: what it does, what normal looks like, the
+five checks it runs, a symptom-cause-fix table for everything that realistically goes wrong, what
+to do with a flagged document, **what it will not do**, and what monthly maintenance covers.
+
+---
+
 ## Demo video script — 90 seconds
 
 **0:00–0:10 — the problem.** Screen shows the three sample documents side by side.

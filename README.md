@@ -40,6 +40,25 @@ an automation to cost a business more than it saves.
 
 ---
 
+## Every build ships a runbook
+
+A workflow nobody can operate or hand on is a liability, however well it runs on the day it is
+delivered. So each of these carries one, written for the person who operates it rather than for a
+developer: what it does, what normal looks like, what breaks it and what to do, **what it will
+not do**, and what monthly maintenance covers.
+
+| Workflow | Runbook |
+|---|---|
+| 1 — Invoice & Receipt | [RUNBOOK.md](01-invoice-extractor/RUNBOOK.md) · [PDF](01-invoice-extractor/RUNBOOK.pdf) |
+| 2 — Enquiry Triage | [RUNBOOK.md](02-enquiry-triage/RUNBOOK.md) · [PDF](02-enquiry-triage/RUNBOOK.pdf) |
+| 3 — Reliable Pipeline | [inside its README](03-reliable-pipeline/README.md#runbook) |
+| 4 — Audit example | Not applicable — it is the *subject* of an audit. Its report instead carries a **runbook gap list**: what someone covering for you could not work out |
+
+The PDFs are what a client is actually handed. They are generated from the markdown by
+`node render-pdf.mjs <file.md>`, so the two cannot drift apart.
+
+---
+
 ## Running them
 
 **Requirements:** n8n (tested on 2.32.6, Node 22 LTS). Workflows 1 and 2 need a Google AI Studio
@@ -106,9 +125,13 @@ node 04-audit-example/verify-findings.mjs
 01-invoice-extractor/
   workflow.json     import this
   README.md         how it works, and the demo script
+  RUNBOOK.md        the client runbook
+  RUNBOOK.pdf       the same, typeset — this is what a client is handed
 02-enquiry-triage/
   workflow.json
   README.md
+  RUNBOOK.md        the client runbook
+  RUNBOOK.pdf       the same, typeset
 03-reliable-pipeline/
   workflow.json
   demo-sink.mjs     node 03-reliable-pipeline/demo-sink.mjs
