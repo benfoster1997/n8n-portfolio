@@ -18,6 +18,36 @@ import { dirname, join } from 'node:path';
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
 
+// The first bug this suite caught was a date formatted via toISOString(), which is
+// invisible under UTC and only misbehaves where local midnight is not UTC midnight.
+// A single run on a UTC machine — CI, a container, most cloud shells — passes that
+// regression silently, so the suite re-runs itself under several zones.
+// Kiritimati is UTC+14 and fails year-round; London only diverges during BST.
+const ZONES = ['UTC', 'Europe/London', 'America/Los_Angeles', 'Pacific/Kiritimati'];
+
+if (!process.env.LOGIC_TEST_TZ) {
+  const { spawnSync } = await import('node:child_process');
+  const failedZones = [];
+
+  for (const tz of ZONES) {
+    console.log(`\n${'='.repeat(52)}`);
+    console.log(`TZ=${tz}`);
+    console.log('='.repeat(52));
+    const run = spawnSync(process.execPath, [fileURLToPath(import.meta.url)], {
+      stdio: 'inherit',
+      env: { ...process.env, TZ: tz, LOGIC_TEST_TZ: tz },
+    });
+    if (run.status !== 0) failedZones.push(tz);
+  }
+
+  console.log(
+    failedZones.length === 0
+      ? `All ${ZONES.length} timezones passed.\n`
+      : `FAILED in ${failedZones.length} of ${ZONES.length} timezones: ${failedZones.join(', ')}\n`,
+  );
+  process.exit(failedZones.length === 0 ? 0 : 1);
+}
+
 let passed = 0;
 let failed = 0;
 

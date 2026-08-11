@@ -30,6 +30,9 @@ part of the audit — the deliverable is the examination.
 
 ## Structure
 
+**Title** — `# Reliability audit — *<Workflow name>*`, the workflow's own name in italics, taken
+from the export rather than invented.
+
 **Header block** — Subject (file, node count, trigger count), date audited, method, and scope in
 one line ending **No implementation.** If the audited workflow is a demonstration you wrote
 yourself, say so in a blockquote immediately: that it is not a client's, contains no client data,
@@ -39,14 +42,19 @@ and is deliberately ordinary rather than deliberately terrible.
 data, total hours to close everything, and the hours for the single highest-value fix. A reader
 who stops here should still be able to make a decision.
 
-**1 · Dependency map** — An ASCII diagram of both flows showing triggers, nodes, branches, and
-markers for hardcoded values and missing error paths. Then, in prose, the thing the diagram
+**1 · Dependency map** — An ASCII diagram of every flow showing triggers, nodes and branches, with
+a marker against each node for the credential it uses (`🔑 SHARED-GOOGLE-001`) and a marker for
+hardcoded values and missing error paths (`⚠ hardcoded URL · no error path`). The credential
+marker is what makes the shared-credential finding visible in the diagram rather than only in the
+prose beneath it. Then, in prose, the thing the diagram
 reveals that a node list cannot: which credential spans which flows. *Two independent flows
 sharing one credential is the single most common structural finding, and nothing in the workflow
 records it.* Close with a count of external dependencies and how many are monitored.
 
-**2 · Failure-risk register** — Every point where the workflow fails without telling anyone,
-classified by consequence:
+**2 · Failure-risk register** — Every point where the workflow fails without telling anyone.
+**Number the findings R1, R2, R3…** — the backlog's "Closes" column and the "fix this first"
+sentence both cross-reference these identifiers, so they have to exist here. Classify each by
+consequence:
 
 | Class | Meaning |
 |---|---|

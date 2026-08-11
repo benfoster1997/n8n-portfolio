@@ -10,7 +10,7 @@ improvements.
 ```bash
 node test/logic-test.mjs                    # 62 assertions, no deps, no API key
 node 04-audit-example/verify-findings.mjs   # proves the audit's findings by execution
-node render-pdf.mjs <file.md>               # regenerate a runbook PDF from its markdown
+node render-pdf.mjs <file.md>               # regenerate a runbook PDF (needs Chrome; CHROME_PATH overrides)
 node 03-reliable-pipeline/demo-sink.mjs     # local sink for the pipeline demo
 ```
 
@@ -25,8 +25,9 @@ identical on every run. Never move arithmetic or a routing decision into a promp
 central claim of this portfolio and moving it breaks the point.
 
 **Flag rather than guess.** When the workflow cannot be confident, it says so and names the
-specific reason in `review_reasons`. A run that flags three documents out of forty has done its
-job. Never add a fallback that invents a plausible value to avoid a flag.
+specific reason — `review_reasons` in workflow 1, the routing reason in workflow 2. A run that
+flags three documents out of forty has done its job. Never add a fallback that invents a
+plausible value to avoid a flag.
 
 **A human stays in the loop where reputation is at stake.** Workflow 2 drafts replies and queues
 them. It never sends. Do not add a send step.
@@ -38,24 +39,36 @@ logic into the test file to make a test pass — fix the node, or fix the extrac
 **PDFs are generated, never edited.** `RUNBOOK.pdf` comes from `RUNBOOK.md` via `render-pdf.mjs`.
 Edit the markdown and regenerate. The two cannot be allowed to diverge.
 
-**Dates are UK day-first, and never formatted with `toISOString()`.** `07/08/2026` is 7 August.
-Formatting via `toISOString()` under British Summer Time books dates one day early and can put an
-invoice in the wrong VAT quarter — this was a real bug the tests caught, and the tests run under
-several timezones because of it. Format from local parts.
+**Calendar dates are UK day-first, and never derived via `toISOString()`.** `07/08/2026` is
+7 August. Taking a *date* out of `toISOString()` under British Summer Time books it one day early
+and can put an invoice in the wrong VAT quarter — a real bug the tests caught. Format calendar
+dates from local parts.
+
+This applies to calendar dates only. `toISOString()` is correct for UTC *instants* and
+`03-reliable-pipeline` uses it that way in four Code nodes deliberately — do not "fix" those.
+
+Because that bug is invisible under UTC, `test/logic-test.mjs` re-runs itself under four
+timezones (UTC, Europe/London, America/Los_Angeles, Pacific/Kiritimati) and fails if any of them
+fails. A single run on a UTC machine would pass the regression silently.
 
 ## `04-audit-example/` is deliberately flawed
 
 `naive-workflow.json` is **the subject of an audit, not a sample of my work**. Its bugs are the
 point: no idempotency, Slack notified before the sheet write, `line_items[0]` only, no payload
 guard, nothing watching for silence, two hardcoded secrets. **Do not fix them.** If you improve
-that workflow you invalidate `AUDIT-REPORT.md` and `verify-findings.mjs`, which prove their
-findings by executing its code.
+that workflow you invalidate `AUDIT-REPORT.md`, and `verify-findings.mjs` starts failing — it
+proves findings R3, R4 and backlog item 4 by executing the workflow's own Code node source, and
+checks the remaining structural findings by reading the exported JSON.
 
 ## Every build ships a runbook
 
 Written for whoever operates it day to day, not for a developer. Fixed structure: what it does,
 what normal looks like, what breaks it and what to do, **what it will not do**, what monthly
 maintenance covers, hosting. Use the `/runbook` skill rather than improvising the format.
+
+Workflows 1 and 2 carry a standalone `RUNBOOK.md` plus a rendered PDF. Workflow 3's runbook lives
+inside its own README and is abbreviated — it has no "what it will not do" section, which is a
+real gap rather than a deliberate exception.
 
 ## Honesty constraints
 

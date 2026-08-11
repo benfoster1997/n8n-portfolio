@@ -20,7 +20,24 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 
-const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+// Chrome renders the PDF. macOS first — that is where these are usually generated —
+// then the common Linux locations, so the same command works in a container or CI
+// rather than leaving the markdown and the PDF free to drift. Override with CHROME_PATH.
+const CHROME = [
+  process.env.CHROME_PATH,
+  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+  '/Applications/Chromium.app/Contents/MacOS/Chromium',
+  '/usr/bin/google-chrome',
+  '/usr/bin/google-chrome-stable',
+  '/usr/bin/chromium',
+  '/usr/bin/chromium-browser',
+  ...(fs.existsSync('/opt/pw-browsers')
+    ? fs
+        .readdirSync('/opt/pw-browsers')
+        .filter(d => d.startsWith('chromium'))
+        .map(d => path.join('/opt/pw-browsers', d, 'chrome-linux', 'chrome'))
+    : []),
+].find(p => p && fs.existsSync(p));
 
 const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
@@ -203,8 +220,8 @@ if (!fs.existsSync(srcPath)) {
 }
 const outPath = path.resolve(process.argv[3] || srcPath.replace(/\.md$/, '.pdf'));
 
-if (!fs.existsSync(CHROME)) {
-  console.error('Chrome not found at: ' + CHROME);
+if (!CHROME) {
+  console.error('Chrome not found. Install Google Chrome or Chromium, or set CHROME_PATH.');
   process.exit(1);
 }
 
@@ -227,9 +244,14 @@ fs.writeFileSync(tmp, html);
 // — screenshotting this HTML at A4 width is how the layout gets eyeballed.
 if (process.env.KEEP_HTML) fs.writeFileSync(process.env.KEEP_HTML, html);
 
+// Chromium refuses to start as root without --no-sandbox. That is only ever true in a
+// container or CI; on a normal machine the flag is omitted so the browser sandbox stays on.
+const runningAsRoot = process.getuid && process.getuid() === 0;
+
 execFileSync(CHROME, [
   '--headless',
   '--disable-gpu',
+  ...(runningAsRoot ? ['--no-sandbox'] : []),
   '--no-pdf-header-footer',
   `--print-to-pdf=${outPath}`,
   'file://' + tmp,

@@ -16,6 +16,7 @@ root="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}
 
 file="$(node -e '
   let s = "";
+  process.stdin.setEncoding("utf8");
   process.stdin.on("data", (d) => (s += d)).on("end", () => {
     try {
       const input = JSON.parse(s).tool_input || {};
@@ -46,7 +47,7 @@ case "$file" in
   *04-audit-example*)
     run 'The audit verifier' '04-audit-example/verify-findings.mjs' || failed=1
     ;;
-  *workflow.json | */test/* | *logic-test.mjs)
+  *workflow.json | */test/* | test/* | *logic-test.mjs)
     run 'The logic tests' 'test/logic-test.mjs' || failed=1
     ;;
 esac
