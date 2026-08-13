@@ -344,6 +344,127 @@ const justUnder = runNode(canaryCode, [{ json: {} }], {}, { lastSuccessAt: Date.
 check('25 hours does not false-alarm', justUnder.silent, false);
 
 // ---------------------------------------------------------------------------
+console.log('\n05-jobs-board-monitor — diffing, filtering, DLQ, canary\n');
+
+const WF5 = '05-jobs-board-monitor/workflow.json';
+const selectCode    = loadNodeCode(WF5, 'Select New Postings');
+const monDlqCode    = loadNodeCode(WF5, 'Dead Letter Queue');
+const monCanaryCode = loadNodeCode(WF5, 'Canary Check');
+const recordCode    = loadNodeCode(WF5, 'Record Notified');
+
+/** Build a Discourse-shaped category listing. */
+const listing = (...topics) => [{ json: { topic_list: { topics } } }];
+const topic = (id, title, opts = {}) => ({
+  id,
+  title,
+  slug: String(title).toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40),
+  created_at: new Date(Date.now() - (opts.ageMinutes ?? 10) * 60000).toISOString(),
+  posts_count: opts.posts ?? 1,
+  pinned: opts.pinned ?? false,
+});
+
+// The cold-start bug this is built to avoid: a naive diff has an empty seen-set
+// on the first run, decides all thirty existing topics are new, and fires thirty
+// notifications at once.
+const store1 = {};
+const firstRun = runNode(selectCode, listing(topic(1, 'Need an n8n dev'), topic(2, 'Another job')), {}, store1);
+check('the first run notifies nothing at all', firstRun.length, 1);
+check('and reports the quiet path rather than looking broken', firstRun[0].json.none_new, true);
+check('and seeds every topic it saw', Object.keys(store1.seenTopics).length, 2);
+
+const monSecondPoll = runNode(selectCode, listing(topic(1, 'Need an n8n dev'), topic(3, 'Brand new job post')), {}, store1);
+check('a genuinely new topic on the next poll is surfaced', monSecondPoll.map(r => r.json.topic_id), [3]);
+check('and one already seen is not surfaced twice', monSecondPoll.length, 1);
+
+console.log('\n  filtering:\n');
+
+const store2 = { seenTopics: {} };
+const pinnedOnly = runNode(selectCode, listing(topic(10, 'Read this before posting', { pinned: true })), {}, store2);
+check('a pinned announcement never reaches the phone', pinnedOnly[0].json.none_new, true);
+
+// 23 [FOR HIRE] topics went up in the first 13 days of August and drew zero
+// replies between them. They are other freelancers, not buyers.
+const store3 = { seenTopics: {} };
+const promo = runNode(selectCode, listing(
+  topic(20, '[FOR HIRE] Senior n8n developer, 5 years'),
+  topic(21, 'Open to work - automation engineer'),
+  topic(22, 'Available for hire, n8n specialist'),
+  topic(23, 'Need someone to build an n8n workflow'),
+), {}, store3);
+check('freelancers advertising themselves are all dropped', promo.map(r => r.json.topic_id), [23]);
+
+// "looking for work" is self-promotion; "looking for help" is a buyer. The
+// distinction is one word and getting it wrong silently discards real jobs.
+const store3b = { seenTopics: {} };
+const nearMiss = runNode(selectCode, listing(topic(24, 'Looking for help syncing HubSpot into Sheets')), {}, store3b);
+check('but "looking for help" is a buyer and survives the filter', nearMiss.map(r => r.json.topic_id), [24]);
+
+console.log('\n  freshness — the only variable worth optimising:\n');
+
+const store4 = { seenTopics: {} };
+const monAged = runNode(selectCode, listing(
+  topic(30, 'Job A', { ageMinutes: 12 }),
+  topic(31, 'Job B', { ageMinutes: 300 }),
+  topic(32, 'Job C', { ageMinutes: 5000 }),
+), {}, store4);
+check('a 12-minute-old post is flagged fresh', monAged[0].json.freshness, 'fresh');
+check('a 5-hour-old post is today', monAged[1].json.freshness, 'today');
+check('a 3-day-old post is stale', monAged[2].json.freshness, 'stale');
+check('and the age is carried in minutes, not guessed at', monAged[0].json.age_minutes, 12);
+check('reply count excludes the original post', monAged[0].json.replies, 0);
+assert('the notification carries a working topic URL', monAged[0].json.url.startsWith('https://community.n8n.io/t/'));
+
+console.log('\n  bounded state:\n');
+
+const store5 = { seenTopics: { '900': Date.now() - 100 * 24 * 3600 * 1000, '901': Date.now() } };
+runNode(selectCode, listing(), {}, store5);
+check('a topic past the 90-day TTL is evicted', Object.keys(store5.seenTopics), ['901']);
+assert('and every poll stamps lastPollAt for the canary', typeof store5.lastPollAt === 'number');
+
+console.log('\n  dead letter queue:\n');
+
+const store6 = { seenTopics: { '555': Date.now() }, dlq: [] };
+const dlqOut = runNode(monDlqCode,
+  [{ json: { topic_id: 555, title: 'Lost one', url: 'https://community.n8n.io/t/x/555' }, error: { message: 'ECONNREFUSED' } }],
+  {}, store6);
+check('a failed notification is captured, not dropped', store6.dlq.length, 1);
+check('with the real error attached', store6.dlq[0].error, 'ECONNREFUSED');
+check('and marked replayable', dlqOut[0].json.replayable, true);
+// The interaction that is easy to get wrong: without releasing the topic, one
+// thirty-second outage means that job is silently never seen again.
+check('and the topic is released from the seen-set', store6.seenTopics['555'], undefined);
+const redetect = runNode(selectCode, listing(topic(555, 'Lost one')), {}, store6);
+check('so the next poll genuinely re-surfaces it', redetect.map(r => r.json.topic_id), [555]);
+
+console.log('\n  canary — watches polling, not findings:\n');
+
+// 2-3 addressable posts a month means weeks of no notifications is the EXPECTED
+// state. A canary that alarmed on that would cry wolf constantly.
+const quiet = runNode(monCanaryCode, [{ json: {} }], {},
+  { lastPollAt: Date.now() - 30 * 60000, lastNotifyAt: Date.now() - 40 * 24 * 3600 * 1000 })[0].json;
+check('forty days with no job found is still healthy', quiet.silent, false);
+check('because it watches polls, not notifications', quiet.verdict, 'watching');
+
+const stalled = runNode(monCanaryCode, [{ json: {} }], {}, { lastPollAt: Date.now() - 4 * 3600000 })[0].json;
+check('but four hours without a poll is an alarm', stalled.silent, true);
+const monJustUnder = runNode(monCanaryCode, [{ json: {} }], {}, { lastPollAt: Date.now() - 2.5 * 3600000 })[0].json;
+check('while 2.5 hours does not false-alarm', monJustUnder.silent, false);
+const neverPolled = runNode(monCanaryCode, [{ json: {} }], {}, {})[0].json;
+check('a monitor that has never polled reads as silent', neverPolled.silent, true);
+
+const store7 = {};
+const rec = runNode(recordCode, [{ json: { topic_id: 1 } }], {}, store7);
+check('a delivered notification is timestamped', typeof store7.lastNotifyAt, 'number');
+check('and counted', store7.notifyCount, 1);
+check('and the item keeps its topic', rec[0].json.topic_id, 1);
+
+// An ntfy topic is effectively a password: anyone who knows the string can read
+// the notifications. This repo is public, so committing a real one leaks it.
+assert('the ntfy topic is still a placeholder, not a real one committed by accident',
+  /CHANGE-ME/.test(selectCode),
+  'Replace the placeholder locally, never in the committed file.');
+
+// ---------------------------------------------------------------------------
 console.log(`\n${'-'.repeat(52)}`);
 console.log(`${passed} passed, ${failed} failed`);
 console.log(`${'-'.repeat(52)}\n`);

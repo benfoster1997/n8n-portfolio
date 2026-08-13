@@ -1,0 +1,545 @@
+{
+  "id": "jobs-board-monitor",
+  "name": "n8n Jobs Board Monitor (diffed, with DLQ and canary)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 10
+            }
+          ]
+        }
+      },
+      "id": "c5000000-0000-4000-8000-000000000001",
+      "name": "Poll Every 10 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -340,
+        320
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "c5000000-0000-4000-8000-000000000002",
+      "name": "Run Demo",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -340,
+        540
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://community.n8n.io/c/jobs/13.json",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "ben-foster-jobs-monitor/1.0 (+https://github.com/benfoster1997/n8n-portfolio)"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "c5000000-0000-4000-8000-000000000003",
+      "name": "Fetch Jobs Board",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -90,
+        320
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Sample listing, shaped exactly like Discourse's /c/jobs/13.json response.\n//\n// Lets the whole workflow be run and judged with no network and no account.\n// Four topics, chosen to exercise every branch: one ordinary hiring post, one\n// that is already three days old, one pinned announcement, and one freelancer\n// advertising himself.\n\nconst minutesAgo = m => new Date(Date.now() - m * 60000).toISOString();\n\nreturn [{ json: { topic_list: { topics: [\n  {\n    id: 999001,\n    title: 'Need an n8n workflow to pull invoices out of email attachments',\n    slug: 'need-an-n8n-workflow-to-pull-invoices-out-of-email-attachments',\n    created_at: minutesAgo(12),\n    posts_count: 1,\n    pinned: false,\n  },\n  {\n    id: 999002,\n    title: 'Looking for help syncing HubSpot deals into Google Sheets',\n    slug: 'looking-for-help-syncing-hubspot-deals-into-google-sheets',\n    created_at: minutesAgo(4320),\n    posts_count: 7,\n    pinned: false,\n  },\n  {\n    id: 999003,\n    title: 'Read this before posting in Jobs',\n    slug: 'read-this-before-posting-in-jobs',\n    created_at: minutesAgo(525600),\n    posts_count: 1,\n    pinned: true,\n  },\n  {\n    id: 999004,\n    title: '[FOR HIRE] Senior n8n developer, 5 years experience, available now',\n    slug: 'for-hire-senior-n8n-developer',\n    created_at: minutesAgo(30),\n    posts_count: 1,\n    pinned: false,\n  },\n] } } }];"
+      },
+      "id": "c5000000-0000-4000-8000-000000000004",
+      "name": "Load Demo Topics",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -90,
+        540
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Select new postings.\n//\n// Discourse hands back the whole category listing on every poll, so the job is\n// working out which topics are genuinely new and which are the same thirty that\n// were there ten minutes ago.\n//\n// Three things are dropped before anything reaches the phone:\n//   - pinned topics, which are the category's own announcements, never a job\n//   - [FOR HIRE] posts, which are other freelancers advertising, not buyers\n//   - anything already notified, tracked in workflow static data\n//\n// And one behaviour that is easy to get wrong and expensive to discover late:\n// on the very first run the seen-set is empty, so a naive diff treats all thirty\n// existing topics as new and fires thirty notifications at once. The first run\n// seeds the set and stays deliberately silent.\n\n// ── the only line you need to change ────────────────────────────────────────\n// An ntfy topic is effectively a password: anyone who knows the string can read\n// your notifications. Pick something long and unguessable, and do not commit it.\nconst NTFY_TOPIC = 'CHANGE-ME-to-something-long-and-unguessable';\n// ───────────────────────────────────────────────────────────────────────────\n\nconst SELF_PROMO = /\\[?\\s*for\\s+hire\\s*\\]?|available for (hire|work)|open to work|looking for work|seeking (a )?(role|work|job)/i;\nconst TTL_MS = 90 * 24 * 60 * 60 * 1000;   // remember a topic for 90 days\nconst MAX_ENTRIES = 2000;\n\nconst store = $getWorkflowStaticData('global');\nconst firstRun = store.seenTopics === undefined;\nstore.seenTopics = store.seenTopics || {};\n\nconst now = Date.now();\nstore.lastPollAt = now;                    // the canary watches this, not notifications\n\n// Evict anything past its TTL, so the set cannot grow without limit.\nfor (const [id, ts] of Object.entries(store.seenTopics)) {\n  if (now - ts > TTL_MS) delete store.seenTopics[id];\n}\n\nconst topics = [];\nfor (const item of $input.all()) {\n  const list = item.json && item.json.topic_list && item.json.topic_list.topics;\n  if (Array.isArray(list)) topics.push(...list);\n}\n\nconst out = [];\nfor (const t of topics) {\n  const id = String(t.id);\n  if (store.seenTopics[id]) continue;\n\n  // Marked seen before the filters, so a pinned or [FOR HIRE] topic is judged\n  // once and never re-examined on every subsequent poll.\n  store.seenTopics[id] = now;\n\n  if (t.pinned || t.pinned_globally) continue;\n  if (SELF_PROMO.test(t.title || '')) continue;\n  if (firstRun) continue;\n\n  const createdMs = Date.parse(t.created_at);\n  const ageMinutes = Number.isNaN(createdMs) ? null : Math.round((now - createdMs) / 60000);\n\n  // Speed is the only variable in this channel worth optimising: the measured\n  // window for a reply that gets read is same-day, so age is the first thing\n  // to know and it goes at the front of the notification.\n  const freshness = ageMinutes === null ? 'unknown'\n    : ageMinutes <= 60 ? 'fresh'\n    : ageMinutes <= 1440 ? 'today'\n    : 'stale';\n\n  out.push({ json: {\n    topic_id: t.id,\n    title: t.title,\n    url: 'https://community.n8n.io/t/' + t.slug + '/' + t.id,\n    created_at: t.created_at,\n    age_minutes: ageMinutes,\n    freshness,\n    replies: Math.max(0, (t.posts_count == null ? 1 : t.posts_count) - 1),\n    notify_url: 'https://ntfy.sh/' + NTFY_TOPIC,\n    none_new: false,\n  }});\n}\n\n// Hard cap: drop the oldest if the set has grown past the limit.\nconst ids = Object.keys(store.seenTopics);\nif (ids.length > MAX_ENTRIES) {\n  ids.sort((a, b) => store.seenTopics[a] - store.seenTopics[b])\n     .slice(0, ids.length - MAX_ENTRIES)\n     .forEach(k => delete store.seenTopics[k]);\n}\n\n// Always return something, so the quiet path is visible in the execution log\n// rather than looking like the workflow silently did nothing.\nreturn out.length ? out : [{ json: {\n  none_new: true,\n  first_run: firstRun,\n  seeded: firstRun ? Object.keys(store.seenTopics).length : 0,\n  checked_at: new Date(now).toISOString(),\n} }];"
+      },
+      "id": "c5000000-0000-4000-8000-000000000005",
+      "name": "Select New Postings",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        170,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-new",
+              "leftValue": "={{ $json.none_new }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "false",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "c5000000-0000-4000-8000-000000000006",
+      "name": "Anything New?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        430,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.notify_url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Title",
+              "value": "=n8n jobs: {{ $json.freshness }} ({{ $json.age_minutes }}m old)"
+            },
+            {
+              "name": "Priority",
+              "value": "={{ $json.freshness === \"fresh\" ? \"high\" : \"default\" }}"
+            },
+            {
+              "name": "Tags",
+              "value": "briefcase"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "text/plain",
+        "body": "={{ $json.title + \"\\n\\n\" + $json.url + \"\\n\" + $json.replies + \" replies so far\" }}",
+        "options": {
+          "timeout": 8000
+        }
+      },
+      "id": "c5000000-0000-4000-8000-000000000007",
+      "name": "Notify Phone",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        690,
+        320
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Record that the notification actually went out.\n//\n// Separate from the poll timestamp on purpose. Notifications are supposed to be\n// rare — roughly two or three addressable posts a month — so silence here is\n// normal and must never be treated as a fault.\n\nconst store = $getWorkflowStaticData('global');\nstore.lastNotifyAt = Date.now();\nstore.notifyCount = (store.notifyCount || 0) + 1;\n\nreturn $input.all().map(item => ({ json: {\n  ...item.json,\n  notified_at: new Date(store.lastNotifyAt).toISOString(),\n  notify_count_total: store.notifyCount,\n} }));"
+      },
+      "id": "c5000000-0000-4000-8000-000000000008",
+      "name": "Record Notified",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        950,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Dead letter queue.\n//\n// A notification that cannot be delivered is kept with its full payload and the\n// real error, ready to be sent again once the far end is back. The alternative\n// is finding out weeks later that the one job worth replying to was lost to a\n// thirty-second outage.\n//\n// It also releases the topic from the seen-set, so the next poll re-detects it\n// rather than treating it as already handled. That interaction is the one that\n// is easy to get wrong: without it, a failed notification means the topic is\n// silently never seen again.\n\nconst store = $getWorkflowStaticData('global');\nstore.dlq = store.dlq || [];\n\nconst out = [];\nfor (const item of $input.all()) {\n  const payload = item.json || {};\n  const topicId = payload.topic_id != null ? String(payload.topic_id) : null;\n\n  if (topicId && store.seenTopics) delete store.seenTopics[topicId];\n\n  const entry = {\n    failed_at: new Date().toISOString(),\n    error: (item.error && (item.error.message || item.error)) || payload.error || 'unknown error',\n    topic_id: payload.topic_id ?? null,\n    title: payload.title ?? null,\n    url: payload.url ?? null,\n    payload,\n    replayable: true,\n    fingerprint_released: Boolean(topicId),\n  };\n\n  store.dlq.push(entry);\n  out.push({ json: entry });\n}\n\nreturn out;"
+      },
+      "id": "c5000000-0000-4000-8000-000000000009",
+      "name": "Dead Letter Queue",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        950,
+        440
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "includeOtherFields": true,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "nn-1",
+              "name": "status",
+              "value": "nothing new",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "c5000000-0000-4000-8000-000000000010",
+      "name": "Nothing New",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        690,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 6
+            }
+          ]
+        }
+      },
+      "id": "c5000000-0000-4000-8000-000000000011",
+      "name": "Canary Schedule",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        170,
+        860
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Canary.\n//\n// This watches whether the MONITOR is still running, not whether it has found\n// anything. That distinction is the whole point: the board carries roughly two\n// or three addressable posts a month, so weeks of no notifications is the\n// expected state and alarming on it would cry wolf constantly.\n//\n// A poll that has not happened, on the other hand, means nobody is watching the\n// one channel where arriving early is the only thing that matters.\n\nconst QUIET_HOURS = 3;   // 18 consecutive missed polls at a 10-minute interval\n\nconst store = $getWorkflowStaticData('global');\nconst last = store.lastPollAt ?? null;\nconst hoursSince = last === null ? null : (Date.now() - last) / 3600000;\nconst silent = last === null || hoursSince > QUIET_HOURS;\n\nreturn [{ json: {\n  checked_at: new Date().toISOString(),\n  last_poll_at: last === null ? null : new Date(last).toISOString(),\n  hours_since_last_poll: hoursSince === null ? null : Math.round(hoursSince * 10) / 10,\n  last_notify_at: store.lastNotifyAt ? new Date(store.lastNotifyAt).toISOString() : null,\n  notify_count_total: store.notifyCount || 0,\n  dlq_depth: (store.dlq || []).length,\n  silent,\n  verdict: silent\n    ? 'MONITOR HAS NOT POLLED IN ' + QUIET_HOURS + 'H — nobody is watching the board'\n    : 'watching',\n} }];"
+      },
+      "id": "c5000000-0000-4000-8000-000000000012",
+      "name": "Canary Check",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        430,
+        860
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-silent",
+              "leftValue": "={{ $json.silent }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "c5000000-0000-4000-8000-000000000013",
+      "name": "Monitor Silent?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        690,
+        860
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "includeOtherFields": true,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "al-1",
+              "name": "status",
+              "value": "ALERT — monitor is not polling",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "c5000000-0000-4000-8000-000000000014",
+      "name": "Raise Alert",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        950,
+        800
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "includeOtherFields": true,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "wt-1",
+              "name": "status",
+              "value": "watching",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "c5000000-0000-4000-8000-000000000015",
+      "name": "Healthy",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        950,
+        920
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## What this is\\n\\nA monitor for the n8n Community **Jobs** board.\\n\\nThe measured position: roughly 5–8 genuine hiring posts a month, of which 2–3 are worth answering. Replies that get read arrive the **same day**. Thread position does not matter.\\n\\nSo the only variable worth moving is **how fast you find out** — and you cannot watch a forum from under a boiler.\\n\\n**Run Demo** works offline. No account, no key, no network.",
+        "height": 340,
+        "width": 380,
+        "color": 4
+      },
+      "id": "c5000000-0000-4000-8000-000000000016",
+      "name": "Note What",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -380,
+        -60
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## The first run says nothing\\n\\nOn a cold start the seen-set is empty, so a naive diff would call all thirty existing topics new and fire thirty notifications at once.\\n\\nThe first run **seeds the set and stays silent**. There is a test for it.\\n\\nPinned announcements and `[FOR HIRE]` posts are dropped here too — 23 of those went up in the first 13 days of August and drew zero replies between them.",
+        "height": 320,
+        "width": 360,
+        "color": 5
+      },
+      "id": "c5000000-0000-4000-8000-000000000017",
+      "name": "Note Diff",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        130,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Failure is kept, not lost\\n\\nA notification that will not send is parked with its payload and the real error.\\n\\nIt **also releases the topic from the seen-set**, so the next poll finds it again. Without that, one thirty-second outage means the job you wanted is silently never seen.",
+        "height": 280,
+        "width": 340,
+        "color": 3
+      },
+      "id": "c5000000-0000-4000-8000-000000000018",
+      "name": "Note DLQ",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        950,
+        20
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Canary — is anyone watching?\\n\\nThis checks whether the **monitor polled**, not whether it found anything.\\n\\nThat distinction matters: 2–3 addressable posts a month means weeks of no notifications is the *expected* state. Alarming on that would cry wolf constantly.\\n\\nA poll that stopped happening is the real fault, and it is silent.",
+        "height": 300,
+        "width": 360,
+        "color": 5
+      },
+      "id": "c5000000-0000-4000-8000-000000000019",
+      "name": "Note Canary",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        130,
+        1060
+      ]
+    }
+  ],
+  "connections": {
+    "Poll Every 10 Minutes": {
+      "main": [
+        [
+          {
+            "node": "Fetch Jobs Board",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run Demo": {
+      "main": [
+        [
+          {
+            "node": "Load Demo Topics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Jobs Board": {
+      "main": [
+        [
+          {
+            "node": "Select New Postings",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Dead Letter Queue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Demo Topics": {
+      "main": [
+        [
+          {
+            "node": "Select New Postings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Select New Postings": {
+      "main": [
+        [
+          {
+            "node": "Anything New?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Anything New?": {
+      "main": [
+        [
+          {
+            "node": "Notify Phone",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Nothing New",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify Phone": {
+      "main": [
+        [
+          {
+            "node": "Record Notified",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Dead Letter Queue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Canary Schedule": {
+      "main": [
+        [
+          {
+            "node": "Canary Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Canary Check": {
+      "main": [
+        [
+          {
+            "node": "Monitor Silent?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Monitor Silent?": {
+      "main": [
+        [
+          {
+            "node": "Raise Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Healthy",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

@@ -1,8 +1,8 @@
 # n8n automation portfolio
 
-Three working n8n workflows, built to demonstrate how I approach business automation,
+Four working n8n workflows, built to demonstrate how I approach business automation,
 plus a worked example of reviewing an automation somebody else already built.
-All three run end-to-end with no paid services.
+All four run end-to-end with no paid services.
 
 **These are self-initiated demonstration projects, not client work.** Sample data is
 invented. Nothing here represents a real customer.
@@ -13,6 +13,7 @@ invented. Nothing here represents a real customer.
 | 2 | [Inbound Enquiry Triage & Reply Drafter](02-enquiry-triage/) | Classifying incoming enquiries by intent, scoring them by deterministic rules, and drafting replies that a human sends |
 | 3 | [Reliable Event Pipeline → Slack](03-reliable-pipeline/) | Running unattended: idempotency, a replayable dead-letter queue, an audit trail and a canary that catches silence |
 | 4 | [Audit example](04-audit-example/) | ⚠️ **Deliberately flawed — the subject, not a sample of my work.** An ordinary integration of the kind that already exists in a lot of businesses, and the written report from reviewing it |
+| 5 | [Jobs Board Monitor](05-jobs-board-monitor/) | Something I built because I needed it: polls a public forum, diffs against what it has already seen, and pushes new postings to my phone. A silent first run, a dead-letter queue that releases the item so it is re-detected, and a canary that watches whether it *polled* rather than whether it *found* anything |
 
 ---
 
@@ -53,6 +54,7 @@ not do**, and what monthly maintenance covers.
 | 2 — Enquiry Triage | [RUNBOOK.md](02-enquiry-triage/RUNBOOK.md) · [PDF](02-enquiry-triage/RUNBOOK.pdf) |
 | 3 — Reliable Pipeline | [inside its README](03-reliable-pipeline/README.md#runbook) |
 | 4 — Audit example | Not applicable — it is the *subject* of an audit. Its report instead carries a **runbook gap list**: what someone covering for you could not work out |
+| 5 — Jobs Board Monitor | Not applicable — it is a tool I run for myself, not a client deliverable. Its README carries the equivalent: how it behaves on a cold start, and an explicit **what this does not do** |
 
 The PDFs are what a client is actually handed. They are generated from the markdown by
 `node render-pdf.mjs <file.md>`, so the two cannot drift apart.
@@ -107,7 +109,7 @@ from what actually runs in n8n.
 node test/logic-test.mjs
 ```
 
-62 assertions, no dependencies, no API key needed. They are also run under several timezones,
+92 assertions, no dependencies, no API key needed. They are also run under several timezones,
 because the first bug they caught was a date being formatted via `toISOString()` — which, under
 British Summer Time, silently booked every spelled-out invoice date one day early and could put
 an invoice in the wrong VAT quarter.
@@ -140,6 +142,9 @@ node 04-audit-example/verify-findings.mjs
   naive-workflow.json   deliberately flawed — the subject of the audit
   AUDIT-REPORT.md       the deliverable: risk register, backlog, runbook gaps
   verify-findings.mjs   node 04-audit-example/verify-findings.mjs
+  README.md
+05-jobs-board-monitor/
+  workflow.json     import this — Run Demo works offline, no key, no network
   README.md
 test/
   logic-test.mjs    node test/logic-test.mjs
