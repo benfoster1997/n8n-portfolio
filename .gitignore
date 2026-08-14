@@ -2,3 +2,9 @@ node_modules/
 .DS_Store
 *.log
 .env
+
+# Local workflow copies carrying a real ntfy topic. An ntfy topic is effectively
+# a password — anyone who knows the string can read the notifications — and this
+# repo is public. The committed workflow.json keeps the CHANGE-ME placeholder
+# (there is a test asserting exactly that); the real topic lives only here.
+*.local.json
