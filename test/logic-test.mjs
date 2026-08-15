@@ -414,6 +414,51 @@ check('and the age is carried in minutes, not guessed at', monAged[0].json.age_m
 check('reply count excludes the original post', monAged[0].json.replies, 0);
 assert('the notification carries a working topic URL', monAged[0].json.url.startsWith('https://community.n8n.io/t/'));
 
+console.log('\n  re-listings vs genuinely new posts:\n');
+
+// Discourse orders the listing by ACTIVITY, not by creation. A month-old thread
+// that collects one reply re-enters the top thirty and looks exactly like a new
+// post to a pure diff. On 15 Aug that delivered a 269-day-old thread as a
+// full-priority alert, twice in one day.
+const store4b = { seenTopics: {}, lastPollAt: Date.now() - 10 * 60000 };
+const mixed = runNode(selectCode, listing(
+  topic(33, 'Month-old thread someone just replied to', { ageMinutes: 33 * 1440 }),
+  topic(34, 'Posted four minutes ago', { ageMinutes: 4 }),
+), {}, store4b);
+check('a re-listed old thread is not treated as new', mixed[0].json.is_new, false);
+check('and is downgraded so it never buzzes', mixed[0].json.priority, 'min');
+check('and says re-listed rather than claiming freshness', mixed[0].json.notify_title, 'n8n jobs: re-listed (33d old)');
+check('but it is still delivered, not dropped', mixed.length, 2);
+check('a post made since the last poll is new', mixed[1].json.is_new, true);
+check('and a minutes-old one still comes through at high priority', mixed[1].json.priority, 'high');
+
+// The gap this must not reintroduce: the 14 Aug execution log has gaps of 82 and
+// 151 minutes where the Mac slept. A flat "older than a day is stale" rule would
+// silently swallow every post made over a sleeping weekend.
+const store4c = { seenTopics: {}, lastPollAt: Date.now() - 24 * 3600000 };
+const afterSleep = runNode(selectCode,
+  listing(topic(35, 'Posted while the machine was asleep', { ageMinutes: 12 * 60 })), {}, store4c);
+check('a post made during a 24-hour sleep is still new', afterSleep[0].json.is_new, true);
+check('and is not silenced for being over a day old', afterSleep[0].json.priority, 'default');
+
+// An unparseable date fails loud. A wrong buzz is cheaper than a silent drop.
+const store4d = { seenTopics: {}, lastPollAt: Date.now() - 10 * 60000 };
+const undated = runNode(selectCode,
+  [{ json: { topic_list: { topics: [{ ...topic(36, 'No usable date'), created_at: 'not-a-date' }] } } }], {}, store4d);
+check('a topic with an unreadable date is treated as new', undated[0].json.is_new, true);
+check('and says so rather than inventing an age', undated[0].json.notify_title, 'n8n jobs: unknown (age unknown)');
+
+// "387496m old" is unreadable on a lock screen; "269d old" is not.
+// Polled a day ago, so the 12-hour-old post is genuinely new and the 269-day-old
+// one is still a re-listing — both labels exercised in the same run.
+const store4e = { seenTopics: {}, lastPollAt: Date.now() - 24 * 3600000 };
+const ages = runNode(selectCode, listing(
+  topic(37, 'Hours', { ageMinutes: 12 * 60 }),
+  topic(38, 'Days', { ageMinutes: 269 * 1440 }),
+), {}, store4e);
+check('an age in hours reads as hours', ages[0].json.notify_title, 'n8n jobs: today (12h old)');
+check('and a 269-day-old thread reads as days, not 387360 minutes', ages[1].json.notify_title, 'n8n jobs: re-listed (269d old)');
+
 console.log('\n  bounded state:\n');
 
 const store5 = { seenTopics: { '900': Date.now() - 100 * 24 * 3600 * 1000, '901': Date.now() } };
@@ -457,6 +502,23 @@ const rec = runNode(recordCode, [{ json: { topic_id: 1 } }], {}, store7);
 check('a delivered notification is timestamped', typeof store7.lastNotifyAt, 'number');
 check('and counted', store7.notifyCount, 1);
 check('and the item keeps its topic', rec[0].json.topic_id, 1);
+
+console.log('\n  the sticky notes actually render:\n');
+
+// Every note was written with literal backslash-n instead of real newlines, so
+// each one rendered as a single unbroken paragraph and the `##` headings never
+// became headings. Invisible in the JSON, obvious the moment you open the canvas.
+const stickies = JSON.parse(readFileSync(join(root, WF5), 'utf8'))
+  .nodes.filter(n => n.type.includes('stickyNote'));
+check('all four sticky notes are still there', stickies.length, 4);
+for (const note of stickies) {
+  assert(`${note.name} uses real newlines, not the two characters \\ and n`,
+    !note.parameters.content.includes('\\n'),
+    'A literal backslash-n renders as text and flattens the whole note.');
+  assert(`${note.name} still opens with a markdown heading`,
+    /^##\s/.test(note.parameters.content),
+    'The heading is what makes the note readable at a glance on the canvas.');
+}
 
 // An ntfy topic is effectively a password: anyone who knows the string can read
 // the notifications. This repo is public, so committing a real one leaks it.
