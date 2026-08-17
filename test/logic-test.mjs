@@ -399,6 +399,47 @@ const store3b = { seenTopics: {} };
 const nearMiss = runNode(selectCode, listing(topic(24, 'Looking for help syncing HubSpot into Sheets')), {}, store3b);
 check('but "looking for help" is a buyer and survives the filter', nearMiss.map(r => r.json.topic_id), [24]);
 
+// `[FOR HIRE]` is only the tidiest shape of the advert. Measured against 150
+// real titles on 17 Aug, the same people also write "Available:", "[Available]",
+// "Available for Remote Work" and "Senior engineer available for n8n work" —
+// and one of those reached the phone that morning.
+const store3c = { seenTopics: {} };
+const availables = runNode(selectCode, listing(
+  topic(25, 'Available: AI Automation Engineer — n8n + LLM + WhatsApp (Shipped, Production)'),
+  topic(26, '[Available] AI Automation Engineer & n8n Specialist $15-25/hr'),
+  topic(27, 'N8n Automation Developer Available for Freelance Work'),
+  topic(28, 'Senior engineer available for n8n work — AI agents, migrations'),
+  topic(29, 'Especialista en n8n — Disponible para proyectos freelance'),
+  topic(40, '[Offering Assistance] YIS Agency: Free or Low-Cost n8n Automations'),
+  topic(41, 'Need an n8n workflow built for order intake'),
+), {}, store3c);
+check('every shape of "available" advert is dropped', availables.map(r => r.json.topic_id), [41]);
+
+// The asymmetry that decides the ambiguous cases: dropping a buyer loses a job
+// silently, keeping an advert costs one line in a list. So a buyer's own words
+// override the filter, and the override can only ever cost an extra
+// notification. "Anyone available to fix a broken webhook?" is a customer.
+const store3d = { seenTopics: {} };
+const buyersSayingAvailable = runNode(selectCode, listing(
+  topic(42, 'Anyone available to fix a broken webhook? Paid.'),
+  topic(43, 'n8n developer position available — remote, £400/day'),
+  topic(44, 'Offering $2,000 for a complete n8n build'),
+  topic(45, 'Budget available for ongoing n8n work'),
+  topic(46, 'Paid opportunity available for an n8n expert'),
+), {}, store3d);
+check('a buyer who happens to say "available" is never dropped',
+  buyersSayingAvailable.map(r => r.json.topic_id), [42, 43, 44, 45, 46]);
+
+// `freelance`, `specialist` and `developer` occur on both sides of this board in
+// roughly equal numbers, so neither list may use them as evidence.
+const store3e = { seenTopics: {} };
+const bothSides = runNode(selectCode, listing(
+  topic(47, 'Looking for skilled n8n freelancers'),
+  topic(48, '🚀 Hiring: Freelance AI Automation Engineer (Remote)'),
+  topic(49, '[Freelance] Looking for an n8n + Python Instructor (Remote, DE/EN)'),
+), {}, store3e);
+check('buyers using the word freelance all survive', bothSides.map(r => r.json.topic_id), [47, 48, 49]);
+
 console.log('\n  freshness — the only variable worth optimising:\n');
 
 const store4 = { seenTopics: {} };
