@@ -522,6 +522,70 @@ check('and the topic is released from the seen-set', store6.seenTopics['555'], u
 const redetect = runNode(selectCode, listing(topic(555, 'Lost one')), {}, store6);
 check('so the next poll genuinely re-surfaces it', redetect.map(r => r.json.topic_id), [555]);
 
+console.log('\n  the DLQ is bounded, and no longer 5.7KB per failure:\n');
+
+// The shape n8n actually produces on an error output: the error object arrives
+// on item.json, NOT on item.error. The fixture above sets item.error, which is
+// why the old code looked correct in tests while production stored the whole
+// object — stack trace included — and then stored it AGAIN inside payload.
+// 5.2KB of a 5.7KB entry, rewritten into the database every ten minutes.
+const realShape = {
+  json: {
+    timestamp: '2026-08-17T07:13:22.919+01:00',
+    'Readable date': 'August 17th 2026, 7:13:22 am',
+    error: {
+      message: 'getaddrinfo ENOTFOUND community.n8n.io',
+      name: 'Error',
+      stack: 'Error: getaddrinfo ENOTFOUND community.n8n.io\n    at AxiosError.from (...)\n'.repeat(30),
+    },
+  },
+};
+const store9 = { seenTopics: {}, dlq: [] };
+runNode(monDlqCode, [realShape], {}, store9);
+const fetchEntry = store9.dlq[0];
+check('the error is stored as a message, not the whole object',
+  fetchEntry.error, 'getaddrinfo ENOTFOUND community.n8n.io');
+check('a failed fetch keeps no payload — the trigger output is no use to anyone',
+  fetchEntry.payload, null);
+check('and is not claimed to be replayable, because there is nothing to re-send',
+  fetchEntry.replayable, false);
+assert(`the whole entry is now small (${JSON.stringify(fetchEntry).length} bytes)`,
+  JSON.stringify(fetchEntry).length < 400,
+  'A fetch failure used to cost 5,726 bytes, most of it a stack trace stored twice.');
+
+// A failed NOTIFICATION is the case that genuinely can be sent again, so it
+// keeps its payload — minus the duplicated error.
+const store10 = { seenTopics: { '888': Date.now() }, dlq: [] };
+const notifyEntry = runNode(monDlqCode, [{
+  json: { topic_id: 888, title: 'Real job', url: 'https://community.n8n.io/t/x/888', error: { message: 'ECONNREFUSED', stack: 'x'.repeat(2000) } },
+}], {}, store10)[0].json;
+check('a failed notification stays replayable', notifyEntry.replayable, true);
+check('and keeps what it needs to be re-sent', notifyEntry.payload.title, 'Real job');
+assert('but not a second copy of its own error',
+  !('error' in notifyEntry.payload),
+  'The error is already on the entry; keeping it twice is what made these huge.');
+
+// Unbounded growth is finding #3 of the audit in this repo — "does anything
+// accumulate forever?" — and this queue had neither a TTL nor a cap while the
+// seen-set three nodes away had both.
+const old = (days) => ({ failed_at: new Date(Date.now() - days * 86400000).toISOString(), error: 'old' });
+const store11 = { seenTopics: {}, dlq: [old(45), old(31), old(29), old(1)] };
+runNode(monDlqCode, [{ json: {}, error: { message: 'fresh' } }], {}, store11);
+check('failures past 30 days are evicted', store11.dlq.length, 3);
+check('and the recent ones survive', store11.dlq.map(e => e.error), ['old', 'old', 'fresh']);
+
+const store12 = { seenTopics: {}, dlq: Array.from({ length: 60 }, () => old(0)) };
+runNode(monDlqCode, [{ json: {}, error: { message: 'newest' } }], {}, store12);
+check('and the queue is hard-capped', store12.dlq.length, 50);
+check('keeping the newest, not the oldest', store12.dlq[store12.dlq.length - 1].error, 'newest');
+
+// Dropping the only record of a failure is precisely what this queue exists to
+// prevent, so an unreadable date is kept and left to the cap.
+const store13 = { seenTopics: {}, dlq: [{ failed_at: 'not-a-date', error: 'undated' }] };
+runNode(monDlqCode, [{ json: {}, error: { message: 'fresh' } }], {}, store13);
+check('an entry with an unreadable date is kept, not silently discarded',
+  store13.dlq.map(e => e.error), ['undated', 'fresh']);
+
 console.log('\n  canary — watches polling, not findings:\n');
 
 // 2-3 addressable posts a month means weeks of no notifications is the EXPECTED
