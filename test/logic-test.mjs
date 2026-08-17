@@ -546,6 +546,51 @@ const wasOff = runNode(monCanaryCode, [{ json: {} }], {}, { lastPollAt: Date.now
 check('a machine that was off is silent', wasOff.silent, true);
 check('but not a broken fetch', wasOff.fetch_broken, false);
 
+console.log('\n  the alert leg — wired to the unambiguous fault only:\n');
+
+// The canary spent its first weeks unable to reach anything: Raise Alert was a
+// terminal Set node. It now ends at an ntfy call, but only for `fetch_broken`.
+// Wiring it to `silent` instead would buzz every morning the lid had been shut,
+// and it could never catch a deactivated workflow anyway — the canary runs
+// inside the thing it is watching.
+const wf5 = JSON.parse(readFileSync(join(root, WF5), 'utf8'));
+const node5 = (name) => wf5.nodes.find(n => n.name === name);
+const targets = (name, output = 0) =>
+  (wf5.connections[name]?.main?.[output] ?? []).map(c => c.node);
+
+check('the canary gate asks whether the fetch is broken',
+  node5('Fetch Broken?').parameters.conditions.conditions[0].leftValue, '={{ $json.fetch_broken }}');
+check('and the alert path now ends at a notification', targets('Raise Alert'), ['Notify Canary']);
+check('reached from the true branch of the gate', targets('Fetch Broken?', 0), ['Raise Alert']);
+check('while the healthy branch still goes nowhere', targets('Healthy'), []);
+
+// The trap this avoids: the DLQ reads an entry with no topic_id as a failed
+// FETCH and increments the streak. Routing the alert's own failures there would
+// let a broken alert manufacture the fault it exists to report.
+assert('a failed alert cannot feed the DLQ and inflate the streak',
+  !targets('Notify Canary', 0).includes('Dead Letter Queue') &&
+  !targets('Notify Canary', 1).includes('Dead Letter Queue'),
+  'The alert must never be able to report a fault it caused itself.');
+
+const alertNode = node5('Notify Canary');
+check('the alert retries as far as n8n allows', alertNode.maxTries, 5);
+check('and waits as long as n8n allows', alertNode.waitBetweenTries, 5000);
+
+const alerting = runNode(monCanaryCode, [{ json: {} }], {},
+  { lastPollAt: Date.now() - 5 * 60000, fetchFailStreak: 4, lastFetchFailAt: Date.now() - 60000 })[0].json;
+assert('the canary builds its own ntfy URL', /^https:\/\/ntfy\.sh\/.+/.test(alerting.notify_url));
+check('and asks for a priority that actually buzzes', alerting.notify_priority, 'high');
+assert('and names the fault on the lock screen', /unreachable/i.test(alerting.notify_title));
+
+// Two Code nodes, no shared module between them. If one topic is ever changed
+// and the other is not, the alert silently goes to a topic nobody is subscribed
+// to — which looks exactly like no alert at all.
+const topicOf = (code) => code.match(/const NTFY_TOPIC = '([^']+)';/)?.[1];
+check('both legs send to the same topic', topicOf(monCanaryCode), topicOf(selectCode));
+assert('and the canary leg has not leaked a real one either',
+  /CHANGE-ME/.test(monCanaryCode),
+  'Replace the placeholder locally, never in the committed file.');
+
 // n8n clamps both retry settings at runtime, in workflow-execute.js:
 //   maxTries         = Math.min(5, Math.max(2, maxTries || 3))
 //   waitBetweenTries = Math.min(5000, Math.max(0, waitBetweenTries || 1000))

@@ -238,7 +238,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Canary.\n//\n// This watches whether the MONITOR is still running, not whether it has found\n// anything. That distinction is the whole point: the board carries roughly two\n// or three addressable posts a month, so weeks of no notifications is the\n// expected state and alarming on it would cry wolf constantly.\n//\n// A poll that has not happened, on the other hand, means nobody is watching the\n// one channel where arriving early is the only thing that matters.\n\nconst QUIET_HOURS = 3;   // 18 consecutive missed polls at a 10-minute interval\nconst FAIL_STREAK_ALARM = 3;\n\n// Two different faults, deliberately kept apart.\n//\n// `silent` means no poll has run. On a laptop that is usually just a closed lid,\n// which is why nothing here is wired to the phone: it would fire every morning.\n//\n// `fetch_broken` means polls ARE running and every one of them is failing to\n// reach the board. That cannot be explained by sleep, so it is the signal worth\n// acting on. Keeping the two separate is what lets the alert leg, if it is ever\n// connected, fire on the unambiguous one alone.\n\nconst store = $getWorkflowStaticData('global');\nconst last = store.lastPollAt ?? null;\nconst hoursSince = last === null ? null : (Date.now() - last) / 3600000;\nconst silent = last === null || hoursSince > QUIET_HOURS;\nconst failStreak = store.fetchFailStreak || 0;\nconst fetchBroken = failStreak >= FAIL_STREAK_ALARM;\n\nreturn [{ json: {\n  checked_at: new Date().toISOString(),\n  last_poll_at: last === null ? null : new Date(last).toISOString(),\n  hours_since_last_poll: hoursSince === null ? null : Math.round(hoursSince * 10) / 10,\n  last_notify_at: store.lastNotifyAt ? new Date(store.lastNotifyAt).toISOString() : null,\n  notify_count_total: store.notifyCount || 0,\n  dlq_depth: (store.dlq || []).length,\n  consecutive_fetch_failures: failStreak,\n  last_fetch_fail_at: store.lastFetchFailAt ? new Date(store.lastFetchFailAt).toISOString() : null,\n  fetch_broken: fetchBroken,\n  silent,\n  verdict: fetchBroken\n    ? 'FETCH FAILING \u2014 ' + failStreak + ' polls in a row could not reach the board'\n    : silent\n    ? 'MONITOR HAS NOT POLLED IN ' + QUIET_HOURS + 'H \u2014 nobody is watching the board'\n    : 'watching',\n} }];"
+        "jsCode": "// Canary.\n//\n// This watches whether the MONITOR is still running, not whether it has found\n// anything. That distinction is the whole point: the board carries roughly two\n// or three addressable posts a month, so weeks of no notifications is the\n// expected state and alarming on it would cry wolf constantly.\n//\n// A poll that has not happened, on the other hand, means nobody is watching the\n// one channel where arriving early is the only thing that matters.\n\nconst QUIET_HOURS = 3;   // 18 consecutive missed polls at a 10-minute interval\n\n// \u2500\u2500 the only line you need to change \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n// The same ntfy topic the poll leg uses. It is repeated here rather than shared\n// because two Code nodes have no module in common; a test asserts the two\n// strings are identical, so they cannot drift apart unnoticed.\nconst NTFY_TOPIC = 'CHANGE-ME-to-something-long-and-unguessable';\n// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nconst FAIL_STREAK_ALARM = 3;\n\n// Two different faults, deliberately kept apart.\n//\n// `silent` means no poll has run. On a laptop that is usually just a closed lid,\n// which is why nothing here is wired to the phone: it would fire every morning.\n//\n// `fetch_broken` means polls ARE running and every one of them is failing to\n// reach the board. That cannot be explained by sleep, so it is the signal worth\n// acting on. Keeping the two separate is what lets the alert leg, if it is ever\n// connected, fire on the unambiguous one alone.\n\nconst store = $getWorkflowStaticData('global');\nconst last = store.lastPollAt ?? null;\nconst hoursSince = last === null ? null : (Date.now() - last) / 3600000;\nconst silent = last === null || hoursSince > QUIET_HOURS;\nconst failStreak = store.fetchFailStreak || 0;\nconst fetchBroken = failStreak >= FAIL_STREAK_ALARM;\n\nreturn [{ json: {\n  checked_at: new Date().toISOString(),\n  last_poll_at: last === null ? null : new Date(last).toISOString(),\n  hours_since_last_poll: hoursSince === null ? null : Math.round(hoursSince * 10) / 10,\n  last_notify_at: store.lastNotifyAt ? new Date(store.lastNotifyAt).toISOString() : null,\n  notify_count_total: store.notifyCount || 0,\n  dlq_depth: (store.dlq || []).length,\n  consecutive_fetch_failures: failStreak,\n  last_fetch_fail_at: store.lastFetchFailAt ? new Date(store.lastFetchFailAt).toISOString() : null,\n  fetch_broken: fetchBroken,\n  silent,\n  notify_url: 'https://ntfy.sh/' + NTFY_TOPIC,\n  notify_title: 'n8n monitor: the board is unreachable',\n  notify_priority: 'high',\n  notify_tags: 'warning',\n  verdict: fetchBroken\n    ? 'FETCH FAILING \u2014 ' + failStreak + ' polls in a row could not reach the board'\n    : silent\n    ? 'MONITOR HAS NOT POLLED IN ' + QUIET_HOURS + 'H \u2014 nobody is watching the board'\n    : 'watching',\n} }];"
       },
       "id": "c5000000-0000-4000-8000-000000000012",
       "name": "Canary Check",
@@ -260,8 +260,8 @@
           },
           "conditions": [
             {
-              "id": "cond-silent",
-              "leftValue": "={{ $json.silent }}",
+              "id": "cond-fetch-broken",
+              "leftValue": "={{ $json.fetch_broken }}",
               "rightValue": "",
               "operator": {
                 "type": "boolean",
@@ -275,7 +275,7 @@
         "options": {}
       },
       "id": "c5000000-0000-4000-8000-000000000013",
-      "name": "Monitor Silent?",
+      "name": "Fetch Broken?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
       "position": [
@@ -292,7 +292,7 @@
             {
               "id": "al-1",
               "name": "status",
-              "value": "ALERT \u2014 monitor is not polling",
+              "value": "ALERT \u2014 polls are running and every one is failing to reach the board",
               "type": "string"
             }
           ]
@@ -383,7 +383,7 @@
     },
     {
       "parameters": {
-        "content": "## Canary \u2014 is anyone watching?\n\nThis checks whether the **monitor polled**, not whether it found anything.\n\nThat distinction matters: 2\u20133 addressable posts a month means weeks of no notifications is the *expected* state. Alarming on that would cry wolf constantly.\n\nA poll that stopped happening is the real fault, and it is silent.",
+        "content": "## Canary \u2014 is anyone watching?\n\nThis checks whether the **monitor polled**, not whether it found anything.\n\nThat distinction matters: 2\u20133 addressable posts a month means weeks of no notifications is the *expected* state. Alarming on that would cry wolf constantly.\n\nIt reports **two** faults and alerts on **one**.\n\n`fetch_broken` \u2014 polls are running and every one fails to reach the board. Sleep cannot explain that, so it goes to the phone.\n\n`silent` \u2014 no poll has run at all. On a laptop that is almost always a closed lid, so it is recorded and never sent.",
         "height": 300,
         "width": 360,
         "color": 5
@@ -396,6 +396,47 @@
         130,
         1060
       ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.notify_url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Title",
+              "value": "={{ $json.notify_title }}"
+            },
+            {
+              "name": "Priority",
+              "value": "={{ $json.notify_priority }}"
+            },
+            {
+              "name": "Tags",
+              "value": "={{ $json.notify_tags }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "text/plain",
+        "body": "={{ $json.verdict + \"\\n\\nlast failure: \" + $json.last_fetch_fail_at + \"\\nDLQ depth: \" + $json.dlq_depth }}",
+        "options": {
+          "timeout": 8000
+        }
+      },
+      "id": "c5000000-0000-4000-8000-000000000015",
+      "name": "Notify Canary",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1180,
+        800
+      ],
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000
     }
   ],
   "connections": {
@@ -512,14 +553,14 @@
       "main": [
         [
           {
-            "node": "Monitor Silent?",
+            "node": "Fetch Broken?",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Monitor Silent?": {
+    "Fetch Broken?": {
       "main": [
         [
           {
@@ -531,6 +572,17 @@
         [
           {
             "node": "Healthy",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Raise Alert": {
+      "main": [
+        [
+          {
+            "node": "Notify Canary",
             "type": "main",
             "index": 0
           }
