@@ -497,6 +497,71 @@ check('while 2.5 hours does not false-alarm', monJustUnder.silent, false);
 const neverPolled = runNode(monCanaryCode, [{ json: {} }], {}, {})[0].json;
 check('a monitor that has never polled reads as silent', neverPolled.silent, true);
 
+console.log('\n  waking from sleep — a blip vs a broken fetch:\n');
+
+// Over the weekend of 15-17 Aug three polls fired as the Mac woke, all three hit
+// `getaddrinfo ENOTFOUND community.n8n.io` before the network was back, and all
+// three went quietly into the DLQ. Nothing said so. The monitor looked identical
+// to a monitor that was working and had simply found nothing.
+//
+// Elapsed time cannot separate the two cases on a laptop, because a closed lid
+// produces exactly the same silence as a dead monitor. Consecutive FAILURES can:
+// they only accumulate while the machine is awake enough to run the workflow.
+
+const store8 = { seenTopics: {}, dlq: [] };
+const fetchFail = () => runNode(monDlqCode,
+  [{ json: {}, error: { message: 'getaddrinfo ENOTFOUND community.n8n.io' } }], {}, store8);
+
+const firstFail = fetchFail();
+check('a failed fetch is recorded as the fetch leg, not the notify leg', firstFail[0].json.failed_leg, 'fetch');
+check('and starts the streak at one', store8.fetchFailStreak, 1);
+fetchFail(); fetchFail();
+check('three failures in a row count as three', store8.fetchFailStreak, 3);
+
+// A failed NOTIFICATION is a different fault and must not inflate the streak —
+// it means the board was reached fine and ntfy was the thing that broke.
+const notifyFail = runNode(monDlqCode,
+  [{ json: { topic_id: 777, title: 'Real job' }, error: { message: 'ECONNREFUSED' } }], {}, store8);
+check('a failed notification is the notify leg', notifyFail[0].json.failed_leg, 'notify');
+check('and leaves the fetch streak alone', store8.fetchFailStreak, 3);
+
+// Reaching Select New Postings at all means the board answered.
+runNode(selectCode, listing(topic(60, 'Board is back')), {}, store8);
+check('one successful poll clears the streak', store8.fetchFailStreak, 0);
+
+const fetchDown = runNode(monCanaryCode, [{ json: {} }], {},
+  { lastPollAt: Date.now() - 5 * 60000, fetchFailStreak: 3 })[0].json;
+check('three consecutive failures read as a broken fetch', fetchDown.fetch_broken, true);
+check('and the verdict says which fault it is', fetchDown.verdict,
+  'FETCH FAILING — 3 polls in a row could not reach the board');
+check('while polling itself is not reported as stalled', fetchDown.silent, false);
+
+const blip = runNode(monCanaryCode, [{ json: {} }], {},
+  { lastPollAt: Date.now() - 5 * 60000, fetchFailStreak: 2 })[0].json;
+check('two failures is a blip on waking, not a fault', blip.fetch_broken, false);
+
+// The case that keeps the alert leg usable: a Mac that was simply off all
+// weekend is silent, but nothing failed, so it must never read as broken.
+const wasOff = runNode(monCanaryCode, [{ json: {} }], {}, { lastPollAt: Date.now() - 40 * 3600000 })[0].json;
+check('a machine that was off is silent', wasOff.silent, true);
+check('but not a broken fetch', wasOff.fetch_broken, false);
+
+// n8n clamps both retry settings at runtime, in workflow-execute.js:
+//   maxTries         = Math.min(5, Math.max(2, maxTries || 3))
+//   waitBetweenTries = Math.min(5000, Math.max(0, waitBetweenTries || 1000))
+// So the widest window the node itself can cover is 5 tries 5s apart, about 20
+// seconds. Writing 30000 here would look like half a minute of patience and
+// silently behave as five seconds, which is exactly the kind of change that
+// reads as a fix and is not one.
+const fetchNode = JSON.parse(readFileSync(join(root, WF5), 'utf8'))
+  .nodes.find(n => n.name === 'Fetch Jobs Board');
+check('the fetch retries', fetchNode.retryOnFail, true);
+check('as many times as n8n allows', fetchNode.maxTries, 5);
+check('as far apart as n8n allows', fetchNode.waitBetweenTries, 5000);
+assert('and no further, because n8n silently clamps anything larger',
+  fetchNode.maxTries <= 5 && fetchNode.waitBetweenTries <= 5000,
+  'Values above the clamp read as patience the workflow does not actually have.');
+
 const store7 = {};
 const rec = runNode(recordCode, [{ json: { topic_id: 1 } }], {}, store7);
 check('a delivered notification is timestamped', typeof store7.lastNotifyAt, 'number');
