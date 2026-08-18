@@ -430,6 +430,34 @@ const buyersSayingAvailable = runNode(selectCode, listing(
 check('a buyer who happens to say "available" is never dropped',
   buyersSayingAvailable.map(r => r.json.topic_id), [42, 43, 44, 45, 46]);
 
+// ...but the override must not reach a BRACKETED seller tag. On 18 Aug at 07:20,
+// `[For Hire] Free n8n Automation Build - Looking for 2-3 Beta Businesses` reached
+// the phone at high priority: SELF_PROMO matched "For Hire", BUYER_ASKING matched
+// "Looking for", and the override let it through. The seller was looking for
+// CUSTOMERS - the one direction the buyer regex cannot read.
+const store3f = { seenTopics: {} };
+const taggedSeller = runNode(selectCode, listing(
+  topic(50, '[For Hire] Free n8n Automation Build \u2014 Looking for 2-3 Beta Businesses'),
+  topic(51, '[FOR HIRE] Free n8n automation audit \u2014 I will find one improvement in your process'),
+  topic(52, '[Available for Hire] n8n Automation Architect \u2014 anyone needing Voice AI'),
+  topic(53, 'Need an n8n workflow built for order intake'),
+), {}, store3f);
+check('a bracketed seller tag is not rescued by the buyer override',
+  taggedSeller.map(r => r.json.topic_id), [53]);
+
+// The tag rule must never touch the board's BUYER conventions. Measured on 179
+// live titles: 57 carry a seller tag, 12 carry one of these, and `[Freelance]` is
+// used by both sides - which is why it appears on neither list.
+const store3g = { seenTopics: {} };
+const taggedBuyer = runNode(selectCode, listing(
+  topic(54, '[HIRING] N8N AI Automation Developer (Remote)'),
+  topic(55, '[PAID JOB] German-speaking n8n Expert for Advanced Telegram Bot'),
+  topic(56, '[recruitment] Looking for long-term AI Agent / Automation collaborators'),
+  topic(57, '[Freelance] Looking for an n8n + Python Instructor (Remote, DE/EN)'),
+), {}, store3g);
+check('every bracketed BUYER tag survives the tag rule',
+  taggedBuyer.map(r => r.json.topic_id), [54, 55, 56, 57]);
+
 // `freelance`, `specialist` and `developer` occur on both sides of this board in
 // roughly equal numbers, so neither list may use them as evidence.
 const store3e = { seenTopics: {} };
