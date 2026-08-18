@@ -26,7 +26,22 @@ node 04-audit-example/verify-findings.mjs   # 10 checks, no API key, no n8n inst
 
 | File | What it shows | Where it comes from |
 |---|---|---|
-| `test-run-62-passed.png` | The test suite: `62 passed, 0 failed`, with a sample of assertions from all three workflows | Verbatim `node test/logic-test.mjs`. The `⋮` marks show the listing is truncated for space — the totals are not |
+| `test-run-all-workflows.png` | The test suite: **`158 passed, 0 failed`**, with a sample of assertions from three of the four workflows | Verbatim `node test/logic-test.mjs`. The `⋮` marks show the listing is truncated for space — the total is not |
+| `test-run-invoice-extractor.png` | **`22 passed, 0 failed`** — the invoice extractor's own tests | Verbatim `node test/logic-test.mjs 01-invoice-extractor`. Use this one wherever the claim is about the invoice workflow alone |
+
+> ### ⚠️ These were named `test-run-62-passed*.png` until 18 Aug 2026, and the count in the filename is why they went stale
+>
+> The suite has run 62, then 92, 113, 156 and now **158** assertions. **A number baked into a filename
+> cannot be kept true**, and it silently contradicts the image the moment a test is added — which is
+> exactly what happened: the file still said 62 long after the total had moved.
+> ▶️ **The new names say what the image COVERS, not how many.** Renamed with `git mv`, so history follows.
+>
+> 🔑 **And the number on the image must match the command printed above it.** Relabelling the all-workflows
+> image to `22` was considered and rejected: its `ok` lines come from three different workflows, so a
+> filtered command would not produce them. That is why the invoice figure is a **separate render**, not
+> an edit — see `income-2k-2026/launch/gallery/README.md`.
+>
+> **Per workflow: 22 · 13 · 27 · 96 → 158.** Quote the one that matches what is being claimed.
 | `runbook-symptom-table.png` | The four-row runbook symptom table handed over with workflow 03 | Verbatim from [`03-reliable-pipeline/README.md`](../../03-reliable-pipeline/README.md) § Runbook |
 | `invoice-to-structured-data.png` | A receipt read into structured JSON with `review_required: true`, where the net was **derived** (12.35 − 2.06 = 10.29) rather than read | [`01-invoice-extractor/workflow.json`](../../01-invoice-extractor/workflow.json), node *"Validate & Normalise"*. **Sample document invented, extracted values real** — the image says so |
 | `flagged-for-review.png` | The same workflow declining to guess: `review_required: true` with both real reasons, cross-referenced to the fields they explain | As above |
