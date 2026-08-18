@@ -8,7 +8,16 @@
  * The node source is read out of workflow.json itself, so these tests exercise
  * exactly the code that runs in n8n. They cannot drift from it.
  *
- * Run:  node test/logic-test.mjs
+ * Run:  node test/logic-test.mjs                       (everything)
+ *       node test/logic-test.mjs 01-invoice-extractor  (one workflow only)
+ *
+ * The optional filter exists because a test count is only meaningful next to the
+ * thing it covers. The repo total describes the repo; a gig selling ONE workflow
+ * needs that workflow's own number, and quoting the repo-wide figure there
+ * overstates the deliverable several-fold. The whole file still executes under a
+ * filter — a failure anywhere still fails the run — but only the selected section
+ * is printed and counted, so any number on a listing can be reproduced by a buyer
+ * running the command printed beside it.
  */
 
 import { readFileSync } from 'node:fs';
@@ -18,16 +27,37 @@ import { dirname, join } from 'node:path';
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
 
-let passed = 0;
+// Optional single-section filter, e.g. `node test/logic-test.mjs 01-invoice-extractor`.
+const only = process.argv[2] || null;
+let current = null;
+const shown = () => !only || current === only;
+
+// Suppress output from sections the filter excludes. Bound first so the summary
+// at the bottom can still print unconditionally.
+const out = console.log.bind(console);
+console.log = (...args) => { if (shown()) out(...args); };
+
+/** Start a section. The first word is the id the filter matches on. */
+function section(title) {
+  current = title.trim().split(/\s/)[0];
+  console.log(`\n${title}\n`);
+}
+
+let passed = 0;     // reported — the selected section, or everything when unfiltered
 let failed = 0;
+let anyFailed = 0;  // every failure anywhere, so a filter can never hide a broken repo
 
 function check(label, actual, expected) {
   const ok = JSON.stringify(actual) === JSON.stringify(expected);
+  if (!ok) anyFailed++;
+  if (!shown()) return;
   if (ok) { passed++; console.log(`  ok    ${label}`); }
   else { failed++; console.log(`  FAIL  ${label}\n          expected ${JSON.stringify(expected)}\n          actual   ${JSON.stringify(actual)}`); }
 }
 
 function assert(label, condition, detail = '') {
+  if (!condition) anyFailed++;
+  if (!shown()) return;
   if (condition) { passed++; console.log(`  ok    ${label}`); }
   else { failed++; console.log(`  FAIL  ${label}${detail ? '\n          ' + detail : ''}`); }
 }
@@ -62,7 +92,7 @@ function runNode(jsCode, items, nodeOutputs = {}, staticData = null) {
 }
 
 // ---------------------------------------------------------------------------
-console.log('\n01-invoice-extractor — Validate & Normalise\n');
+section('01-invoice-extractor — Validate & Normalise');
 // ---------------------------------------------------------------------------
 
 const validateCode = loadNodeCode('01-invoice-extractor/workflow.json', 'Validate & Normalise');
@@ -165,7 +195,7 @@ check('nested amounts parsed', wrapped.gross, 322.44);
 check('flat payload still works', inv.supplier, 'Northgate Supplies Ltd');
 
 // ---------------------------------------------------------------------------
-console.log('\n02-enquiry-triage — Score & Prioritise\n');
+section('02-enquiry-triage — Score & Prioritise');
 // ---------------------------------------------------------------------------
 
 const scoreCode = loadNodeCode('02-enquiry-triage/workflow.json', 'Score & Prioritise');
@@ -233,7 +263,7 @@ check('nested {output:{...}} scores identically', wrappedLead.lead_score, 93);
 check('nested payload keeps systems list', wrappedLead.systems_list, ['Dentally', 'Twilio']);
 
 // ---------------------------------------------------------------------------
-console.log('\n03-reliable-pipeline — fingerprint, idempotency, DLQ, canary\n');
+section('03-reliable-pipeline — fingerprint, idempotency, DLQ, canary');
 // ---------------------------------------------------------------------------
 
 const WF3 = '03-reliable-pipeline/workflow.json';
@@ -344,7 +374,7 @@ const justUnder = runNode(canaryCode, [{ json: {} }], {}, { lastSuccessAt: Date.
 check('25 hours does not false-alarm', justUnder.silent, false);
 
 // ---------------------------------------------------------------------------
-console.log('\n05-jobs-board-monitor — diffing, filtering, DLQ, canary\n');
+section('05-jobs-board-monitor — diffing, filtering, DLQ, canary');
 
 const WF5 = '05-jobs-board-monitor/workflow.json';
 const selectCode    = loadNodeCode(WF5, 'Select New Postings');
@@ -770,7 +800,8 @@ assert('the ntfy topic is still a placeholder, not a real one committed by accid
   'Replace the placeholder locally, never in the committed file.');
 
 // ---------------------------------------------------------------------------
-console.log(`\n${'-'.repeat(52)}`);
-console.log(`${passed} passed, ${failed} failed`);
-console.log(`${'-'.repeat(52)}\n`);
-process.exit(failed === 0 ? 0 : 1);
+out(`\n${'-'.repeat(52)}`);
+out(`${passed} passed, ${failed} failed`);
+out(`${'-'.repeat(52)}\n`);
+// Exit on ANY failure, including one in a section the filter hid.
+process.exit(anyFailed === 0 ? 0 : 1);

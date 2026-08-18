@@ -106,10 +106,15 @@ test suite that reads the node source directly out of `workflow.json`, so the te
 from what actually runs in n8n.
 
 ```bash
-node test/logic-test.mjs
+node test/logic-test.mjs                       # all four workflows
+node test/logic-test.mjs 01-invoice-extractor  # one workflow on its own
 ```
 
-92 assertions, no dependencies, no API key needed. They are also run under several timezones,
+158 assertions, no dependencies, no API key needed. Pass a workflow's directory name to run just
+that one — 22 for the invoice extractor, 13 for enquiry triage, 27 for the reliable pipeline, 96
+for the jobs-board monitor — because a test count is only meaningful next to the thing it covers.
+A failure anywhere still fails the run, so the filter cannot hide a break. They are also run under
+several timezones,
 because the first bug they caught was a date being formatted via `toISOString()` — which, under
 British Summer Time, silently booked every spelled-out invoice date one day early and could put
 an invoice in the wrong VAT quarter.
