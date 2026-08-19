@@ -488,6 +488,33 @@ const taggedBuyer = runNode(selectCode, listing(
 check('every bracketed BUYER tag survives the tag rule',
   taggedBuyer.map(r => r.json.topic_id), [54, 55, 56, 57]);
 
+// A HYPHEN is not whitespace. `for\s+hire` cannot match `for-hire`, so
+// `N8N Community Expert (for-hire)` read as a buyer and went to the phone - and it
+// had done since the rule was written, because nothing else in SELF_PROMO fires on
+// that title. Measured on 180 live titles pulled 19 Aug, widening the class to
+// `for[\s-]+hire` changes exactly one verdict and touches nothing carrying a
+// hiring tag or a money figure.
+const store3h = { seenTopics: {} };
+const hyphenated = runNode(selectCode, listing(
+  topic(58, 'N8N Community Expert (for-hire)'),
+  topic(59, '[For-Hire] n8n automation build, fast turnaround'),
+  topic(60, 'Experienced n8n dev for-hire, EU timezone'),
+  topic(61, 'Need an n8n workflow built for order intake'),
+), {}, store3h);
+check('a hyphenated for-hire advert is dropped like a spaced one',
+  hyphenated.map(r => r.json.topic_id), [61]);
+
+// ...and the widening must not start eating buyers. A hyphen next to the word
+// `hire` in a buyer's sentence is not the same construction.
+const store3i = { seenTopics: {} };
+const hyphenBuyers = runNode(selectCode, listing(
+  topic(62, 'Looking to hire - n8n developer, paid monthly'),
+  topic(63, '[HIRING] n8n engineer - remote - $50/hr'),
+  topic(64, 'Who can I hire for a one-off n8n build?'),
+), {}, store3i);
+check('a buyer with a hyphen near "hire" is untouched',
+  hyphenBuyers.map(r => r.json.topic_id), [62, 63, 64]);
+
 // `freelance`, `specialist` and `developer` occur on both sides of this board in
 // roughly equal numbers, so neither list may use them as evidence.
 const store3e = { seenTopics: {} };
