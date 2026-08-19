@@ -1,0 +1,71 @@
+services:
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:2.32.6   # PINNED. An unpinned :latest would run
+                                            # schema migrations against this data on
+                                            # first start. Do not float this.
+    container_name: n8n
+    restart: unless-stopped
+
+    # n8n's own graceful-shutdown budget is 30s. Docker's default stop timeout is 10s,
+    # which SIGKILLs n8n mid-checkpoint and leaves a dirty -wal. A dirty -wal is how
+    # the 18 Aug morning outage started.
+    stop_grace_period: 60s
+
+    ports:
+      - "5678:5678"
+
+    environment:
+      # Match the host's timezone so the 10-minute schedule and the canary's
+      # 26-hour window line up with BST rather than drifting an hour.
+      - GENERIC_TIMEZONE=Europe/London
+      - TZ=Europe/London
+      - N8N_DIAGNOSTICS_ENABLED=false
+      - N8N_RUNNERS_ENABLED=true            # deprecated & inert from n8n 2.0; kept so
+                                            # this migration changes exactly one thing
+
+      # 19 Aug 2026, SECOND change, made separately from the volume move so a
+      # regression has one suspect. The event log is the ONLY liveness signal that
+      # lives outside the database - it records one n8n.workflow.success line per
+      # poll - and moving the data dir into the volume made it invisible to the host,
+      # which is exactly where an EXTERNAL health check has to read it from.
+      # Verified against dist/eventbus/.../resolve-event-log-path.js: the path must be
+      # ABSOLUTE, must end in '.log', and the parent dir is created automatically.
+      - N8N_EVENTBUS_LOGWRITER_LOGFULLPATH=/eventlog/n8nEventLog.log
+
+    volumes:
+      # ================= 19 Aug 2026: MOVED OFF THE BIND MOUNT ==================
+      # WAS: - /Users/aiwork/.n8n:/home/node/.n8n
+      #
+      # That path is a macOS->Linux virtiofs share (Colima vmType vz, mountType
+      # virtiofs) with DAX unavailable, so guest and host do not share one physical
+      # page for an mmap'd file. n8n 2.32.6 hardcodes SQLite WAL on with a
+      # 3-connection pool and offers no env var to disable it; WAL requires all
+      # connections to share the mmap'd -shm wal-index. On 18 Aug 2026 the DB failed
+      # twice in one day: a stale -shm that a docker restart would not clear, then
+      # genuine btree corruption costing ~10.5h of state.
+      #
+      # A named volume lives at /var/lib/docker/volumes/n8n_data/_data on /dev/vdb1,
+      # ext4, inside the lima VM. One kernel, one page cache, no virtiofs. It also
+      # makes any host-side n8n physically unable to open this database.
+      #
+      # This fixes SQLite's LOCKING/COHERENCY exposure. It does not make the database
+      # crash-proof: the ext4 filesystem lives inside a sparse disk image on APFS, so
+      # always shut the VM down with `colima stop`, never by killing it.
+      #
+      # ROLLBACK: cp docker-compose.yml.pre-volume-19aug over this file, then
+      #   docker compose -f ... up -d
+      # /Users/aiwork/.n8n is untouched by the migration and is the rollback copy.
+      # ==========================================================================
+      - n8n_data:/home/node/.n8n
+
+      # Append-only plain text, NOT SQLite. The virtiofs hazard is SQLite's fcntl
+      # locking and its mmap'd -shm wal-index, not ordinary file writes, so this is
+      # safe to leave on the host share - and it has to be, or nothing outside the
+      # container can see whether the monitor is still alive.
+      - /Users/aiwork/n8n-eventlog:/eventlog
+
+volumes:
+  n8n_data:
+    external: true     # created and populated by hand (Phase C). external:true means
+    name: n8n_data     # compose ERRORS if it is missing, instead of silently inventing
+                       # an empty one and starting n8n with no workflows.

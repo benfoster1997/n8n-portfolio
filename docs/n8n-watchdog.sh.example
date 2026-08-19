@@ -1,0 +1,162 @@
+#!/bin/sh
+# n8n jobs-board monitor — EXTERNAL watchdog.
+#
+# Exists because the in-workflow canary reads lastPollAt out of the same SQLite
+# database it is supposed to be watching. It was silent through BOTH 18 Aug 2026
+# failures. A health check living inside the thing it checks is not a health check.
+#
+# Two rules this script obeys absolutely:
+#   1. It NEVER opens the SQLite database. Not read-only, not immutable, not at all.
+#      After the 19 Aug migration the DB is inside a Docker volume and is not on any
+#      host path, so a host-sqlite probe would break anyway - but the deeper reason is
+#      that a second process mmapping the -shm wal-index is a candidate cause of the
+#      18 Aug corruption. The watchdog must not be able to cause the fault it watches.
+#   2. It does not cry wolf at a closed lid. This is a laptop. Missed runs while
+#      asleep are EXPECTED and are skipped, not alarmed on.
+#
+# Freshness comes from n8n's OWN event log, relocated to a host bind mount on 19 Aug
+# via N8N_EVENTBUS_LOGWRITER_LOGFULLPATH. It is plain JSON-lines written by the n8n
+# process itself, it records one n8n.workflow.success per poll, and it keeps working
+# when the database is unreadable. That is the entire requirement.
+
+set -u
+BASE=/Users/aiwork/n8n-watchdog
+ETC=$BASE/etc
+ST=$BASE/state
+EVENTLOG=/Users/aiwork/n8n-eventlog/n8nEventLog.log
+LOG=/Users/aiwork/Library/Logs/n8n-watchdog.log
+
+INTERVAL=120           # matches StartInterval in the plist
+STALE_MIN=35           # 3 missed 10-minute polls + grace
+FAIL_THRESHOLD=3       # ~6 min of consecutive badness before anyone is told
+RENOTIFY_SEC=21600     # 6h
+MIN_GAP_SEC=900        # never two pushes inside 15 min, whatever happens
+SLEEP_GAP=300          # a gap larger than this since the last run means we slept
+
+now=$(date +%s)
+ts() { date '+%Y-%m-%dT%H:%M:%S%z'; }
+say() { echo "$(ts) $*" >> "$LOG"; }
+
+# launchd never rotates its capture files. Truncate in place, preserving the inode.
+if [ -f "$LOG" ] && [ "$(wc -c < "$LOG" | tr -d ' ')" -gt 1048576 ]; then
+  tail -c 262144 "$LOG" > "$LOG.tmp" && cat "$LOG.tmp" > "$LOG" && rm -f "$LOG.tmp"
+fi
+
+read_state() { [ -f "$ST/$1" ] && cat "$ST/$1" || echo "${2:-}"; }
+write_state() { printf '%s' "$2" > "$ST/$1"; }
+
+# ---- sleep / deferral gate -------------------------------------------------
+# StartInterval firings are MISSED while asleep and never coalesced, so a gap much
+# larger than the interval is the machine having been shut or asleep. Everything
+# downstream would be legitimately stale in that case, so this run is skipped and
+# the failure counter is reset - the NEXT run judges a machine that is actually awake.
+last_run=$(read_state last-run 0)
+write_state last-run "$now"
+if [ "$last_run" -gt 0 ]; then
+  gap=$((now - last_run))
+  if [ "$gap" -gt "$SLEEP_GAP" ]; then
+    say "SKIP  gap=${gap}s since last run (>${SLEEP_GAP}s) - machine was asleep or off; resetting"
+    write_state fail-count 0
+    exit 0
+  fi
+fi
+
+# ---- probes, cheapest first, short-circuiting ------------------------------
+verdict=OK; class=""; detail=""
+
+if ! colima status >/dev/null 2>&1; then
+  verdict=BAD; class=colima; detail="colima VM is not running"
+elif ! docker info >/dev/null 2>&1; then
+  verdict=BAD; class=docker; detail="docker daemon unreachable"
+elif [ "$(docker ps --filter 'name=^/n8n$' --format '{{.Names}}' 2>/dev/null)" != "n8n" ]; then
+  st=$(docker ps -a --filter 'name=^/n8n$' --format '{{.Status}}' 2>/dev/null)
+  verdict=BAD; class=container; detail="n8n container not running (${st:-absent})"
+elif ! curl -fsS --max-time 10 -o /dev/null http://localhost:5678/healthz 2>/dev/null; then
+  verdict=BAD; class=http; detail="/healthz did not answer"
+else
+  # P5 - FRESHNESS. The only probe that catches "HTTP is fine and nothing is running".
+  # /healthz pings SELECT 1, touches no btree page, and stays 200 through a corrupted
+  # database - it proved nothing on 18 Aug and it proves nothing here.
+  if [ ! -f "$EVENTLOG" ]; then
+    verdict=BAD; class=freshness; detail="event log missing at $EVENTLOG"
+  else
+    last_ok=$(grep 'n8n.workflow.success' "$EVENTLOG" 2>/dev/null | tail -1 \
+      | sed -n 's/.*"ts":"\([^"]*\)".*/\1/p')
+    if [ -z "$last_ok" ]; then
+      # A freshly rotated log legitimately has no success line yet. Fall back to the
+      # file's own mtime rather than declaring a fault on an empty file.
+      lm=$(stat -f %m "$EVENTLOG" 2>/dev/null || echo 0)
+      age=$(( (now - lm) / 60 ))
+      [ "$age" -gt "$STALE_MIN" ] && { verdict=BAD; class=freshness; detail="no workflow.success in log and mtime ${age}m old"; }
+    else
+      epoch=$(date -j -f '%Y-%m-%dT%H:%M:%S' "$(echo "$last_ok" | cut -c1-19)" +%s 2>/dev/null || echo 0)
+      if [ "$epoch" -gt 0 ]; then
+        age=$(( (now - epoch) / 60 ))
+        [ "$age" -gt "$STALE_MIN" ] && { verdict=BAD; class=freshness; detail="last successful poll was ${age}m ago (limit ${STALE_MIN}m)"; }
+      fi
+    fi
+  fi
+  # P6 - SQLITE ERROR FLOOD. The 18 Aug MORNING class: executions kept being written,
+  # so every freshness probe stayed green while the container logged ~300 hard-delete
+  # errors in 14 minutes. Freshness cannot see this; only the log can.
+  if [ "$verdict" = OK ]; then
+    # grep -c ALREADY prints 0 when it matches nothing - it just exits 1. The obvious
+    # `|| echo 0` therefore appends a SECOND zero, and `[ "0\n0" -ge 5 ]` is a syntax
+    # error, not a false negative: the probe dies silently and the flood goes unseen.
+    n=$(docker logs --since 10m n8n 2>&1 | grep -ciE 'SQLITE_CORRUPT|SQLITE_IOERR|database disk image is malformed|disk I/O error')
+    case "$n" in ''|*[!0-9]*) n=0 ;; esac
+    [ "$n" -ge 5 ] && { verdict=BAD; class=sqlite; detail="$n SQLite errors in the container log in 10 minutes"; }
+  fi
+fi
+
+# ---- hysteresis ------------------------------------------------------------
+fails=$(read_state fail-count 0)
+
+if [ "$verdict" = OK ]; then
+  if [ "$fails" -ge "$FAIL_THRESHOLD" ]; then
+    topic=$(cat "$ETC/ntfy-topic" 2>/dev/null)
+    [ -n "$topic" ] && curl -fsS --max-time 10 \
+      -H "Title: n8n monitor: RECOVERED" -H "Priority: default" -H "Tags: white_check_mark" \
+      -d "The jobs-board monitor is answering again." "https://ntfy.sh/$topic" >/dev/null 2>&1
+    say "RECOVERED after $fails consecutive bad runs"
+  fi
+  write_state fail-count 0
+  write_state alert-key ""
+  say "OK    $( [ -n "${age:-}" ] && echo "last poll ${age}m ago" || echo "all probes green" )"
+  exit 0
+fi
+
+fails=$((fails + 1))
+write_state fail-count "$fails"
+say "BAD   [$class] $detail (consecutive=$fails/$FAIL_THRESHOLD)"
+[ "$fails" -lt "$FAIL_THRESHOLD" ] && exit 0
+
+# ---- notify, without becoming the noise ------------------------------------
+prev_key=$(read_state alert-key "")
+last_notify=$(read_state last-notify 0)
+since=$((now - last_notify))
+
+should=0
+[ "$class" != "$prev_key" ] && should=1                 # the fault CHANGED - worth saying
+[ "$since" -ge "$RENOTIFY_SEC" ] && should=1            # still broken 6h later
+[ "$last_notify" -eq 0 ] && should=1                    # never told anyone
+[ "$since" -lt "$MIN_GAP_SEC" ] && should=0             # hard floor, overrides everything
+
+if [ "$should" -eq 1 ]; then
+  topic=$(cat "$ETC/ntfy-topic" 2>/dev/null)
+  if [ -n "$topic" ]; then
+    curl -fsS --max-time 10 \
+      -H "Title: n8n monitor is DOWN" -H "Priority: urgent" -H "Tags: rotating_light" \
+      -d "$detail
+
+Nothing is watching the jobs board. Checked $fails times over $((fails * INTERVAL / 60)) minutes." \
+      "https://ntfy.sh/$topic" >/dev/null 2>&1 && say "NOTIFIED [$class]"
+  else
+    say "WOULD NOTIFY [$class] but $ETC/ntfy-topic is missing"
+  fi
+  write_state last-notify "$now"
+  write_state alert-key "$class"
+else
+  say "suppressed [$class] (last notify ${since}s ago)"
+fi
+exit 0
