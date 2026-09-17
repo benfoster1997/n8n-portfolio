@@ -1,0 +1,67 @@
+name: jobs-board-monitor
+
+# Polls the n8n community jobs board and pushes new buyer-shaped postings to ntfy.
+#
+# This runs on GitHub's machines because the laptop copy could not. See the long
+# note at the top of .github/scripts/poll-jobs-board.mjs for the measurement and
+# the job it cost.
+#
+# Free: public repositories get unlimited Actions minutes on GitHub-hosted runners.
+#
+# ⚠️ GitHub's scheduler is best-effort. `*/10` is the request, not a guarantee —
+# runs can be delayed by several minutes at peak, and very occasionally dropped.
+# That is fine here and needs no compensation, because the script decides what is
+# new by comparing each posting's created_at against the PREVIOUS POLL rather than
+# against a fixed age. A late or skipped run widens the window; it does not lose
+# anything out of it.
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'List what would be sent without sending or saving state'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# Never let a slow run overlap the next one: two polls in flight share no state
+# and would both write it.
+concurrency:
+  group: jobs-board-monitor
+  cancel-in-progress: false
+
+jobs:
+  poll:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      # The seen-set. Restored by PREFIX so the most recent save wins; saved under
+      # a unique key because a cache key cannot be overwritten once written.
+      - name: Restore seen-set
+        uses: actions/cache/restore@v4
+        with:
+          path: state.json
+          key: jobs-board-state-${{ github.run_id }}
+          restore-keys: jobs-board-state-
+
+      - name: Poll the board
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          DRY_RUN: ${{ inputs.dry_run && '1' || '0' }}
+        run: node .github/scripts/poll-jobs-board.mjs
+
+      # `always()` so a partial failure still records the topics that DID send.
+      # Without it a single failed ntfy call would discard the whole run's state
+      # and re-notify everything next time.
+      - name: Save seen-set
+        if: always() && !inputs.dry_run
+        uses: actions/cache/save@v4
+        with:
+          path: state.json
+          key: jobs-board-state-${{ github.run_id }}

@@ -8,3 +8,6 @@ node_modules/
 # repo is public. The committed workflow.json keeps the CHANGE-ME placeholder
 # (there is a test asserting exactly that); the real topic lives only here.
 *.local.json
+
+# jobs-board-monitor runtime state (lives in the Actions cache, never committed)
+state.json
