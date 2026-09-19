@@ -1,0 +1,3988 @@
+<title>M5 Scalp Desk</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap">
+<style>
+/* ---------------------------------------------------------------------------
+   A deliberate single visual world: the App Store's near-black, because this
+   is read one-handed at 07:00 and at 23:00 next to a live MT5 chart, and a
+   tool that flashes white in a dark room at 5am is a tool you stop opening.
+   Every colour is painted explicitly so the page never borrows the host ground.
+   --------------------------------------------------------------------------- */
+:root {
+  --bg:            #000000;
+  --surface:       #141416;
+  --surface-2:     #1C1C1E;
+  --surface-3:     #2C2C2E;
+  --hairline:      #303034;
+  --label:         #FFFFFF;
+  --label-2:       #9B9BA1;
+  --label-3:       #6A6A70;
+  --accent:        #0A84FF;
+
+  /* Directional colour is NOT stock red/green. These two are separable under
+     deuteranopia, and every use is paired with a word so colour is never the
+     only channel carrying the meaning. */
+  --up:            #30D9A4;
+  --up-dim:        rgba(48,217,164,.14);
+  --down:          #FF6B4A;
+  --down-dim:      rgba(255,107,74,.14);
+  --flat:          #8E8E93;
+
+  --warn:          #FFD60A;
+  --warn-dim:      rgba(255,214,10,.13);
+  --danger:        #FF453A;
+  --danger-dim:    rgba(255,69,58,.15);
+  --good:          #30D9A4;
+
+  --ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  --r-lg: 18px;
+  --r-md: 13px;
+  --r-sm: 9px;
+  --tab-h: 58px;
+}
+
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--label);
+  font-family: var(--ui);
+  font-size: 15px;
+  line-height: 1.45;
+  -webkit-text-size-adjust: 100%;
+  overscroll-behavior-y: none;
+  padding-bottom: calc(var(--tab-h) + env(safe-area-inset-bottom, 0px) + 12px);
+}
+
+.num { font-family: var(--mono); font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
+
+/* --------------------------------------------------------------- chrome -- */
+
+header.top {
+  position: sticky;
+  top: env(safe-area-inset-top, 0px);
+  z-index: 40;
+  background: rgba(0,0,0,.82);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  border-bottom: .5px solid var(--hairline);
+  padding: 10px 16px 9px;
+}
+.top-row { display: flex; align-items: center; gap: 12px; }
+
+.seg {
+  display: flex; gap: 2px; padding: 2px;
+  background: var(--surface-3); border-radius: 10px; flex: 1;
+}
+.seg button {
+  flex: 1; min-height: 34px; border: 0; border-radius: 8px;
+  background: transparent; color: var(--label-2);
+  font-family: var(--ui); font-size: 13.5px; font-weight: 600;
+  letter-spacing: .01em; cursor: pointer; transition: background .15s, color .15s;
+}
+.seg button[aria-selected="true"] { background: #48484C; color: var(--label); }
+
+.clock { text-align: right; font-size: 11px; color: var(--label-3); line-height: 1.3; }
+.clock b { display: block; font-family: var(--mono); font-size: 15px; color: var(--label); font-weight: 500; }
+
+.feed-line {
+  display: flex; align-items: center; gap: 7px;
+  margin-top: 8px; font-size: 11.5px; color: var(--label-3);
+}
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--label-3); flex: none; }
+.dot.live { background: var(--up); box-shadow: 0 0 0 3px var(--up-dim); }
+.dot.stale { background: var(--warn); box-shadow: 0 0 0 3px var(--warn-dim); }
+.dot.off { background: var(--danger); box-shadow: 0 0 0 3px var(--danger-dim); }
+
+/* ---------------------------------------------------------------- layout -- */
+
+main { padding: 14px 16px 8px; display: grid; gap: 14px; }
+section[hidden] { display: none !important; }
+
+.card {
+  background: var(--surface-2);
+  border-radius: var(--r-lg);
+  padding: 15px 16px;
+}
+.card.flat { background: transparent; padding: 0; }
+
+.card-title {
+  font-size: 11px; font-weight: 700; letter-spacing: .07em;
+  text-transform: uppercase; color: var(--label-3);
+  margin: 0 0 11px;
+}
+
+h2.sec { font-size: 21px; font-weight: 700; letter-spacing: -.02em; margin: 2px 0 -2px; }
+
+.row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.row + .row { margin-top: 9px; }
+.row dt { color: var(--label-2); font-size: 13.5px; }
+.row dd { margin: 0; font-family: var(--mono); font-size: 14px; text-align: right; }
+
+.hr { height: .5px; background: var(--hairline); margin: 13px -16px; }
+
+/* ------------------------------------------------------------- the read -- */
+
+.readout { padding: 18px 16px 16px; }
+.bias-line { display: flex; align-items: center; gap: 10px; margin-bottom: 3px; }
+.arrow { font-size: 26px; line-height: 1; }
+.bias {
+  font-size: 27px; font-weight: 700; letter-spacing: -.03em;
+}
+.up   { color: var(--up); }
+.down { color: var(--down); }
+.flat { color: var(--flat); }
+
+.price-big { font-family: var(--mono); font-size: 34px; font-weight: 500; letter-spacing: -.035em; }
+.statement { color: var(--label-2); font-size: 14px; margin: 10px 0 0; }
+
+.conf-wrap { margin-top: 15px; }
+.conf-head { display: flex; justify-content: space-between; font-size: 11.5px; color: var(--label-3); margin-bottom: 6px; }
+.conf-track { height: 5px; border-radius: 3px; background: var(--surface-3); overflow: hidden; }
+.conf-fill { height: 100%; border-radius: 3px; transition: width .4s ease; }
+
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 13px; }
+.chip {
+  font-size: 11.5px; font-weight: 600; padding: 4px 9px;
+  border-radius: 7px; background: var(--surface-3); color: var(--label-2);
+  white-space: nowrap;
+}
+.chip.green { background: var(--up-dim); color: var(--up); }
+.chip.amber { background: var(--warn-dim); color: var(--warn); }
+.chip.red   { background: var(--danger-dim); color: var(--danger); }
+
+/* --------------------------------------------------------------- alerts -- */
+
+.alert {
+  border-radius: var(--r-lg); padding: 15px 16px;
+  border: 1px solid transparent;
+}
+.alert.stand-aside { background: var(--danger-dim); border-color: rgba(255,69,58,.4); }
+.alert.caution     { background: var(--warn-dim);   border-color: rgba(255,214,10,.32); }
+.alert.info        { background: var(--surface-2);  border-color: var(--hairline); }
+.alert h3 { margin: 0 0 5px; font-size: 16.5px; font-weight: 700; letter-spacing: -.01em; }
+.alert p  { margin: 0; font-size: 13.5px; color: var(--label-2); }
+.alert.stand-aside h3 { color: var(--danger); }
+.alert.caution h3 { color: var(--warn); }
+
+.big-count { font-family: var(--mono); font-size: 32px; font-weight: 700; letter-spacing: -.03em; }
+
+/* ----------------------------------------------------------------- news -- */
+
+.ev {
+  display: grid; grid-template-columns: 4px 1fr auto;
+  gap: 12px; align-items: start;
+  padding: 11px 0;
+}
+.ev + .ev { border-top: .5px solid var(--hairline); }
+.ev-stripe { border-radius: 2px; align-self: stretch; min-height: 34px; }
+.t1 { background: var(--danger); }
+.t2 { background: var(--warn); }
+.t3 { background: var(--label-3); }
+.tc { background: var(--surface-3); }
+
+.ev-name { font-size: 14.5px; font-weight: 600; }
+.ev-meta { font-size: 11.5px; color: var(--label-3); margin-top: 2px; }
+.ev-why  { font-size: 12.5px; color: var(--label-2); margin-top: 5px; }
+.ev-when { text-align: right; }
+.ev-count { font-family: var(--mono); font-size: 15px; font-weight: 700; }
+.ev-clock { font-family: var(--mono); font-size: 11px; color: var(--label-3); margin-top: 2px; white-space: nowrap; }
+
+.flag {
+  display: inline-block; font-size: 9.5px; font-weight: 700; letter-spacing: .05em;
+  text-transform: uppercase; padding: 2px 5px; border-radius: 4px;
+  background: var(--warn-dim); color: var(--warn); margin-left: 6px; vertical-align: 1px;
+}
+
+/* ---------------------------------------------------------------- chart -- */
+
+.chart-wrap { position: relative; }
+canvas { display: block; width: 100%; height: 190px; border-radius: var(--r-md); background: var(--surface); }
+
+/* ---------------------------------------------------------------- forms -- */
+
+label.f { display: block; font-size: 12.5px; color: var(--label-2); margin: 0 0 5px; }
+input.f, select.f {
+  width: 100%; min-height: 44px; padding: 10px 12px;
+  background: var(--surface-3); color: var(--label);
+  border: 1px solid transparent; border-radius: var(--r-sm);
+  font-family: var(--mono); font-size: 16px; /* 16px prevents iOS zoom-on-focus */
+}
+input.f:focus, select.f:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: transparent; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; }
+.field + .field, .grid2 + .field, .field + .grid2, .grid2 + .grid2 { margin-top: 12px; }
+
+button.btn {
+  width: 100%; min-height: 46px; border: 0; border-radius: var(--r-md);
+  background: var(--accent); color: #fff;
+  font-family: var(--ui); font-size: 15.5px; font-weight: 600; cursor: pointer;
+}
+button.btn.ghost { background: var(--surface-3); color: var(--label); }
+button.btn:active { opacity: .75; }
+
+.unconfirmed {
+  font-size: 12px; color: var(--warn); background: var(--warn-dim);
+  padding: 9px 11px; border-radius: var(--r-sm); margin-top: 10px;
+}
+
+/* ------------------------------------------------------------ reasoning -- */
+
+ul.reasons { list-style: none; margin: 0; padding: 0; }
+ul.reasons li {
+  font-size: 13.5px; color: var(--label-2);
+  padding: 7px 0 7px 16px; position: relative;
+}
+ul.reasons li::before {
+  content: ""; position: absolute; left: 0; top: 14px;
+  width: 5px; height: 5px; border-radius: 50%; background: var(--label-3);
+}
+ul.reasons li + li { border-top: .5px solid var(--hairline); }
+ul.reasons li b { color: var(--label); font-weight: 600; }
+ul.reasons.against li::before { background: var(--warn); }
+
+details.more { margin-top: 11px; }
+details.more summary {
+  font-size: 13px; color: var(--accent); cursor: pointer; list-style: none;
+  padding: 7px 0; min-height: 32px;
+}
+details.more summary::-webkit-details-marker { display: none; }
+
+/* ------------------------------------------------------------- tab bar -- */
+
+nav.tabs {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 50;
+  display: grid; grid-template-columns: repeat(4, 1fr);
+  background: rgba(0,0,0,.9);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  border-top: .5px solid var(--hairline);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+nav.tabs button {
+  min-height: var(--tab-h); border: 0; background: transparent;
+  color: var(--label-3); font-family: var(--ui); font-size: 10.5px; font-weight: 600;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+  cursor: pointer;
+}
+nav.tabs button[aria-selected="true"] { color: var(--accent); }
+nav.tabs .ic { font-size: 18px; line-height: 1; }
+nav.tabs .badge {
+  position: absolute; transform: translate(14px, -12px);
+  min-width: 8px; height: 8px; border-radius: 50%; background: var(--danger);
+}
+
+footer.fine {
+  padding: 4px 16px 20px; font-size: 11.5px; color: var(--label-3); line-height: 1.55;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
+</style>
+
+<header class="top">
+  <div class="top-row">
+    <div class="seg" role="tablist" aria-label="Instrument">
+      <button id="pair-XAUUSD" role="tab" aria-selected="true">Gold</button>
+      <button id="pair-BTCUSD" role="tab" aria-selected="false">Bitcoin</button>
+    </div>
+    <div class="clock">
+      <b class="num" id="clock-utc">--:--</b>
+      <span id="clock-sub">UTC</span>
+    </div>
+  </div>
+  <div class="feed-line">
+    <span class="dot off" id="feed-dot"></span>
+    <span id="feed-text">Not connected</span>
+  </div>
+</header>
+
+<main>
+  <!-- ============================ READ ============================ -->
+  <section id="tab-read">
+    <div id="blackout-slot"></div>
+    <div class="card readout" id="readout"></div>
+    <div class="card">
+      <p class="card-title">Last 5-minute bars</p>
+      <div class="chart-wrap"><canvas id="chart" width="700" height="380"></canvas></div>
+      <div class="chips" id="chart-chips"></div>
+    </div>
+    <div class="card" id="conditions"></div>
+    <div class="card" id="whynot"></div>
+    <div class="card" id="reasoning"></div>
+  </section>
+
+  <!-- ============================ NEWS ============================ -->
+  <section id="tab-news" hidden>
+    <h2 class="sec">Scheduled</h2>
+    <div id="dst-slot"></div>
+    <div class="card" id="news-list"></div>
+    <div class="card" id="unschedulable"></div>
+  </section>
+
+  <!-- ============================ RISK ============================ -->
+  <section id="tab-risk" hidden>
+    <h2 class="sec">Size &amp; cost</h2>
+    <div class="card" id="corr-note"></div>
+    <div class="card">
+      <p class="card-title">Position size</p>
+      <div class="grid2">
+        <div class="field">
+          <label class="f" for="acct-bal">Account balance</label>
+          <input class="f num" id="acct-bal" type="number" inputmode="decimal" value="10000">
+        </div>
+        <div class="field">
+          <label class="f" for="acct-ccy">Currency</label>
+          <select class="f" id="acct-ccy">
+            <option>USD</option><option>GBP</option><option>EUR</option>
+          </select>
+        </div>
+      </div>
+      <div class="grid2">
+        <div class="field">
+          <label class="f" for="risk-pct">Risk per trade %</label>
+          <input class="f num" id="risk-pct" type="number" inputmode="decimal" step="0.1" value="1">
+        </div>
+        <div class="field">
+          <label class="f" for="fx-rate">Account per 1 USD</label>
+          <input class="f num" id="fx-rate" type="number" inputmode="decimal" step="0.0001" value="1">
+        </div>
+      </div>
+      <div class="grid2">
+        <div class="field">
+          <label class="f" for="stop-dist">Stop distance</label>
+          <input class="f num" id="stop-dist" type="number" inputmode="decimal" step="0.01">
+        </div>
+        <div class="field">
+          <label class="f" for="live-spread">Live spread</label>
+          <input class="f num" id="live-spread" type="number" inputmode="decimal" step="0.01">
+        </div>
+      </div>
+      <div class="field">
+        <label class="f" for="leverage">Leverage on this symbol</label>
+        <select class="f" id="leverage">
+          <option value="20">20:1 — FCA cap on gold</option>
+          <option value="30">30:1</option>
+          <option value="100" selected>100:1</option>
+          <option value="200">200:1</option>
+          <option value="500">500:1</option>
+          <option value="2">2:1</option>
+        </select>
+      </div>
+      <div id="size-out"></div>
+    </div>
+    <div class="card" id="cost-out"></div>
+  </section>
+
+  <!-- =========================== SETUP ============================ -->
+  <section id="tab-setup" hidden>
+    <h2 class="sec">Setup</h2>
+    <div class="card">
+      <p class="card-title">Data</p>
+      <div class="field">
+        <label class="f" for="mode">Where prices come from</label>
+        <select class="f" id="mode">
+          <option value="live">Live feed</option>
+          <option value="manual">Manual — type from my MT5 chart</option>
+        </select>
+      </div>
+      <div class="field">
+        <label class="f" for="key-twelvedata">Twelve Data API key (for gold)</label>
+        <input class="f" id="key-twelvedata" type="text" autocomplete="off" placeholder="free key from twelvedata.com">
+      </div>
+      <div id="manual-panel" hidden>
+        <div class="hr"></div>
+        <p class="card-title">Manual bars</p>
+        <div class="field">
+          <label class="f" for="manual-input">One bar per line: <span class="num">open high low close</span></label>
+          <textarea class="f num" id="manual-input" rows="7" style="min-height:130px;line-height:1.5"></textarea>
+        </div>
+        <button class="btn" id="manual-apply">Read these bars</button>
+      </div>
+      <div style="margin-top:12px"><button class="btn ghost" id="refresh">Refresh now</button></div>
+      <div id="feed-detail"></div>
+    </div>
+
+    <div class="card">
+      <p class="card-title">Your broker</p>
+      <div class="grid2">
+        <div class="field">
+          <label class="f" for="server-offset">MT5 server clock (UTC offset)</label>
+          <select class="f" id="server-offset">
+            <option value="">Not set</option>
+            <option value="0">UTC+0</option><option value="1">UTC+1</option>
+            <option value="2">UTC+2</option><option value="3" selected>UTC+3</option>
+            <option value="-5">UTC-5</option>
+          </select>
+        </div>
+        <div class="field">
+          <label class="f" for="contract-size">Contract size (per 1.00 lot)</label>
+          <input class="f num" id="contract-size" type="number" inputmode="decimal">
+        </div>
+      </div>
+      <div class="grid2">
+        <div class="field">
+          <label class="f" for="min-lot">Minimum lot</label>
+          <input class="f num" id="min-lot" type="number" inputmode="decimal" step="0.01">
+        </div>
+        <div class="field">
+          <label class="f" for="lot-step">Lot step</label>
+          <input class="f num" id="lot-step" type="number" inputmode="decimal" step="0.01">
+        </div>
+      </div>
+      <div class="unconfirmed" id="spec-warn"></div>
+      <details class="more">
+        <summary>Where to find these on the iPhone app</summary>
+        <p style="font-size:13px;color:var(--label-2);margin:6px 0 0">
+          MetaTrader 5 &rarr; <b>Quotes</b> &rarr; press and hold the symbol &rarr; <b>Specification</b>.
+          Read off Contract size, Digits, Tick value and Volume min / step. Read the server clock from
+          the time shown at the top of the Quotes list.
+        </p>
+      </details>
+    </div>
+
+    <div class="card" id="limits"></div>
+  </section>
+</main>
+
+<nav class="tabs" role="tablist" aria-label="Sections">
+  <button id="nav-read"  role="tab" aria-selected="true"><span class="ic">&#9678;</span>Read</button>
+  <button id="nav-news"  role="tab" aria-selected="false"><span class="ic">&#9888;</span>News<span class="badge" id="news-badge" hidden></span></button>
+  <button id="nav-risk"  role="tab" aria-selected="false"><span class="ic">&#9878;</span>Size</button>
+  <button id="nav-setup" role="tab" aria-selected="false"><span class="ic">&#9881;</span>Setup</button>
+</nav>
+
+<footer class="fine">
+  Decision support, not advice. It reads bars; it cannot see order flow, your broker's actual fill,
+  or the contents of a release. Nothing here is backtested.
+</footer>
+
+<script type="module">
+
+/* ======================= timezone.js ======================= */
+/**
+ * timezone.js — turning schedule rules into exact UTC instants.
+ *
+ * Every news time in this tool is stored as a WALL-CLOCK TIME IN A NAMED IANA
+ * ZONE ("08:30 America/New_York"), never as a fixed UTC offset. That is the
+ * whole point of this file.
+ *
+ * The reason: Non-Farm Payrolls is released at 08:30 in New York all year
+ * round. In UTC that is 12:30 during EDT and 13:30 during EST. A tool that
+ * hardcodes either one is wrong for roughly half the year, and it is wrong in
+ * the most expensive possible way — telling a scalper the coast is clear one
+ * hour before the largest candle of the month.
+ *
+ * Verified against a 3-year hourly round-trip fuzz over America/New_York and
+ * Europe/London: 52,560 instants, the only failures being the six inherently
+ * ambiguous repeated hours at the autumn transitions. See test/timezone.test.mjs.
+ */
+
+/**
+ * Offset of `tz` from UTC, in milliseconds, at the instant `utcMs`.
+ * Positive west of Greenwich is NOT the convention here: we return
+ * (wall clock read in tz) - (utc), so New York in winter gives -5h.
+ */
+function tzOffsetMs(utcMs, tz) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    hour12: false,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  }).formatToParts(new Date(utcMs));
+
+  const p = {};
+  for (const { type, value } of parts) p[type] = value;
+
+  // Some ICU builds render midnight as hour "24" with hour12:false. Modulo it
+  // back to 0 rather than letting Date.UTC roll the day forward.
+  const wallAsIfUtc = Date.UTC(
+    +p.year, +p.month - 1, +p.day,
+    +p.hour % 24, +p.minute, +p.second,
+  );
+  return wallAsIfUtc - utcMs;
+}
+
+/**
+ * The UTC instant at which the clock in `tz` reads the given wall-clock time.
+ *
+ * Solved by iteration rather than by table lookup. The first guess subtracts
+ * the offset that applies at the *naive* instant; that guess is already correct
+ * unless it lands on the far side of a DST transition, which the second pass
+ * repairs. Two passes are provably enough for every real-world zone, because no
+ * zone has two transitions inside one UTC day.
+ *
+ * Edge cases, both deliberate:
+ *  - Nonexistent times (the spring-forward gap, e.g. 02:30 on 8 Mar 2026 in
+ *    New York) resolve to the instant one offset-step after the gap. No
+ *    scheduled economic release sits in the gap, so this never bites in
+ *    practice, but it returns a usable instant rather than NaN.
+ *  - Ambiguous times (the autumn repeated hour) resolve to the FIRST of the two
+ *    occurrences, i.e. still-daylight-time. Again, no release sits there.
+ */
+function zonedTimeToUtc(year, month, day, hour, minute, tz) {
+  const naive = Date.UTC(year, month - 1, day, hour, minute, 0);
+  let ts = naive - tzOffsetMs(naive, tz);
+  ts = naive - tzOffsetMs(ts, tz);
+  return ts;
+}
+
+/**
+ * Day-of-month of the `n`th `weekday` of a month. weekday: 0=Sun … 6=Sat.
+ * n is 1-based. Returns a day number that may exceed the month's length if you
+ * ask for something impossible (a 5th Friday of a month that has four) — call
+ * `existsInMonth` or use `nthWeekdayOrNull`.
+ */
+function nthWeekdayOfMonth(year, month, weekday, n) {
+  const firstDow = new Date(Date.UTC(year, month - 1, 1)).getUTCDay();
+  return 1 + ((weekday - firstDow + 7) % 7) + (n - 1) * 7;
+}
+
+function daysInMonth(year, month) {
+  return new Date(Date.UTC(year, month, 0)).getUTCDate();
+}
+
+/** As nthWeekdayOfMonth, but null when that occurrence does not exist. */
+function nthWeekdayOrNull(year, month, weekday, n) {
+  const d = nthWeekdayOfMonth(year, month, weekday, n);
+  return d <= daysInMonth(year, month) ? d : null;
+}
+
+/** Day-of-month of the LAST `weekday` of a month. */
+function lastWeekdayOfMonth(year, month, weekday) {
+  const last = daysInMonth(year, month);
+  const lastDow = new Date(Date.UTC(year, month - 1, last)).getUTCDay();
+  return last - ((lastDow - weekday + 7) % 7);
+}
+
+/** All dates in [fromMs, toMs] whose weekday matches, as {y,m,d}. */
+function weekdaysBetween(fromMs, toMs, weekday) {
+  const out = [];
+  const d = new Date(fromMs);
+  d.setUTCHours(0, 0, 0, 0);
+  while (d.getTime() <= toMs) {
+    if (d.getUTCDay() === weekday) {
+      out.push({ y: d.getUTCFullYear(), m: d.getUTCMonth() + 1, d: d.getUTCDate() });
+    }
+    d.setUTCDate(d.getUTCDate() + 1);
+  }
+  return out;
+}
+
+/** The viewer's own IANA zone, with a safe fallback. */
+function localZone() {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  } catch {
+    return 'UTC';
+  }
+}
+
+/** Short zone abbreviation (EST/EDT/BST/GMT) for display. */
+function zoneAbbr(utcMs, tz) {
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', { timeZone: tz, timeZoneName: 'short' })
+      .formatToParts(new Date(utcMs));
+    const z = parts.find((p) => p.type === 'timeZoneName');
+    return z ? z.value : '';
+  } catch {
+    return '';
+  }
+}
+
+/** HH:MM in a given zone. */
+function formatHM(utcMs, tz) {
+  return new Intl.DateTimeFormat('en-GB', {
+    timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false,
+  }).format(new Date(utcMs));
+}
+
+/** "Fri 6 Nov, 13:30" in a given zone. */
+function formatDayTime(utcMs, tz) {
+  return new Intl.DateTimeFormat('en-GB', {
+    timeZone: tz, weekday: 'short', day: 'numeric', month: 'short',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  }).format(new Date(utcMs));
+}
+
+/** Compact countdown: "2d 04h", "3h 12m", "07:41", "now". */
+function formatCountdown(ms) {
+  if (ms <= 0) return 'now';
+  const s = Math.floor(ms / 1000);
+  const d = Math.floor(s / 86400);
+  const h = Math.floor((s % 86400) / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  if (d > 0) return `${d}d ${String(h).padStart(2, '0')}h`;
+  if (h > 0) return `${h}h ${String(m).padStart(2, '0')}m`;
+  return `${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
+}
+
+/* ======================= indicators.js ======================= */
+/**
+ * indicators.js — dependency-free technical analysis.
+ *
+ * CONVENTIONS, held to by every function in this file:
+ *
+ *  1. Input is an array of bars, oldest first:
+ *       { t: epochMs, o, h, l, c, v }
+ *  2. Output is an array of the SAME LENGTH, index-aligned with the input, and
+ *     null-padded through the warm-up. `out[i]` always describes `bars[i]`.
+ *     This matters more than it sounds: mismatched lengths are the single
+ *     commonest source of "my indicator is off by two bars" bugs.
+ *  3. Nothing mutates its input.
+ *  4. Insufficient data returns nulls, never an exception.
+ *
+ * SEEDING. Smoothed indicators disagree between libraries on how the first
+ * value is produced, and the disagreement never washes out completely — it
+ * decays geometrically but is still visible dozens of bars later. This file
+ * follows the TradingView / MetaTrader convention throughout:
+ *
+ *  - EMA seeds from the SMA of the first `period` values.
+ *  - RSI and ATR use WILDER smoothing: the first average is a simple mean of
+ *    the first `period` values, and thereafter
+ *        avg = (prevAvg * (period - 1) + current) / period
+ *    which is an EMA with alpha = 1/period, NOT the 2/(period+1) used by a
+ *    standard EMA. Using the wrong alpha gives an RSI that looks plausible and
+ *    is consistently wrong.
+ *  - Bollinger Bands use the POPULATION standard deviation (divide by N),
+ *    matching TradingView's ta.stdev. Sample stdev (N-1) gives visibly wider
+ *    bands on short periods.
+ *
+ * Where a value could not be computed the entry is null. Callers should use
+ * `lastOf()` rather than indexing from the end, so a null tail cannot be
+ * mistaken for a reading.
+ */
+
+/* ---------------------------------------------------------------- helpers */
+
+
+
+const nulls = (n) => new Array(n).fill(null);
+
+/** Last non-null value of an indicator series, or null. */
+function lastOf(series) {
+  if (!Array.isArray(series)) return null;
+  for (let i = series.length - 1; i >= 0; i--) {
+    if (series[i] !== null && series[i] !== undefined && !Number.isNaN(series[i])) return series[i];
+  }
+  return null;
+}
+
+/** Value `back` bars before the end, or null. */
+function valueAt(series, back = 0) {
+  const i = series.length - 1 - back;
+  if (i < 0 || i >= series.length) return null;
+  const v = series[i];
+  return v === undefined || Number.isNaN(v) ? null : v;
+}
+
+const closes = (bars) => bars.map((b) => b.c);
+const highs = (bars) => bars.map((b) => b.h);
+const lows = (bars) => bars.map((b) => b.l);
+const volumes = (bars) => bars.map((b) => (typeof b.v === 'number' ? b.v : 0));
+/** Typical price (HLC/3) — the standard VWAP input. */
+const typical = (bars) => bars.map((b) => (b.h + b.l + b.c) / 3);
+
+/* ------------------------------------------------------------- averages */
+
+/** Simple moving average. Warm-up: period - 1 bars. */
+function sma(values, period) {
+  const out = nulls(values.length);
+  if (period <= 0 || values.length < period) return out;
+  let sum = 0;
+  for (let i = 0; i < values.length; i++) {
+    sum += values[i];
+    if (i >= period) sum -= values[i - period];
+    if (i >= period - 1) out[i] = sum / period;
+  }
+  return out;
+}
+
+/**
+ * Exponential moving average, seeded from the SMA of the first `period` values
+ * (TradingView / MT5 convention). Warm-up: period - 1 bars.
+ */
+function ema(values, period) {
+  const out = nulls(values.length);
+  if (period <= 0 || values.length < period) return out;
+  const k = 2 / (period + 1);
+  let seed = 0;
+  for (let i = 0; i < period; i++) seed += values[i];
+  let prev = seed / period;
+  out[period - 1] = prev;
+  for (let i = period; i < values.length; i++) {
+    prev = values[i] * k + prev * (1 - k);
+    out[i] = prev;
+  }
+  return out;
+}
+
+/** Weighted moving average — linear weights, heaviest on the newest bar. */
+function wma(values, period) {
+  const out = nulls(values.length);
+  if (period <= 0 || values.length < period) return out;
+  const denom = (period * (period + 1)) / 2;
+  for (let i = period - 1; i < values.length; i++) {
+    let acc = 0;
+    for (let j = 0; j < period; j++) acc += values[i - j] * (period - j);
+    out[i] = acc / denom;
+  }
+  return out;
+}
+
+/** Hull moving average: WMA(2*WMA(n/2) - WMA(n), sqrt(n)). Fast, low lag. */
+function hma(values, period) {
+  if (period <= 1 || values.length < period) return nulls(values.length);
+  const half = Math.max(1, Math.floor(period / 2));
+  const root = Math.max(1, Math.round(Math.sqrt(period)));
+  const a = wma(values, half);
+  const b = wma(values, period);
+  const diff = values.map((_, i) => (a[i] === null || b[i] === null ? null : 2 * a[i] - b[i]));
+  const firstValid = diff.findIndex((x) => x !== null);
+  if (firstValid < 0) return nulls(values.length);
+  const dense = diff.slice(firstValid).map((x) => (x === null ? 0 : x));
+  const smoothed = wma(dense, root);
+  const out = nulls(values.length);
+  for (let i = 0; i < smoothed.length; i++) out[firstValid + i] = smoothed[i];
+  return out;
+}
+
+/**
+ * Wilder's smoothing. Seeds with the simple mean of the first `period` values,
+ * then avg = (prev*(period-1) + x) / period. Used by RSI, ATR and ADX.
+ */
+function wilder(values, period) {
+  const out = nulls(values.length);
+  if (period <= 0 || values.length < period) return out;
+  let seed = 0;
+  for (let i = 0; i < period; i++) seed += values[i];
+  let prev = seed / period;
+  out[period - 1] = prev;
+  for (let i = period; i < values.length; i++) {
+    prev = (prev * (period - 1) + values[i]) / period;
+    out[i] = prev;
+  }
+  return out;
+}
+
+/* --------------------------------------------------------- momentum etc */
+
+/**
+ * RSI, Wilder-smoothed. Warm-up: `period` bars (one is consumed producing the
+ * first delta). Flat price gives avgLoss == 0; we return 100 rather than
+ * dividing by zero, and 50 when both averages are zero (dead flat).
+ */
+function rsi(values, period = 14) {
+  const out = nulls(values.length);
+  if (values.length < period + 1) return out;
+  const gains = [], losses = [];
+  for (let i = 1; i < values.length; i++) {
+    const d = values[i] - values[i - 1];
+    gains.push(Math.max(0, d));
+    losses.push(Math.max(0, -d));
+  }
+  const ag = wilder(gains, period);
+  const al = wilder(losses, period);
+  for (let i = 0; i < gains.length; i++) {
+    if (ag[i] === null || al[i] === null) continue;
+    // Algebraically identical to 100 - 100/(1+RS), but with no infinite-RS
+    // branch to special-case: when both averages are zero the price is dead
+    // flat and 50 is the honest reading.
+    const denom = ag[i] + al[i];
+    out[i + 1] = denom > 0 ? (100 * ag[i]) / denom : 50;   // +1: gains[0] describes bars[1]
+  }
+  return out;
+}
+
+/**
+ * True Range.
+ *
+ * Bar 0 is NULL, not (high - low). True Range is defined against the previous
+ * close, and the first bar has none. Substituting (high - low) there looks
+ * harmless but feeds a bogus value into the Wilder seed, which shifts every
+ * ATR reading downstream by one bar — and ATR is what sizes the stop.
+ * TA-Lib starts its TR at index 1 for exactly this reason.
+ */
+function trueRange(bars) {
+  return bars.map((b, i) => {
+    if (i === 0) return null;
+    const pc = bars[i - 1].c;
+    return Math.max(b.h - b.l, Math.abs(b.h - pc), Math.abs(b.l - pc));
+  });
+}
+
+/** ATR, Wilder-smoothed, starting from the first real TR. Warm-up: period bars. */
+function atr(bars, period = 14) {
+  if (!bars.length) return [];
+  const tr = trueRange(bars);
+  const smoothed = wilder(tr.slice(1), period);
+  return [null, ...smoothed];   // realign: smoothed[0] describes bars[1]
+}
+
+/** MACD. The signal line is an EMA of the MACD line's own valid history. */
+function macd(values, fast = 12, slow = 26, signalPeriod = 9) {
+  const n = values.length;
+  // The two EMAs must have seed windows that END ON THE SAME BAR. Computed
+  // independently from bar 0, the fast EMA has had (slow - fast) extra bars of
+  // smoothing by the time the slow one starts, so the difference between them
+  // is not a clean MACD on the early bars. Offsetting the fast EMA's input so
+  // its seed window closes at index slow-1 is what TA-Lib does.
+  const offset = Math.max(0, slow - fast);
+  const efShifted = ema(values.slice(offset), fast);
+  const ef = [...nulls(offset), ...efShifted];
+  const es = ema(values, slow);
+  const line = nulls(n);
+  for (let i = 0; i < n; i++) if (ef[i] !== null && es[i] !== null) line[i] = ef[i] - es[i];
+
+  const firstValid = line.findIndex((x) => x !== null);
+  const signal = nulls(n);
+  const hist = nulls(n);
+  if (firstValid >= 0) {
+    const dense = line.slice(firstValid);
+    const sig = ema(dense, signalPeriod);
+    for (let i = 0; i < sig.length; i++) {
+      if (sig[i] === null) continue;
+      signal[firstValid + i] = sig[i];
+      hist[firstValid + i] = line[firstValid + i] - sig[i];
+    }
+  }
+  return { line, signal, histogram: hist };
+}
+
+/** Bollinger Bands, population stdev (TradingView convention). */
+function bollingerBands(values, period = 20, mult = 2) {
+  const n = values.length;
+  const mid = sma(values, period);
+  const upper = nulls(n), lower = nulls(n), width = nulls(n), pctB = nulls(n);
+  for (let i = period - 1; i < n; i++) {
+    if (mid[i] === null) continue;
+    let acc = 0;
+    for (let j = i - period + 1; j <= i; j++) acc += (values[j] - mid[i]) ** 2;
+    const sd = Math.sqrt(acc / period);       // population, not sample
+    upper[i] = mid[i] + mult * sd;
+    lower[i] = mid[i] - mult * sd;
+    width[i] = mid[i] === 0 ? null : ((upper[i] - lower[i]) / mid[i]) * 100;
+    const span = upper[i] - lower[i];
+    pctB[i] = span === 0 ? 0.5 : (values[i] - lower[i]) / span;
+  }
+  return { middle: mid, upper, lower, width, percentB: pctB };
+}
+
+/** Stochastic oscillator. %D is an SMA of %K. */
+function stochastic(bars, kPeriod = 14, dPeriod = 3, smooth = 3) {
+  const n = bars.length;
+  const rawK = nulls(n);
+  for (let i = kPeriod - 1; i < n; i++) {
+    let hh = -Infinity, ll = Infinity;
+    for (let j = i - kPeriod + 1; j <= i; j++) {
+      if (bars[j].h > hh) hh = bars[j].h;
+      if (bars[j].l < ll) ll = bars[j].l;
+    }
+    const span = hh - ll;
+    rawK[i] = span === 0 ? 50 : ((bars[i].c - ll) / span) * 100;
+  }
+  const firstValid = rawK.findIndex((x) => x !== null);
+  const k = nulls(n), d = nulls(n);
+  if (firstValid >= 0) {
+    const dense = rawK.slice(firstValid);
+    const ks = sma(dense, smooth);
+    for (let i = 0; i < ks.length; i++) if (ks[i] !== null) k[firstValid + i] = ks[i];
+    const kFirst = k.findIndex((x) => x !== null);
+    if (kFirst >= 0) {
+      const ds = sma(k.slice(kFirst).map((x) => (x === null ? 0 : x)), dPeriod);
+      for (let i = 0; i < ds.length; i++) if (ds[i] !== null) d[kFirst + i] = ds[i];
+    }
+  }
+  return { k, d };
+}
+
+/* --------------------------------------------------------------- trend */
+
+/**
+ * ADX / DMI, full Wilder three-step.
+ *   1. Smooth TR, +DM and -DM over `period`.
+ *   2. +DI = 100 * smoothed(+DM)/smoothed(TR); likewise -DI.
+ *   3. DX = 100 * |+DI - -DI| / (+DI + -DI); ADX = Wilder-smoothed DX.
+ * ADX therefore needs roughly 2 * period bars before it means anything.
+ */
+function adx(bars, period = 14) {
+  const n = bars.length;
+  const out = { adx: nulls(n), plusDI: nulls(n), minusDI: nulls(n) };
+  if (n < period * 2) return out;
+
+  const tr = [], plusDM = [], minusDM = [];
+  for (let i = 1; i < n; i++) {
+    const up = bars[i].h - bars[i - 1].h;
+    const dn = bars[i - 1].l - bars[i].l;
+    plusDM.push(up > dn && up > 0 ? up : 0);
+    minusDM.push(dn > up && dn > 0 ? dn : 0);
+    const pc = bars[i - 1].c;
+    tr.push(Math.max(bars[i].h - bars[i].l, Math.abs(bars[i].h - pc), Math.abs(bars[i].l - pc)));
+  }
+
+  const strTR = wilder(tr, period);
+  const strP = wilder(plusDM, period);
+  const strM = wilder(minusDM, period);
+
+  const dx = [];
+  const dxIndex = [];
+  for (let i = 0; i < tr.length; i++) {
+    if (strTR[i] === null || strTR[i] === 0) { continue; }
+    const pdi = (strP[i] / strTR[i]) * 100;
+    const mdi = (strM[i] / strTR[i]) * 100;
+    out.plusDI[i + 1] = pdi;
+    out.minusDI[i + 1] = mdi;
+    const sum = pdi + mdi;
+    dx.push(sum === 0 ? 0 : (Math.abs(pdi - mdi) / sum) * 100);
+    dxIndex.push(i + 1);
+  }
+  const adxVals = wilder(dx, period);
+  for (let i = 0; i < adxVals.length; i++) {
+    if (adxVals[i] !== null) out.adx[dxIndex[i]] = adxVals[i];
+  }
+  return out;
+}
+
+/**
+ * Supertrend. The band-locking rule is the part implementations get wrong:
+ * the final upper band may only ratchet DOWN while price stays below it, and
+ * resets when price closes above. Without that lock the indicator flip-flops.
+ */
+function supertrend(bars, period = 10, mult = 3) {
+  const n = bars.length;
+  const a = atr(bars, period);
+  const value = nulls(n), dir = nulls(n);
+  let fUpper = null, fLower = null, prevDir = 1;
+
+  for (let i = 0; i < n; i++) {
+    if (a[i] === null) continue;
+    const mid = (bars[i].h + bars[i].l) / 2;
+    const bUpper = mid + mult * a[i];
+    const bLower = mid - mult * a[i];
+    const pc = i > 0 ? bars[i - 1].c : bars[i].c;
+
+    fUpper = (fUpper === null || bUpper < fUpper || pc > fUpper) ? bUpper : fUpper;
+    fLower = (fLower === null || bLower > fLower || pc < fLower) ? bLower : fLower;
+
+    let d = prevDir;
+    if (bars[i].c > fUpper) d = 1;
+    else if (bars[i].c < fLower) d = -1;
+
+    dir[i] = d;
+    value[i] = d === 1 ? fLower : fUpper;
+    prevDir = d;
+  }
+  return { value, direction: dir };
+}
+
+/* ----------------------------------------------------------- channels */
+
+function donchian(bars, period = 20) {
+  const n = bars.length;
+  const upper = nulls(n), lower = nulls(n), mid = nulls(n);
+  for (let i = period - 1; i < n; i++) {
+    let hh = -Infinity, ll = Infinity;
+    for (let j = i - period + 1; j <= i; j++) {
+      if (bars[j].h > hh) hh = bars[j].h;
+      if (bars[j].l < ll) ll = bars[j].l;
+    }
+    upper[i] = hh; lower[i] = ll; mid[i] = (hh + ll) / 2;
+  }
+  return { upper, lower, middle: mid };
+}
+
+function keltner(bars, period = 20, mult = 2, atrPeriod = 10) {
+  const n = bars.length;
+  const mid = ema(typical(bars), period);
+  const a = atr(bars, atrPeriod);
+  const upper = nulls(n), lower = nulls(n);
+  for (let i = 0; i < n; i++) {
+    if (mid[i] === null || a[i] === null) continue;
+    upper[i] = mid[i] + mult * a[i];
+    lower[i] = mid[i] - mult * a[i];
+  }
+  return { middle: mid, upper, lower };
+}
+
+/* --------------------------------------------------------------- VWAP */
+
+/**
+ * Session-anchored VWAP with standard-deviation bands.
+ *
+ * `sessionResetUtcHour` is where the two instruments genuinely differ:
+ *   - Gold anchors to the futures/forex day (22:00 or 23:00 UTC depending on
+ *     DST — pass whichever matches the broker's server day).
+ *   - Bitcoin trades continuously and anchors to 00:00 UTC, which is what
+ *     every crypto venue uses for its daily candle.
+ * Pass null to anchor at the first bar instead (useful for an intraday
+ * anchored VWAP from a chosen event).
+ *
+ * Note: MT5 gold feeds carry TICK volume, not traded volume. The shape is
+ * usually informative; the magnitude is not comparable across venues.
+ */
+function sessionVwap(bars, sessionReset = 0, devMult = [1, 2]) {
+  // `sessionReset` is either a fixed UTC hour (bitcoin: 0, matching every
+  // crypto venue's daily candle) or {h, tz} for an instrument whose trading
+  // day is anchored to a local clock that moves with daylight saving. Gold's
+  // futures day rolls at 17:00 New York, which is 21:00 UTC in summer and
+  // 22:00 UTC in winter — hardcoding either is wrong for half the year.
+  const resolveResetHour = (t) => {
+    if (sessionReset === null) return null;
+    if (typeof sessionReset === 'number') return sessionReset;
+    const off = tzOffsetMs(t, sessionReset.tz) / 3600e3;
+    return ((sessionReset.h - off) % 24 + 24) % 24;
+  };
+  const n = bars.length;
+  const vwap = nulls(n);
+  const bands = devMult.map(() => ({ upper: nulls(n), lower: nulls(n) }));
+
+  let cumPV = 0, cumV = 0, anchorDay = null;
+  let session = [];   // [typicalPrice, volume] for the current session
+
+  for (let i = 0; i < n; i++) {
+    const d = new Date(bars[i].t);
+    let dayKey;
+    const resetHour = resolveResetHour(bars[i].t);
+    if (resetHour === null) {
+      dayKey = 'single';
+    } else {
+      const shifted = new Date(bars[i].t - resetHour * 3600e3);
+      dayKey = `${shifted.getUTCFullYear()}-${shifted.getUTCMonth()}-${shifted.getUTCDate()}`;
+    }
+    if (dayKey !== anchorDay) { anchorDay = dayKey; cumPV = 0; cumV = 0; session = []; }
+
+    const tp = (bars[i].h + bars[i].l + bars[i].c) / 3;
+    // Tick-volume feeds can report 0; fall back to 1 so VWAP degrades to a
+    // simple typical-price average rather than dividing by zero.
+    const vol = bars[i].v && bars[i].v > 0 ? bars[i].v : 1;
+    cumPV += tp * vol;
+    cumV += vol;
+    session.push([tp, vol]);
+
+    const vw = cumPV / cumV;
+    vwap[i] = vw;
+    // TWO-PASS variance. The textbook one-pass form E[x^2] - mean^2
+    // catastrophically cancels at gold's price level: tp^2 is ~19,000,000 and
+    // the variance being extracted from it is a few units, which float64
+    // cannot resolve — it goes negative and the bands collapse. Re-walking the
+    // session is a few hundred multiplications and is simply correct.
+    let acc = 0;
+    for (let k = 0; k < session.length; k++) acc += session[k][1] * (session[k][0] - vw) ** 2;
+    const variance = Math.max(0, acc / cumV);
+    const sd = Math.sqrt(variance);
+    devMult.forEach((m, bi) => {
+      bands[bi].upper[i] = vw + m * sd;
+      bands[bi].lower[i] = vw - m * sd;
+    });
+    void d;
+  }
+  return { vwap, bands };
+}
+
+/* ------------------------------------------------- structure and levels */
+
+/**
+ * Fractal swing pivots. A pivot high at i needs `lookback` lower highs on both
+ * sides, so it CANNOT be confirmed until `lookback` bars have printed after it.
+ *
+ * Anything within `lookback` of the right edge is therefore unconfirmed. We
+ * refuse to emit those rather than emitting and later revoking them — an
+ * indicator that repaints is worse than one that is late, because a scalper
+ * acts on it.
+ */
+function swingPivots(bars, lookback = 3) {
+  const highsArr = [], lowsArr = [];
+  const lastConfirmable = bars.length - 1 - lookback;
+  for (let i = lookback; i <= lastConfirmable; i++) {
+    let isHigh = true, isLow = true;
+    for (let j = i - lookback; j <= i + lookback; j++) {
+      if (j === i) continue;
+      if (bars[j].h >= bars[i].h) isHigh = false;
+      if (bars[j].l <= bars[i].l) isLow = false;
+    }
+    if (isHigh) highsArr.push({ index: i, price: bars[i].h, t: bars[i].t });
+    if (isLow) lowsArr.push({ index: i, price: bars[i].l, t: bars[i].t });
+  }
+  return { highs: highsArr, lows: lowsArr, unconfirmedBars: lookback };
+}
+
+/**
+ * Merge nearby pivots into support/resistance levels.
+ *
+ * Tolerance is expressed in ATR rather than in price, so the same code works
+ * for $3,900 gold and $95,000 bitcoin without a magic number per instrument.
+ * Strength counts touches, weighted towards recent ones — a level respected
+ * this morning matters more to a scalp than one from three days ago.
+ */
+function clusterLevels(bars, atrValue, opts = {}) {
+  const { lookback = 3, toleranceAtr = 0.5, maxLevels = 8 } = opts;
+  if (!atrValue || atrValue <= 0 || bars.length < lookback * 2 + 1) return [];
+
+  const { highs: ph, lows: pl } = swingPivots(bars, lookback);
+  const points = [
+    ...ph.map((p) => ({ ...p, kind: 'resistance' })),
+    ...pl.map((p) => ({ ...p, kind: 'support' })),
+  ].sort((a, b) => a.price - b.price);
+  if (!points.length) return [];
+
+  const tol = atrValue * toleranceAtr;
+  const clusters = [];
+  let cur = [points[0]];
+  for (let i = 1; i < points.length; i++) {
+    if (points[i].price - cur[cur.length - 1].price <= tol) cur.push(points[i]);
+    else { clusters.push(cur); cur = [points[i]]; }
+  }
+  clusters.push(cur);
+
+  const lastIdx = bars.length - 1;
+  const levels = clusters.map((c) => {
+    const price = c.reduce((s, p) => s + p.price, 0) / c.length;
+    // Recency weight decays linearly to 0.3 across the visible window.
+    const strength = c.reduce((s, p) => s + (0.3 + 0.7 * (p.index / lastIdx)), 0);
+    const resCount = c.filter((p) => p.kind === 'resistance').length;
+    return {
+      price,
+      touches: c.length,
+      strength,
+      lastTouchIndex: Math.max(...c.map((p) => p.index)),
+      bias: resCount > c.length / 2 ? 'resistance' : resCount < c.length / 2 ? 'support' : 'both',
+    };
+  });
+
+  return levels.sort((a, b) => b.strength - a.strength).slice(0, maxLevels)
+    .sort((a, b) => a.price - b.price);
+}
+
+/**
+ * Market structure from confirmed pivots.
+ *   BOS   — Break of Structure: trend continues (higher high in an uptrend).
+ *   CHoCH — Change of Character: the first break the other way, i.e. the
+ *           earliest structural hint that the trend is over.
+ * Both are computed only from CONFIRMED pivots, so neither repaints.
+ */
+function marketStructure(bars, lookback = 3) {
+  const { highs: ph, lows: pl } = swingPivots(bars, lookback);
+  if (ph.length < 2 || pl.length < 2) {
+    return { trend: 'undefined', events: [], lastHigh: null, lastLow: null, reason: 'not enough confirmed pivots' };
+  }
+  const seq = [...ph.map((p) => ({ ...p, kind: 'H' })), ...pl.map((p) => ({ ...p, kind: 'L' }))]
+    .sort((a, b) => a.index - b.index);
+
+  let trend = 'undefined';
+  let prevH = null, prevL = null;
+  const events = [];
+  for (const p of seq) {
+    if (p.kind === 'H') {
+      if (prevH !== null) {
+        if (p.price > prevH) {
+          events.push({ type: trend === 'down' ? 'CHoCH' : 'BOS', dir: 'up', index: p.index, price: p.price });
+          trend = 'up';
+        }
+      }
+      prevH = p.price;
+    } else {
+      if (prevL !== null) {
+        if (p.price < prevL) {
+          events.push({ type: trend === 'up' ? 'CHoCH' : 'BOS', dir: 'down', index: p.index, price: p.price });
+          trend = 'down';
+        }
+      }
+      prevL = p.price;
+    }
+  }
+  return {
+    trend,
+    events: events.slice(-6),
+    lastHigh: ph.length ? ph[ph.length - 1] : null,
+    lastLow: pl.length ? pl[pl.length - 1] : null,
+    reason: null,
+  };
+}
+
+/**
+ * Fair Value Gaps (three-candle imbalance).
+ * Bullish: low of bar i is above high of bar i-2 — the middle candle ran so
+ * hard that no trade happened in the gap. Bearish is the mirror.
+ * Only gaps of at least `minAtr` ATR are kept; on M5 the small ones are noise.
+ * A gap is marked filled once a later bar trades back through it.
+ */
+function findFVGs(bars, atrValue, opts = {}) {
+  const { minAtr = 0.25, maxAgeBars = 120, includeFilled = false } = opts;
+  const out = [];
+  if (!atrValue || atrValue <= 0) return out;
+  const start = Math.max(2, bars.length - maxAgeBars);
+
+  for (let i = start; i < bars.length; i++) {
+    const a = bars[i - 2], c = bars[i];
+    if (c.l > a.h && c.l - a.h >= atrValue * minAtr) {
+      out.push({ type: 'bullish', from: a.h, to: c.l, index: i, t: c.t, size: c.l - a.h });
+    } else if (a.l > c.h && a.l - c.h >= atrValue * minAtr) {
+      out.push({ type: 'bearish', from: c.h, to: a.l, index: i, t: c.t, size: a.l - c.h });
+    }
+  }
+  for (const g of out) {
+    g.filled = false;
+    for (let j = g.index + 1; j < bars.length; j++) {
+      if (bars[j].l <= g.from && bars[j].h >= g.to) { g.filled = true; break; }
+      if (g.type === 'bullish' && bars[j].l <= g.from) { g.filled = true; break; }
+      if (g.type === 'bearish' && bars[j].h >= g.to) { g.filled = true; break; }
+    }
+  }
+  return (includeFilled ? out : out.filter((g) => !g.filled)).slice(-6);
+}
+
+/**
+ * Order blocks: the last opposing candle before an impulsive move that breaks
+ * structure. Deliberately narrow — the loose definitions match almost any
+ * candle and are therefore meaningless.
+ */
+function findOrderBlocks(bars, atrValue, opts = {}) {
+  const { impulseAtr = 1.5, maxAgeBars = 120, lookahead = 3 } = opts;
+  const out = [];
+  if (!atrValue || atrValue <= 0) return out;
+  const start = Math.max(1, bars.length - maxAgeBars);
+
+  for (let i = start; i < bars.length - lookahead; i++) {
+    const b = bars[i];
+    const isDown = b.c < b.o, isUp = b.c > b.o;
+    let move = 0;
+    for (let j = i + 1; j <= i + lookahead; j++) move = Math.max(move, Math.abs(bars[j].c - b.c));
+    if (move < atrValue * impulseAtr) continue;
+
+    const wentUp = bars[i + lookahead].c > b.c;
+    if (isDown && wentUp) out.push({ type: 'bullish', top: Math.max(b.o, b.c), bottom: b.l, index: i, t: b.t });
+    else if (isUp && !wentUp) out.push({ type: 'bearish', top: b.h, bottom: Math.min(b.o, b.c), index: i, t: b.t });
+  }
+  // Drop blocks price has already traded back through and closed beyond.
+  return out.filter((ob) => {
+    for (let j = ob.index + 1; j < bars.length; j++) {
+      if (ob.type === 'bullish' && bars[j].c < ob.bottom) return false;
+      if (ob.type === 'bearish' && bars[j].c > ob.top) return false;
+    }
+    return true;
+  }).slice(-4);
+}
+
+/**
+ * Liquidity sweep / stop hunt: a wick pushes through a confirmed pivot, then
+ * the bar CLOSES back inside. That close-back-inside is the whole signal —
+ * without it, it is just a breakout.
+ */
+function detectLiquiditySweep(bars, opts = {}) {
+  const { lookback = 3, withinBars = 6, minWickAtrFrac = 0.15, atrValue = null } = opts;
+  const { highs: ph, lows: pl } = swingPivots(bars, lookback);
+  const res = [];
+  const from = Math.max(0, bars.length - withinBars);
+
+  for (let i = from; i < bars.length; i++) {
+    const b = bars[i];
+    for (const p of ph) {
+      if (p.index >= i) continue;
+      const wick = b.h - Math.max(b.o, b.c);
+      if (b.h > p.price && b.c < p.price && (!atrValue || wick >= atrValue * minWickAtrFrac)) {
+        res.push({ type: 'sell-side-sweep', level: p.price, index: i, t: b.t, barsAgo: bars.length - 1 - i });
+        break;
+      }
+    }
+    for (const p of pl) {
+      if (p.index >= i) continue;
+      const wick = Math.min(b.o, b.c) - b.l;
+      if (b.l < p.price && b.c > p.price && (!atrValue || wick >= atrValue * minWickAtrFrac)) {
+        res.push({ type: 'buy-side-sweep', level: p.price, index: i, t: b.t, barsAgo: bars.length - 1 - i });
+        break;
+      }
+    }
+  }
+  return res.slice(-4);
+}
+
+/**
+ * Relative volume: this bar against the mean of the SAME five-minute slot on
+ * previous days. Comparing against a flat rolling average instead would flag
+ * every London open as unusual, which is useless — the London open is
+ * supposed to be busy.
+ */
+function relativeVolume(bars, daysBack = 5) {
+  const n = bars.length;
+  const out = nulls(n);
+  const bySlot = new Map();
+  for (let i = 0; i < n; i++) {
+    const d = new Date(bars[i].t);
+    const slot = d.getUTCHours() * 60 + d.getUTCMinutes();
+    if (!bySlot.has(slot)) bySlot.set(slot, []);
+    bySlot.get(slot).push({ i, v: bars[i].v || 0 });
+  }
+  for (const entries of bySlot.values()) {
+    for (let k = 0; k < entries.length; k++) {
+      const prior = entries.slice(Math.max(0, k - daysBack), k);
+      if (prior.length < 2) continue;
+      const mean = prior.reduce((s, e) => s + e.v, 0) / prior.length;
+      if (mean > 0) out[entries[k].i] = entries[k].v / mean;
+    }
+  }
+  return out;
+}
+
+/**
+ * Volume profile approximated from OHLCV.
+ *
+ * LIMIT, stated plainly: without tick data we do not know where inside a bar
+ * the volume traded. This spreads each bar's volume uniformly across its
+ * high-low range, which is wrong in detail but produces a usable picture of
+ * where price has spent time. Treat the Point of Control as "where price
+ * lingered", not as a true traded-volume peak. On an MT5 gold feed the input
+ * is tick volume anyway, so this is an approximation of an approximation.
+ */
+function volumeProfile(bars, buckets = 40) {
+  if (!bars.length) return { levels: [], poc: null, vah: null, val: null };
+  let lo = Infinity, hi = -Infinity;
+  for (const b of bars) { if (b.l < lo) lo = b.l; if (b.h > hi) hi = b.h; }
+  if (!(hi > lo)) return { levels: [], poc: null, vah: null, val: null };
+
+  const size = (hi - lo) / buckets;
+  const vol = new Array(buckets).fill(0);
+  for (const b of bars) {
+    const v = b.v && b.v > 0 ? b.v : 1;
+    const from = Math.max(0, Math.floor((b.l - lo) / size));
+    const to = Math.min(buckets - 1, Math.floor((b.h - lo) / size));
+    const span = to - from + 1;
+    for (let k = from; k <= to; k++) vol[k] += v / span;
+  }
+  const levels = vol.map((v, k) => ({ price: lo + size * (k + 0.5), volume: v }));
+  const total = vol.reduce((s, v) => s + v, 0);
+
+  let pocIdx = 0;
+  for (let k = 1; k < buckets; k++) if (vol[k] > vol[pocIdx]) pocIdx = k;
+
+  // Value area: expand from the POC until 70% of volume is enclosed.
+  let acc = vol[pocIdx], lowI = pocIdx, highI = pocIdx;
+  while (acc < total * 0.7 && (lowI > 0 || highI < buckets - 1)) {
+    const below = lowI > 0 ? vol[lowI - 1] : -1;
+    const above = highI < buckets - 1 ? vol[highI + 1] : -1;
+    if (above >= below) { highI++; acc += vol[highI]; } else { lowI--; acc += vol[lowI]; }
+  }
+  return {
+    levels,
+    poc: levels[pocIdx].price,
+    vah: levels[highI].price,
+    val: levels[lowI].price,
+  };
+}
+
+/* ---------------------------------------------------------- resampling */
+
+/**
+ * Resample M5 bars up to a higher timeframe.
+ *
+ * `dropPartial` defaults to true and should almost never be turned off. The
+ * newest higher-timeframe bar is still forming; treating it as closed is
+ * look-ahead bias in the only direction that flatters a backtest. When we take
+ * a bias from H1 we must take it from the last CLOSED H1 bar.
+ */
+function resample(bars, minutes, dropPartial = true) {
+  if (!bars.length) return [];
+  const ms = minutes * 60000;
+  const out = [];
+  let cur = null;
+  for (const b of bars) {
+    const bucket = Math.floor(b.t / ms) * ms;
+    if (!cur || cur.t !== bucket) {
+      if (cur) out.push(cur);
+      cur = { t: bucket, o: b.o, h: b.h, l: b.l, c: b.c, v: b.v || 0, count: 1 };
+    } else {
+      cur.h = Math.max(cur.h, b.h);
+      cur.l = Math.min(cur.l, b.l);
+      cur.c = b.c;
+      cur.v += b.v || 0;
+      cur.count++;
+    }
+  }
+  if (cur) out.push(cur);
+
+  if (dropPartial && out.length) {
+    const expected = minutes / 5;
+    if (out[out.length - 1].count < expected) out.pop();
+  }
+  return out;
+}
+
+/* ======================= instruments.js ======================= */
+/**
+ * instruments.js — contract specifications.
+ *
+ * READ THIS BEFORE TRUSTING ANY NUMBER BELOW.
+ *
+ * Contract size, tick value and minimum lot are set by YOUR BROKER, not by the
+ * market. They vary — materially — between brokers, and between account types
+ * at the same broker. A "standard lot" of bitcoin is 1 BTC at some brokers and
+ * 0.01 BTC at others. Getting this wrong scales every position size by 100.
+ *
+ * So everything marked `confirm: true` is a DEFAULT AWAITING CONFIRMATION, not
+ * a fact. The tool shows these as unconfirmed until you have checked them
+ * against your own platform, and the position-size calculator refuses to give
+ * a lot size while a value it depends on is still unconfirmed.
+ *
+ * Where to check on the MT5 iPhone app:
+ *   Quotes -> press and hold the symbol -> Specification.
+ * Read off "Contract size", "Digits", "Tick size"/"Tick value" and
+ * "Volume min / step".
+ */
+
+const INSTRUMENTS = {
+  XAUUSD: {
+    id: 'XAUUSD',
+    label: 'Gold',
+    display: 'XAU/USD',
+    quoteCurrency: 'USD',
+
+    // Commonly 100 troy ounces per standard lot, so a $1.00 move in the gold
+    // price is $100 per lot. Micro/cent accounts differ.
+    contractSize: { value: 100, unit: 'oz per 1.00 lot', confirm: true },
+
+    // Most feeds quote gold to 2 decimals, so the smallest increment is 0.01.
+    // Some quote 3. The tool reads this rather than assuming.
+    digits: { value: 2, confirm: true },
+
+    // Value of one full $1.00 move, per 1.00 lot, in the quote currency.
+    dollarMoveValuePerLot: { value: 100, confirm: true },
+
+    // Typical all-in spread by session, in dollars of gold price. Indicative
+    // only — your broker's is the one that matters, and the tool measures the
+    // live spread when it can rather than relying on this.
+    typicalSpread: {
+      asia: 0.45, london: 0.28, newYork: 0.25, rollover: 1.60,
+      note: 'indicative at ~$4,400 gold; scales with price, so measure yours. Rollover ~21:00-23:00 UTC is when it widens worst.',
+      confirm: true,
+    },
+
+    // The gold trading day rolls at 17:00 New York. Expressed as a local time
+    // in a named zone so it follows DST: 21:00 UTC in summer, 22:00 in winter.
+    vwapReset: { h: 17, tz: 'America/New_York' },
+
+    minLot: { value: 0.01, confirm: true },
+    lotStep: { value: 0.01, confirm: true },
+
+    // Minimum sensible M5 scalp stop, as a FRACTION OF PRICE rather than a
+    // dollar amount. Gold traded near $2,000 for years and most published
+    // rules of thumb are still calibrated to that; it was ~$4,378 in
+    // September 2026, having peaked at $5,602 in January. A hardcoded "$1.50
+    // stop" silently halves in real terms every time gold reprices, so the
+    // floor is expressed relatively and resolved against live price.
+    // 0.05% of $4,378 is ~$2.19.
+    minStopPct: 0.0005,
+    tradesAroundTheClock: false,
+    symbolAliases: ['XAUUSD', 'GOLD', 'XAUUSD.m', 'XAUUSD.pro', 'XAUUSD.r', 'GOLD.spot'],
+    decimalsForDisplay: 2,
+  },
+
+  BTCUSD: {
+    id: 'BTCUSD',
+    label: 'Bitcoin',
+    display: 'BTC/USD',
+    quoteCurrency: 'USD',
+
+    // THE most broker-dependent number in this file. 1 lot = 1 BTC is common
+    // but far from universal.
+    contractSize: { value: 1, unit: 'BTC per 1.00 lot', confirm: true },
+    digits: { value: 2, confirm: true },
+    dollarMoveValuePerLot: { value: 1, confirm: true },
+
+    // CFD spreads on bitcoin are wide and are the dominant cost of scalping it.
+    typicalSpread: {
+      asia: 28, london: 22, newYork: 20, rollover: 60,
+      note: 'CFD markup is far wider than spot-exchange spread; measure yours',
+      confirm: true,
+    },
+
+    // Bitcoin anchors to the 00:00 UTC day used by every crypto venue.
+    vwapReset: 0,
+
+    minLot: { value: 0.01, confirm: true },
+    lotStep: { value: 0.01, confirm: true },
+
+    // 0.15% of $95,000 is ~$143. Same reasoning as gold: bitcoin has traded
+    // between $16k and six figures within a few years, so an absolute floor
+    // is meaningless across regimes.
+    minStopPct: 0.0015,
+    tradesAroundTheClock: true,
+    symbolAliases: ['BTCUSD', 'BTCUSD.m', 'BITCOIN', 'BTCUSD.pro', 'BTC/USD'],
+    decimalsForDisplay: 1,
+  },
+};
+
+/** Which values still need the user's confirmation, for the settings screen. */
+function unconfirmedFields(inst, confirmed = {}) {
+  const out = [];
+  for (const [key, val] of Object.entries(inst)) {
+    if (val && typeof val === 'object' && val.confirm === true && !confirmed[key]) {
+      out.push({ key, current: val.value ?? val, unit: val.unit || null });
+    }
+  }
+  return out;
+}
+
+/** Read a spec value, whether or not the user has overridden it. */
+function spec(inst, key, overrides = {}) {
+  if (overrides[key] !== undefined && overrides[key] !== null) return overrides[key];
+  const v = inst[key];
+  return v && typeof v === 'object' && 'value' in v ? v.value : v;
+}
+
+/**
+ * The minimum sensible stop for this instrument at the current price.
+ * Resolved live rather than stored, so it cannot go stale as price reprices.
+ */
+function minStop(inst, price) {
+  return price > 0 ? price * inst.minStopPct : 0;
+}
+
+/* ======================= risk.js ======================= */
+/**
+ * risk.js — position sizing, and the arithmetic that says whether a scalp is
+ * worth taking at all.
+ *
+ * The second part matters more than the first. On a five-minute chart the
+ * spread is not a rounding error: it is a fixed toll on every single trade,
+ * and at gold's typical M5 range it can be a third of your target. Any tool
+ * that shows a setup without showing that toll is flattering you.
+ */
+
+/**
+ * Lot size from account risk.
+ *
+ *   lots = riskAmount / (stopDistance * valuePerUnitMovePerLot)
+ *
+ * stopDistance is in PRICE UNITS (dollars of gold, dollars of bitcoin), and
+ * MUST already include the spread — you pay it on entry, so a 3.00 stop with a
+ * 0.20 spread is really a 3.20 stop. `includeSpread` does that for you.
+ *
+ * Returns nulls with a `blocked` reason rather than a number it cannot stand
+ * behind.
+ */
+function positionSize({
+  accountBalance,
+  riskPercent,
+  stopDistance,
+  valuePerUnitMovePerLot,
+  spread = 0,
+  includeSpread = true,
+  minLot = 0.01,
+  lotStep = 0.01,
+  maxLot = 100,
+  accountCurrency = 'USD',
+  quoteCurrency = 'USD',
+  fxRate = 1,          // units of ACCOUNT currency per 1 unit of QUOTE currency
+}) {
+  const problems = [];
+  if (!(accountBalance > 0)) problems.push('account balance not set');
+  if (!(riskPercent > 0)) problems.push('risk % not set');
+  if (!(stopDistance > 0)) problems.push('stop distance not set');
+  if (!(valuePerUnitMovePerLot > 0)) problems.push('contract value not confirmed for this symbol');
+  if (accountCurrency !== quoteCurrency && !(fxRate > 0)) {
+    problems.push(`no ${quoteCurrency}/${accountCurrency} rate to convert the risk`);
+  }
+  if (problems.length) {
+    return { lots: null, riskAmount: null, blocked: problems, effectiveStop: null };
+  }
+
+  const effectiveStop = includeSpread ? stopDistance + spread : stopDistance;
+  const riskAmount = accountBalance * (riskPercent / 100);
+
+  // Risk per lot is expressed in the QUOTE currency, so convert it into the
+  // account currency before dividing.
+  const riskPerLotQuote = effectiveStop * valuePerUnitMovePerLot;
+  const riskPerLotAccount = riskPerLotQuote * fxRate;
+
+  const raw = riskAmount / riskPerLotAccount;
+  const stepped = Math.floor(raw / lotStep) * lotStep;
+  const lots = Math.min(maxLot, Math.max(0, +stepped.toFixed(4)));
+
+  const belowMin = lots < minLot;
+  return {
+    lots: belowMin ? 0 : lots,
+    rawLots: +raw.toFixed(4),
+    riskAmount: +riskAmount.toFixed(2),
+    effectiveStop: +effectiveStop.toFixed(4),
+    actualRisk: belowMin ? 0 : +(lots * riskPerLotAccount).toFixed(2),
+    spreadCostAtSize: belowMin ? 0 : +(lots * spread * valuePerUnitMovePerLot * fxRate).toFixed(2),
+    blocked: belowMin
+      ? [`this stop needs ${raw.toFixed(3)} lots, below the ${minLot} minimum — the stop is too wide for the balance and risk %`]
+      : [],
+  };
+}
+
+/**
+ * The win rate a setup must achieve merely to break even, once the spread is
+ * paid on every trade.
+ *
+ *   Each win nets   (target - spread) ; each loss costs (stop + spread).
+ *   Break-even p solves  p*(target - spread) = (1-p)*(stop + spread)
+ *
+ * This is the number that quietly kills most scalping. At 1:1 with a spread
+ * worth a fifth of the stop you already need about 60%, not 50%.
+ */
+function breakEvenWinRate(target, stop, spread = 0) {
+  const win = target - spread;
+  const loss = stop + spread;
+  if (!(win > 0)) {
+    return { rate: null, impossible: true, reason: 'the target does not clear the spread' };
+  }
+  if (!(loss > 0)) return { rate: null, impossible: true, reason: 'stop distance not set' };
+  // Equivalent to the compact form p = (1 + c/S) / (1 + R), where c is the
+  // round-trip cost in price units, S the stop distance and R the gross
+  // reward:risk. Stated as win/loss here because that shows the mechanism.
+  const grossR = target / stop;
+  return {
+    rate: +((loss / (win + loss)) * 100).toFixed(1),
+    impossible: false,
+    netR: +(win / loss).toFixed(2),
+    grossR: +grossR.toFixed(2),
+    // What it would be if the spread were free — the gap between the two IS
+    // the spread's tax, and it is the number worth showing beside the answer.
+    costlessRate: +((1 / (1 + grossR)) * 100).toFixed(1),
+  };
+}
+
+/**
+ * What the spread costs over a session of scalping — the number nobody
+ * calculates before they start.
+ */
+function spreadDrag({ spread, valuePerUnitMovePerLot, lots, tradesPerDay, daysPerMonth = 21 }) {
+  const perTrade = spread * valuePerUnitMovePerLot * lots;
+  return {
+    perTrade: +perTrade.toFixed(2),
+    perDay: +(perTrade * tradesPerDay).toFixed(2),
+    perMonth: +(perTrade * tradesPerDay * daysPerMonth).toFixed(2),
+  };
+}
+
+/** Distance in price units from entry to a stop expressed in ATR. */
+function atrStop(atrValue, multiple = 1.2) {
+  return atrValue > 0 ? +(atrValue * multiple).toFixed(4) : null;
+}
+
+/** R-multiple of a target, net of the spread paid on entry. */
+function rMultiple(entry, stop, target, spread = 0) {
+  const risk = Math.abs(entry - stop) + spread;
+  const reward = Math.abs(target - entry) - spread;
+  if (!(risk > 0)) return null;
+  return +(reward / risk).toFixed(2);
+}
+
+/**
+ * Margin required for a position, and what it leaves free.
+ *
+ * Position sizing from risk alone will happily hand you a trade you cannot
+ * hold. Under the FCA's 20:1 cap on gold, a 1%-risk position on a modest
+ * account can consume more than half the available margin — the sizing
+ * formula has no idea, because margin is not a function of stop distance.
+ */
+function marginRequired({ price, lots, contractSize, leverage, accountBalance, fxRate = 1 }) {
+  if (!(price > 0) || !(lots > 0) || !(contractSize > 0) || !(leverage > 0)) return null;
+  const notional = price * lots * contractSize * fxRate;
+  const margin = notional / leverage;
+  const pctOfAccount = accountBalance > 0 ? (margin / accountBalance) * 100 : null;
+  return {
+    notional: +notional.toFixed(2),
+    margin: +margin.toFixed(2),
+    pctOfAccount: pctOfAccount === null ? null : +pctOfAccount.toFixed(1),
+    freeAfter: accountBalance > 0 ? +(accountBalance - margin).toFixed(2) : null,
+    tight: pctOfAccount !== null && pctOfAccount > 40,
+  };
+}
+
+/* ======================= news-calendar.js ======================= */
+/**
+ * news-calendar.js — what is scheduled, when it lands, and when to be flat.
+ *
+ * ===========================================================================
+ * TWO THINGS TO UNDERSTAND BEFORE TRUSTING THIS FILE
+ * ===========================================================================
+ *
+ * 1. DATES ARE TABLE-DRIVEN, NOT RULE-DERIVED — ON PURPOSE.
+ *
+ *    "Non-Farm Payrolls is the first Friday of the month" is the most repeated
+ *    claim in retail trading and it is wrong four times in twelve for 2026:
+ *    9 January, 8 May and 7 August are SECOND Fridays, and 2 July is a
+ *    THURSDAY because Friday 3 July is the observed Independence Day holiday.
+ *    CPI has no derivable rule at all. BEA moved PCE off its usual slot twice.
+ *
+ *    A rule-driven calendar would therefore tell a scalper the coast was clear
+ *    on the morning of the largest print of the month, several times a year.
+ *    So irregular releases carry explicit date tables, and only releases that
+ *    genuinely follow a rule (weekly claims, last-Tuesday confidence,
+ *    last-Friday expiries, daily funding) are computed.
+ *
+ * 2. THE DATES BELOW ARE NOT PRIMARY-SOURCE VERIFIED.
+ *
+ *    They were gathered from search results, not read off bls.gov, bea.gov or
+ *    federalreserve.gov, because those domains were unreachable from the
+ *    environment this was built in. Every event therefore carries a
+ *    `confidence` field, and the UI renders anything below `verified` with a
+ *    visible "confirm this" marker.
+ *
+ *    Check the tier-1 rows against your broker's own calendar before you rely
+ *    on them. This file is a good default, not an authority.
+ *
+ * Times are stored as WALL-CLOCK TIME IN A NAMED IANA ZONE and converted at
+ * runtime. See timezone.js for why that is non-negotiable.
+ * ===========================================================================
+ */
+
+
+
+const NY = 'America/New_York';
+const LDN = 'Europe/London';
+
+/* -------------------------------------------------------------- holidays */
+
+/** US federal holidays as OBSERVED in 2026. Needed for business-day rules. */
+const US_HOLIDAYS_2026 = [
+  '2026-01-01', '2026-01-19', '2026-02-16', '2026-05-25', '2026-06-19',
+  '2026-07-03', '2026-09-07', '2026-10-12', '2026-11-11', '2026-11-26', '2026-12-25',
+];
+const HOLIDAY_SET = new Set(US_HOLIDAYS_2026);
+
+const iso = (y, m, d) =>
+  `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+
+function isBusinessDay(y, m, d) {
+  const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+  return dow !== 0 && dow !== 6 && !HOLIDAY_SET.has(iso(y, m, d));
+}
+
+/** Day-of-month of the nth US business day of a month (1-based). */
+function nthBusinessDay(y, m, n) {
+  let count = 0;
+  for (let d = 1; d <= daysInMonth(y, m); d++) {
+    if (isBusinessDay(y, m, d)) { count++; if (count === n) return d; }
+  }
+  return null;
+}
+
+/* ------------------------------------------------- DST misalignment ----- */
+
+/**
+ * The windows where the US and EU/UK clocks are out of step.
+ *
+ * This is the single most useful thing this tool knows, and no retail calendar
+ * shows it. Most retail MT5 servers run GMT+2 in winter and GMT+3 in summer,
+ * on the EUROPEAN schedule. Outside these windows, 08:30 New York always lands
+ * at 15:30 server time, so a trader learns "US news is at 15:30 on my chart".
+ *
+ * Inside these windows the US has changed and Europe has not (or vice versa),
+ * so 08:30 New York lands at 14:30 server time — an hour EARLIER than the
+ * candle they are used to. Both windows shift it earlier, never later.
+ */
+const DST_MISALIGNMENT_WINDOWS = [
+  { from: '2026-03-08', to: '2026-03-29', note: 'US on DST, Europe not yet', confidence: 'likely' },
+  { from: '2026-10-25', to: '2026-11-01', note: 'Europe off DST, US still on', confidence: 'likely' },
+  { from: '2027-03-14', to: '2027-03-28', note: 'US on DST, Europe not yet', confidence: 'likely' },
+  { from: '2027-10-31', to: '2027-11-07', note: 'Europe off DST, US still on', confidence: 'likely' },
+];
+
+function dstMisalignment(atMs) {
+  const d = new Date(atMs);
+  const key = iso(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate());
+  const w = DST_MISALIGNMENT_WINDOWS.find((x) => key >= x.from && key < x.to);
+  if (!w) return null;
+  return {
+    active: true,
+    ...w,
+    message: 'US releases are landing ONE HOUR EARLIER on a GMT+2/+3 broker chart this week than they do the rest of the year.',
+  };
+}
+
+/* ------------------------------------------------------------- the data */
+
+/**
+ * tier 1 — stand aside entirely. Flat before, no new entry after.
+ * tier 2 — reduce. Flat briefly either side.
+ * tier 3 — stay aware. No NEW entry in the couple of minutes either side.
+ * context — never a reason to go flat. Background only, no countdown urgency.
+ *
+ * Blackout minutes are deliberately conservative professional judgement, not a
+ * sourced figure. They are yours to change in Settings.
+ */
+const EVENTS = [
+  /* ---------------------------------------------------------- TIER 1 --- */
+  {
+    id: 'nfp', name: 'Non-Farm Payrolls', short: 'NFP', agency: 'BLS',
+    affects: 'both', tier: 1, tz: NY, at: { h: 8, m: 30 },
+    schedule: { kind: 'dates', dates: [
+      '2026-01-09', '2026-02-06', '2026-03-06', '2026-04-03', '2026-05-08', '2026-06-05',
+      '2026-07-02', '2026-08-07', '2026-09-04', '2026-10-02', '2026-11-06', '2026-12-04',
+    ] },
+    blackoutBefore: 15, blackoutAfter: 30,
+    why: 'The month\'s single biggest repricing of Fed expectations. Gold moves on the rate path; bitcoin moves on risk appetite.',
+    typicalMove: { XAUUSD: '0.5-1.2% of price, tails past 2%', BTCUSD: '1-3%' },
+    confidence: 'likely',
+    note: 'NOT the first Friday — Jan, May and Jul 2026 all differ. Table-driven for exactly this reason.',
+  },
+  {
+    id: 'cpi', name: 'US CPI / Core CPI', short: 'CPI', agency: 'BLS',
+    affects: 'both', tier: 1, tz: NY, at: { h: 8, m: 30 },
+    schedule: { kind: 'dates', dates: [
+      '2026-01-13', '2026-02-11', '2026-03-11', '2026-04-10', '2026-05-12', '2026-06-10',
+      '2026-07-14', '2026-08-12', '2026-09-11', '2026-10-14', '2026-11-10', '2026-12-10',
+    ] },
+    blackoutBefore: 15, blackoutAfter: 30,
+    why: 'Core CPI month-on-month is the number that moves gold. Headline is comparative noise.',
+    typicalMove: { XAUUSD: 'comparable to NFP', BTCUSD: 'the highest macro R-squared of 2026' },
+    confidence: 'likely',
+    note: 'Roughly the 10th-14th with no derivable rule. Verify against your broker calendar.',
+  },
+  {
+    id: 'fomc-statement', name: 'FOMC rate decision', short: 'FOMC', agency: 'Federal Reserve',
+    affects: 'both', tier: 1, tz: NY, at: { h: 14, m: 0 },
+    schedule: { kind: 'dates', dates: [
+      '2026-01-28', '2026-03-18', '2026-04-29', '2026-06-17',
+      '2026-07-29', '2026-09-16', '2026-10-28', '2026-12-09',
+    ] },
+    blackoutBefore: 20, blackoutAfter: 100,
+    why: 'The statement at 14:00 and the press conference at 14:30 are two separate events, and the 30 minutes between them is not safe. The blackout deliberately spans both.',
+    typicalMove: { XAUUSD: 'largest scheduled mover of the month', BTCUSD: 'large' },
+    confidence: 'likely',
+    note: 'March, June, September and December also carry the SEP and dot plot, which land with the statement and make those meetings heavier.',
+  },
+  {
+    id: 'fomc-presser', name: 'Fed Chair press conference', short: 'Presser', agency: 'Federal Reserve',
+    affects: 'both', tier: 1, tz: NY, at: { h: 14, m: 30 },
+    schedule: { kind: 'dates', dates: [
+      '2026-01-28', '2026-03-18', '2026-04-29', '2026-06-17',
+      '2026-07-29', '2026-09-16', '2026-10-28', '2026-12-09',
+    ] },
+    blackoutBefore: 10, blackoutAfter: 60,
+    why: 'Frequently a bigger mover than the statement, and often in the opposite direction. The Q&A does the damage, not the prepared remarks.',
+    confidence: 'likely',
+    note: 'Kevin Warsh became Chair in May 2026, so there is little history to calibrate his reaction function. Do not size these days from 2024-25 volatility.',
+  },
+  {
+    id: 'pce', name: 'Core PCE price index', short: 'PCE', agency: 'BEA',
+    affects: 'both', tier: 1, tz: NY, at: { h: 8, m: 30 },
+    schedule: { kind: 'dates', dates: [
+      '2026-07-30', '2026-08-26', '2026-09-30', '2026-10-06', '2026-10-29', '2026-11-20',
+    ] },
+    blackoutBefore: 10, blackoutAfter: 20,
+    why: 'The Fed\'s own target measure. Usually a smaller impulse than CPI because CPI and PPI have already telegraphed it.',
+    confidence: 'unverified',
+    note: 'BEA broke its own last-business-day pattern twice in 2026 and issued a schedule advisory. This list is partial — check before relying on it.',
+  },
+
+  /* ---------------------------------------------------------- TIER 2 --- */
+  {
+    id: 'jobless', name: 'Initial jobless claims', short: 'Claims', agency: 'DOL',
+    affects: 'both', tier: 2, tz: NY, at: { h: 8, m: 30 },
+    schedule: { kind: 'weekly', weekday: 4, shiftsOnHolidayWeek: true },
+    blackoutBefore: 5, blackoutAfter: 10,
+    why: 'Weekly, and normally minor — but it shares the 08:30 slot and escalates whenever the labour market is the live Fed question, which it is in 2026.',
+    confidence: 'likely',
+    note: 'Moves forward to Wednesday in weeks containing a federal holiday. The tool shifts it automatically; confirm in holiday weeks.',
+  },
+  {
+    id: 'ism-services', name: 'ISM Services PMI', short: 'ISM Svc', agency: 'ISM',
+    affects: 'both', tier: 2, tz: NY, at: { h: 10, m: 0 },
+    schedule: { kind: 'nthBusinessDay', n: 3 },
+    blackoutBefore: 5, blackoutAfter: 15,
+    why: 'The bigger gold mover of the two ISM surveys. Can share the 10:00 slot with JOLTS, which stacks them.',
+    confidence: 'likely',
+  },
+  {
+    id: 'ism-mfg', name: 'ISM Manufacturing PMI', short: 'ISM Mfg', agency: 'ISM',
+    affects: 'both', tier: 2, tz: NY, at: { h: 10, m: 0 },
+    schedule: { kind: 'nthBusinessDay', n: 1 },
+    blackoutBefore: 5, blackoutAfter: 15,
+    why: 'First business day of the month, respecting federal holidays.',
+    confidence: 'likely',
+  },
+  {
+    id: 'adp-monthly', name: 'ADP employment (monthly)', short: 'ADP', agency: 'ADP',
+    affects: 'both', tier: 2, tz: NY, at: { h: 8, m: 15 },
+    schedule: { kind: 'weekdayBeforeEvent', eventId: 'nfp', offsetDays: -2 },
+    blackoutBefore: 5, blackoutAfter: 15,
+    why: 'A read on NFP two days early.',
+    confidence: 'likely',
+    note: 'Lands at 08:15, not 08:30 — fifteen minutes before the slot most people guard.',
+  },
+  {
+    id: 'adp-pulse', name: 'ADP weekly NER Pulse', short: 'ADP wk', agency: 'ADP',
+    affects: 'both', tier: 3, tz: NY, at: { h: 8, m: 15 },
+    schedule: { kind: 'weekly', weekday: 2 },
+    blackoutBefore: 2, blackoutAfter: 3,
+    why: 'New in 2026 and absent from most economic calendars: a weekly preliminary employment estimate, roughly 40 extra scheduled events a year.',
+    confidence: 'unverified',
+    note: 'Skips the week of the monthly report. Minor individually, but it is a real spread event at an unusual time.',
+  },
+  {
+    id: 'fomc-minutes', name: 'FOMC minutes', short: 'Minutes', agency: 'Federal Reserve',
+    affects: 'both', tier: 2, tz: NY, at: { h: 14, m: 0 },
+    schedule: { kind: 'daysAfterDates', dates: [
+      '2026-01-28', '2026-03-18', '2026-04-29', '2026-06-17',
+      '2026-07-29', '2026-09-16', '2026-10-28', '2026-12-09',
+    ], offsetDays: 21 },
+    blackoutBefore: 5, blackoutAfter: 20,
+    why: 'Routinely produces a sharp 5-15 minute move when the tone diverges from the statement.',
+    confidence: 'likely',
+    note: 'Exactly three weeks after the SECOND day of each meeting — anchoring to day one gives the wrong date every time.',
+  },
+  {
+    id: 'retail-sales', name: 'US retail sales (advance)', short: 'Retail', agency: 'Census',
+    affects: 'both', tier: 2, tz: NY, at: { h: 8, m: 30 },
+    schedule: { kind: 'monthlyApprox', day: 16 },
+    blackoutBefore: 5, blackoutAfter: 15,
+    why: 'The control-group figure is what traders read.',
+    confidence: 'unverified',
+    note: 'Approximate — mid-month, no published rule. Treat the date as indicative.',
+    approximate: true,
+  },
+  {
+    id: 'ecb', name: 'ECB decision and press conference', short: 'ECB', agency: 'ECB',
+    affects: 'XAUUSD', tier: 2, tz: 'Europe/Berlin', at: { h: 14, m: 15 },
+    schedule: { kind: 'dates', dates: ['2026-09-10', '2026-10-29', '2026-12-17'] },
+    blackoutBefore: 5, blackoutAfter: 45,
+    why: 'Moves gold through the euro and the dollar index. In US summer the 14:15 CET decision sits 15 minutes BEFORE the US 08:30 slot, so an ECB day with US data means two events a quarter-hour apart.',
+    confidence: 'unverified',
+    note: 'Decision 14:15 CET, press conference 14:45 CET. Meeting dates partially verified only.',
+  },
+
+  /* ---------------------------------------------------------- TIER 3 --- */
+  {
+    id: 'flash-pmi', name: 'S&P Global flash PMIs', short: 'Flash PMI', agency: 'S&P Global',
+    affects: 'both', tier: 3, tz: NY, at: { h: 9, m: 45 },
+    schedule: { kind: 'monthlyApprox', day: 23 },
+    blackoutBefore: 2, blackoutAfter: 3,
+    why: 'An off-grid 09:45 slot, 15 minutes before the 10:00 cluster. The European and UK flash PMIs earlier the same morning can pre-load the dollar move.',
+    confidence: 'unverified', approximate: true,
+    note: 'Third or fourth week of the month, exact date not confirmed. The 09:45 time is the well-known slot but was not verified against S&P Global directly.',
+  },
+  {
+    id: 'consumer-confidence', name: 'CB Consumer Confidence', short: 'Conf', agency: 'Conference Board',
+    affects: 'XAUUSD', tier: 3, tz: NY, at: { h: 10, m: 0 },
+    schedule: { kind: 'lastWeekdayOfMonth', weekday: 2 },
+    blackoutBefore: 2, blackoutAfter: 3,
+    why: 'One of the few US releases that genuinely does follow a clean calendar rule: the last Tuesday of every month.',
+    confidence: 'likely',
+  },
+  {
+    id: 'umich', name: 'UoM sentiment (preliminary)', short: 'UoM', agency: 'Univ. of Michigan',
+    affects: 'XAUUSD', tier: 3, tz: NY, at: { h: 10, m: 0 },
+    schedule: { kind: 'nthWeekdayOfMonth', weekday: 5, n: 2 },
+    blackoutBefore: 2, blackoutAfter: 3,
+    why: 'The inflation-expectations components move gold, not the headline. A big revision to the 5-10 year number can produce a tier-2 candle from a tier-3 event.',
+    confidence: 'unverified', approximate: true,
+    note: 'Preliminary lands roughly the second Friday and the final roughly the last, but neither is a firm rule and the dates were not confirmed at source.',
+  },
+
+  /* -------------------------------------------------- CRYPTO-NATIVE ---- */
+  {
+    id: 'deribit-expiry', name: 'Deribit monthly options expiry', short: 'Deribit', agency: 'Deribit',
+    affects: 'BTCUSD', tier: 2, tz: 'UTC', at: { h: 8, m: 0 },
+    schedule: { kind: 'lastWeekdayOfMonth', weekday: 5 },
+    settlementWindowMin: 30,
+    blackoutBefore: 35, blackoutAfter: 10,
+    why: 'Settlement is a 07:30-08:00 UTC TWAP, not an instant at 08:00, so the window is what matters. Quarterlies (Mar, Jun, Sep, Dec) are the large ones.',
+    confidence: 'likely',
+    note: 'Max pain is context at best. Deribit itself said a $12bn quarterly expiry was unlikely to cause a major reaction, and 2026 repeatedly bore that out. Ignore daily expiries entirely.',
+  },
+  {
+    id: 'cme-btc-settle', name: 'CME bitcoin futures settlement', short: 'CME', agency: 'CME',
+    affects: 'BTCUSD', tier: 3, tz: LDN, at: { h: 16, m: 0 },
+    schedule: { kind: 'lastWeekdayOfMonth', weekday: 5 },
+    blackoutBefore: 5, blackoutAfter: 5,
+    why: 'Settles to the BRR at 16:00 London. Note the zone: London, not New York — during the late-October misalignment week that is an hour out from where a fixed offset would put it.',
+    confidence: 'likely',
+  },
+  {
+    id: 'funding', name: 'Perp funding settlement', short: 'Funding', agency: 'Binance / Bybit / OKX',
+    affects: 'BTCUSD', tier: 'context', tz: 'UTC',
+    schedule: { kind: 'dailyTimes', times: [{ h: 0, m: 0 }, { h: 8, m: 0 }, { h: 16, m: 0 }] },
+    blackoutBefore: 0, blackoutAfter: 0,
+    why: 'Positioning context, not a trade trigger. Funding RATE and its trend tell you about crowding; the settlement timestamp does not.',
+    confidence: 'likely',
+    note: 'Binance has moved some contracts to 4-hour cycles and can drop to hourly under stress, so do not treat 8-hourly as fixed.',
+  },
+  {
+    id: 'mtgox', name: 'Mt Gox repayment deadline', short: 'Mt Gox', agency: 'Trustee',
+    affects: 'BTCUSD', tier: 'context', tz: 'UTC', at: { h: 0, m: 0 },
+    schedule: { kind: 'dates', dates: ['2026-10-31'] },
+    blackoutBefore: 0, blackoutAfter: 0,
+    why: 'A known overhang with roughly 34,500 BTC still held. A date to be aware of, not a minute to be flat for.',
+    confidence: 'unverified',
+    note: 'The deadline has been extended repeatedly in past years and the figure held is an estimate. Treat as background, and do not expect it to resolve on the date shown.',
+  },
+
+  /* -------------------------------------------------- GOLD CONTEXT ----- */
+  {
+    id: 'lbma-pm', name: 'LBMA PM gold auction', short: 'LBMA PM', agency: 'ICE Benchmark Admin.',
+    affects: 'XAUUSD', tier: 'context', tz: LDN, at: { h: 15, m: 0 },
+    schedule: { kind: 'weekdays' },
+    blackoutBefore: 0, blackoutAfter: 0,
+    why: 'Reliably produces a brief liquidity and volatility pocket as participants hedge the fix. Worth knowing about; not worth going flat for.',
+    confidence: 'likely',
+    note: 'The LBMA opened a consultation in 2026 on moving the MORNING auction earlier for Asian hours. Treat the times as configurable, not fixed.',
+  },
+  {
+    id: 'cot', name: 'CFTC Commitments of Traders', short: 'COT', agency: 'CFTC',
+    affects: 'XAUUSD', tier: 'context', tz: NY, at: { h: 15, m: 30 },
+    schedule: { kind: 'weekly', weekday: 5 },
+    blackoutBefore: 0, blackoutAfter: 0,
+    why: 'Positioning context only. The data is already three days stale when published — it reflects the preceding Tuesday\'s close.',
+    confidence: 'likely',
+    note: 'A crowded speculative long is a squeeze-risk flag, nothing more. Never a reason to go flat on M5.',
+  },
+];
+
+/* --------------------------------------------------- date expansion ---- */
+
+function shiftForHoliday(y, m, d) {
+  // Weekly releases move EARLIER in a week containing a federal holiday.
+  let day = d;
+  for (let i = 0; i < 3; i++) {
+    if (isBusinessDay(y, m, day)) break;
+    day -= 1;
+  }
+  // If any holiday falls earlier in the same week, the release pulls forward.
+  const dow = new Date(Date.UTC(y, m - 1, day)).getUTCDay();
+  for (let back = 1; back <= dow; back++) {
+    const probe = day - back;
+    if (probe >= 1 && HOLIDAY_SET.has(iso(y, m, probe))) return day - 1;
+  }
+  return day;
+}
+
+/** Concrete { y, m, d } occurrences of one event within a UTC range. */
+function occurrences(ev, fromMs, toMs) {
+  const out = [];
+  const s = ev.schedule;
+  const startY = new Date(fromMs).getUTCFullYear();
+  const endY = new Date(toMs).getUTCFullYear();
+
+  const pushDate = (str, extra = {}) => {
+    const [y, m, d] = str.split('-').map(Number);
+    out.push({ y, m, d, ...extra });
+  };
+
+  switch (s.kind) {
+    case 'dates':
+      s.dates.forEach((x) => pushDate(x));
+      break;
+
+    case 'daysAfterDates':
+      for (const base of s.dates) {
+        const [by, bm, bd] = base.split('-').map(Number);
+        const t = Date.UTC(by, bm - 1, bd) + s.offsetDays * 86400e3;
+        const dt = new Date(t);
+        out.push({ y: dt.getUTCFullYear(), m: dt.getUTCMonth() + 1, d: dt.getUTCDate() });
+      }
+      break;
+
+    case 'weekdayBeforeEvent': {
+      const anchor = EVENTS.find((e) => e.id === s.eventId);
+      if (anchor && anchor.schedule.kind === 'dates') {
+        for (const base of anchor.schedule.dates) {
+          const [by, bm, bd] = base.split('-').map(Number);
+          const t = Date.UTC(by, bm - 1, bd) + s.offsetDays * 86400e3;
+          const dt = new Date(t);
+          out.push({ y: dt.getUTCFullYear(), m: dt.getUTCMonth() + 1, d: dt.getUTCDate() });
+        }
+      }
+      break;
+    }
+
+    case 'weekly': {
+      const d = new Date(fromMs);
+      d.setUTCHours(0, 0, 0, 0);
+      d.setUTCDate(d.getUTCDate() - 7);
+      while (d.getTime() <= toMs + 86400e3) {
+        if (d.getUTCDay() === s.weekday) {
+          const y = d.getUTCFullYear(), m = d.getUTCMonth() + 1;
+          let day = d.getUTCDate();
+          if (s.shiftsOnHolidayWeek) day = shiftForHoliday(y, m, day);
+          out.push({ y, m, d: day, shifted: day !== d.getUTCDate() });
+        }
+        d.setUTCDate(d.getUTCDate() + 1);
+      }
+      break;
+    }
+
+    case 'weekdays': {
+      const d = new Date(fromMs);
+      d.setUTCHours(0, 0, 0, 0);
+      while (d.getTime() <= toMs + 86400e3) {
+        const dow = d.getUTCDay();
+        if (dow !== 0 && dow !== 6) {
+          out.push({ y: d.getUTCFullYear(), m: d.getUTCMonth() + 1, d: d.getUTCDate() });
+        }
+        d.setUTCDate(d.getUTCDate() + 1);
+      }
+      break;
+    }
+
+    case 'dailyTimes': {
+      const d = new Date(fromMs);
+      d.setUTCHours(0, 0, 0, 0);
+      while (d.getTime() <= toMs + 86400e3) {
+        for (const t of s.times) {
+          out.push({ y: d.getUTCFullYear(), m: d.getUTCMonth() + 1, d: d.getUTCDate(), at: t });
+        }
+        d.setUTCDate(d.getUTCDate() + 1);
+      }
+      break;
+    }
+
+    default:
+      for (let y = startY; y <= endY; y++) {
+        for (let m = 1; m <= 12; m++) {
+          let d = null;
+          if (s.kind === 'nthWeekdayOfMonth') d = nthWeekdayOfMonth(y, m, s.weekday, s.n);
+          else if (s.kind === 'lastWeekdayOfMonth') d = lastWeekdayOfMonth(y, m, s.weekday);
+          else if (s.kind === 'nthBusinessDay') d = nthBusinessDay(y, m, s.n);
+          else if (s.kind === 'monthlyApprox') d = Math.min(s.day, daysInMonth(y, m));
+          if (d && d >= 1 && d <= daysInMonth(y, m)) out.push({ y, m, d });
+        }
+      }
+  }
+  return out;
+}
+
+/* ------------------------------------------------------------- the API */
+
+/**
+ * Concrete upcoming events, sorted, for one pair.
+ * `pair` is 'XAUUSD', 'BTCUSD', or null for both.
+ */
+function getUpcomingEvents(fromMs, horizonHours = 48, pair = null, opts = {}) {
+  const { includeContext = true, minTier = 3 } = opts;
+  const toMs = fromMs + horizonHours * 3600e3;
+  const rows = [];
+
+  for (const ev of EVENTS) {
+    if (pair && ev.affects !== 'both' && ev.affects !== pair) continue;
+    if (!includeContext && ev.tier === 'context') continue;
+    if (typeof ev.tier === 'number' && ev.tier > minTier) continue;
+
+    for (const occ of occurrences(ev, fromMs - 6 * 3600e3, toMs)) {
+      const at = occ.at || ev.at || { h: 0, m: 0 };
+      const ts = ev.tz === 'UTC'
+        ? Date.UTC(occ.y, occ.m - 1, occ.d, at.h, at.m)
+        : zonedTimeToUtc(occ.y, occ.m, occ.d, at.h, at.m, ev.tz);
+      if (ts < fromMs - 3 * 3600e3 || ts > toMs) continue;
+
+      rows.push({
+        ...ev,
+        at,
+        ts,
+        msAway: ts - fromMs,
+        minutesAway: Math.round((ts - fromMs) / 60000),
+        dateShifted: !!occ.shifted,
+        // Settlement-window events start their blackout before the window opens.
+        windowStartTs: ev.settlementWindowMin ? ts - ev.settlementWindowMin * 60000 : ts,
+      });
+    }
+  }
+  return rows.sort((a, b) => a.ts - b.ts);
+}
+
+/**
+ * Is a blackout in force right now for this pair?
+ *
+ * Returns the single most severe active window, or null. `context` events never
+ * produce a blackout however close they are — treating them as blockers would
+ * keep a scalper out of good trades for no reason.
+ */
+function getActiveBlackout(atMs, pair = null, overrides = {}) {
+  const candidates = getUpcomingEvents(atMs - 6 * 3600e3, 12, pair, { includeContext: false });
+  let best = null;
+
+  for (const ev of candidates) {
+    if (ev.tier === 'context') continue;
+    const before = overrides[`${ev.id}Before`] ?? ev.blackoutBefore;
+    const after = overrides[`${ev.id}After`] ?? ev.blackoutAfter;
+    if (!before && !after) continue;
+
+    const opens = ev.windowStartTs - before * 60000;
+    const closes = ev.ts + after * 60000;
+    if (atMs < opens || atMs > closes) continue;
+
+    const phase = atMs < ev.ts ? 'before' : 'after';
+    const row = {
+      active: true,
+      event: ev,
+      phase,
+      minutesAway: Math.max(0, Math.round((ev.ts - atMs) / 60000)),
+      minutesSince: Math.max(0, Math.round((atMs - ev.ts) / 60000)),
+      tier: ev.tier,
+      endsAtMs: closes,
+    };
+    if (!best || row.tier < best.tier) best = row;
+  }
+  return best;
+}
+
+/**
+ * Where a UTC instant lands on the user's MT5 chart, plus the misalignment
+ * warning. `serverUtcOffsetHours` comes from the user reading their broker's
+ * Market Watch clock — it is never assumed.
+ */
+function brokerChartTime(ts, serverUtcOffsetHours) {
+  if (serverUtcOffsetHours === null || serverUtcOffsetHours === undefined) return null;
+  const shifted = new Date(ts + serverUtcOffsetHours * 3600e3);
+  const hh = String(shifted.getUTCHours()).padStart(2, '0');
+  const mm = String(shifted.getUTCMinutes()).padStart(2, '0');
+  return { text: `${hh}:${mm}`, offset: serverUtcOffsetHours, misalignment: dstMisalignment(ts) };
+}
+
+/**
+ * Correlation warning. The user trades BOTH of these pairs, and in 2026 they
+ * are unusually tightly linked — a 90-day BTC/gold correlation around 0.56,
+ * a nine-year high, against only ~0.33 for BTC and the Nasdaq.
+ *
+ * Taking the same direction on both after a macro print is one doubled
+ * position, not two diversified ones. This is stated up front rather than
+ * buried, because it is the mistake the dashboard itself could encourage.
+ */
+const CORRELATION_NOTE = {
+  pairs: 'XAUUSD / BTCUSD',
+  value: 0.56,
+  window: '90 day',
+  asOf: '2026-09',
+  confidence: 'likely',
+  message: 'Gold and bitcoin are currently about 0.56 correlated on a 90-day basis, near a nine-year high. Long both, or short both, is one position at double size — especially in the hour after a US macro print. Size accordingly.',
+};
+
+/** Events the calendar deliberately does NOT try to time. */
+const UNSCHEDULABLE = [
+  'Geopolitical escalation',
+  'Surprise central-bank action',
+  'US government shutdown and debt-ceiling brinkmanship',
+  'Banking stress',
+  'Bitcoin liquidation cascades',
+  'Exchange outages, hacks and depegs',
+];
+
+/* ======================= sessions.js ======================= */
+/**
+ * sessions.js — when it is worth scalping, and when it is a chop trap.
+ *
+ * Presenting all 24 hours as equally tradeable is the most common failure of a
+ * trading dashboard. They are not remotely equal, and for a five-minute
+ * scalper the hour of the day is a bigger determinant of outcome than most of
+ * the indicators in this tool.
+ *
+ * Session boundaries are a market CONVENTION, not an exchange rule — nothing
+ * rings a bell at the London open. They are computed from real local times in
+ * real IANA zones so they follow DST rather than drifting an hour twice a year.
+ */
+
+
+
+const SESSIONS = [
+  { id: 'sydney', label: 'Sydney', tz: 'Australia/Sydney', open: 8, close: 17 },
+  { id: 'tokyo', label: 'Tokyo', tz: 'Asia/Tokyo', open: 9, close: 18 },
+  { id: 'london', label: 'London', tz: 'Europe/London', open: 8, close: 16, key: true },
+  { id: 'newyork', label: 'New York', tz: 'America/New_York', open: 8, close: 17, key: true },
+];
+
+/** Which sessions are open at a given instant, DST handled. */
+function openSessions(atMs) {
+  const d = new Date(atMs);
+  const out = [];
+  for (const s of SESSIONS) {
+    // Check today and yesterday, since a session can span the UTC date line.
+    for (const offset of [-1, 0]) {
+      const probe = new Date(atMs + offset * 86400e3);
+      const y = probe.getUTCFullYear(), m = probe.getUTCMonth() + 1, day = probe.getUTCDate();
+      const openTs = zonedTimeToUtc(y, m, day, s.open, 0, s.tz);
+      const closeTs = zonedTimeToUtc(y, m, day, s.close, 0, s.tz);
+      if (atMs >= openTs && atMs < closeTs) {
+        out.push({ ...s, openTs, closeTs, closesInMin: Math.round((closeTs - atMs) / 60000) });
+        break;
+      }
+    }
+  }
+  void d;
+  return out;
+}
+
+/**
+ * Quality band for the current hour.
+ *
+ * The two instruments genuinely differ, so they get separate maps:
+ *  - Gold's worst hour is the broker rollover, when the spread blows out and
+ *    swap is charged. Its best is the London/New York overlap.
+ *  - Bitcoin's variance is heavily concentrated in US hours; roughly half its
+ *    daily realised variance falls in the 13:00-22:00 UTC window, and it is
+ *    quietest around 02:00-06:00.
+ *
+ * Bands are by UTC hour. They shift by an hour across DST, which is why the
+ * rollover window is given as a range rather than a fixed hour.
+ */
+const BANDS = {
+  XAUUSD: {
+    green: [[12, 17]],
+    amber: [[7, 12], [17, 20]],
+    red: [[0, 7], [20, 24]],
+    notes: {
+      green: 'London/New York overlap — the deepest liquidity of the day and where the M5 range is worth trading.',
+      amber: 'Tradeable but thinner. London morning before US data, or the post-New-York drift.',
+      red: 'Asian session chop, or the broker rollover window where the spread widens sharply and swap is charged. Costs dominate.',
+    },
+  },
+  BTCUSD: {
+    green: [[13, 18]],
+    amber: [[12, 13], [18, 22]],
+    red: [[0, 2], [2, 6], [6, 12], [22, 24]],
+    notes: {
+      green: 'US equity hours. Roughly half of bitcoin\'s daily realised variance falls in this window.',
+      amber: 'Moving, but less reliably. The European morning and the US afternoon.',
+      red: 'Asian and pre-European hours are bitcoin\'s quietest. The CFD spread does not shrink to match, so it is a larger share of a smaller range.',
+    },
+  },
+};
+
+function sessionQuality(atMs, pair) {
+  const h = new Date(atMs).getUTCHours() + new Date(atMs).getUTCMinutes() / 60;
+  const map = BANDS[pair] || BANDS.XAUUSD;
+  for (const band of ['green', 'amber', 'red']) {
+    for (const [from, to] of map[band]) {
+      if (h >= from && h < to) return { band, note: map.notes[band], utcHour: h };
+    }
+  }
+  return { band: 'amber', note: map.notes.amber, utcHour: h };
+}
+
+/**
+ * The gold rollover window, computed rather than hardcoded.
+ *
+ * Most brokers run a GMT+2/+3 server clock, so 00:00 server time — where the
+ * day rolls, swap is charged and the spread blows out — is 21:00 or 22:00 UTC
+ * depending on the season. Returns null for instruments it does not apply to.
+ */
+function rolloverWindow(atMs, serverUtcOffsetHours) {
+  if (serverUtcOffsetHours === null || serverUtcOffsetHours === undefined) return null;
+  const d = new Date(atMs);
+  const rolloverUtcHour = (24 - serverUtcOffsetHours) % 24;
+  const h = d.getUTCHours() + d.getUTCMinutes() / 60;
+  const start = rolloverUtcHour - 0.5;
+  const end = rolloverUtcHour + 0.75;
+  const inside = h >= start && h <= end;
+  return {
+    utcHour: rolloverUtcHour,
+    inside,
+    text: `Broker day rolls at ${String(rolloverUtcHour).padStart(2, '0')}:00 UTC`,
+    warning: inside
+      ? 'Inside the rollover window. Spreads widen sharply, fills get poor and swap is charged. This is the worst hour of the day to hold a scalp.'
+      : null,
+  };
+}
+
+/**
+ * Algorithmic order bursts cluster on round clock boundaries, strongest at
+ * :00, :15, :30 and :45. A five-minute bar closing exactly on one of those is
+ * systematically contaminated, so an entry triggered purely by that bar's
+ * close is worth a second look.
+ */
+function barBoundaryNote(atMs) {
+  const m = new Date(atMs).getUTCMinutes();
+  const strong = [0, 15, 30, 45].includes(m);
+  return strong
+    ? { strong: true, note: 'This bar closes on a :00/:15/:30/:45 boundary, where scheduled algorithmic flow clusters. Treat a signal from this candle alone with more scepticism than usual.' }
+    : { strong: false, note: null };
+}
+
+/* ======================= data-feeds.js ======================= */
+/**
+ * data-feeds.js — getting candles into the browser, or failing honestly.
+ *
+ * ===========================================================================
+ * THESE ENDPOINTS WERE NOT VERIFIED FROM A BROWSER.
+ *
+ * The environment this was built in blocked outbound requests to every market
+ * data host (the egress proxy returned 403 for api.binance.com,
+ * api.kraken.com, api.exchange.coinbase.com and the rest), so the CORS
+ * behaviour below is documented intent, not something observed working.
+ *
+ * Your iPhone is not behind that proxy, so they may well work fine for you.
+ * But because that could not be confirmed, the design assumes failure:
+ *   - every source is tried in turn and the first success wins;
+ *   - the UI always shows WHICH source answered, so a silent fallback to
+ *     stale or wrong data is impossible;
+ *   - MANUAL mode needs no network at all and is always available.
+ *
+ * The news calendar, the risk maths and the session clock are all pure
+ * client-side computation and work whether or not any of this succeeds.
+ * ===========================================================================
+ */
+
+const TIMEOUT_MS = 9000;
+
+/**
+ * Deliberately header-free.
+ *
+ * Every CORS failure traced while researching these endpoints originated in a
+ * custom request header. Any of Authorization, X-MBX-APIKEY, a custom Accept
+ * or a custom User-Agent turns a simple request into a PREFLIGHTED one, and
+ * these hosts do not answer the OPTIONS. A bare fetch(url) succeeds where the
+ * same request with one extra header fails. That is why API keys go in the
+ * query string here rather than in a header.
+ *
+ * So: do not add a `headers` option to this function. It is absent on purpose.
+ */
+async function fetchJson(url, { timeout = TIMEOUT_MS } = {}) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeout);
+  try {
+    const res = await fetch(url, { signal: ctrl.signal, cache: 'no-store' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Every adapter normalises to this shape. Timestamps are epoch MILLISECONDS. */
+const bar = (t, o, h, l, c, v) => ({
+  t: Number(t), o: Number(o), h: Number(h), l: Number(l), c: Number(c), v: Number(v) || 0,
+});
+
+const sane = (bars) =>
+  bars.filter((b) =>
+    Number.isFinite(b.t) && Number.isFinite(b.o) && Number.isFinite(b.h) &&
+    Number.isFinite(b.l) && Number.isFinite(b.c) && b.h >= b.l && b.t > 0)
+    .sort((a, b) => a.t - b.t);
+
+/* ------------------------------------------------------------- bitcoin */
+
+const BTC_SOURCES = [
+  {
+    id: 'binance-vision',
+    label: 'Binance (BTCUSDT)',
+    instrument: 'BTCUSDT — tether-quoted, not BTCUSD',
+    needsKey: false,
+    note: 'The public market-data host, intended for exactly this kind of unauthenticated use.',
+    async fetch(limit = 300) {
+      const d = await fetchJson(`https://data-api.binance.vision/api/v3/klines?symbol=BTCUSDT&interval=5m&limit=${limit}`);
+      return sane(d.map((k) => bar(k[0], k[1], k[2], k[3], k[4], k[5])));
+    },
+  },
+  {
+    id: 'binance',
+    label: 'Binance main (BTCUSDT)',
+    instrument: 'BTCUSDT — tether-quoted, not BTCUSD',
+    needsKey: false,
+    note: 'Same data, the main API host.',
+    async fetch(limit = 300) {
+      const d = await fetchJson(`https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=5m&limit=${limit}`);
+      return sane(d.map((k) => bar(k[0], k[1], k[2], k[3], k[4], k[5])));
+    },
+  },
+  {
+    id: 'coinbase',
+    label: 'Coinbase (BTC-USD)',
+    instrument: 'true BTC/USD',
+    needsKey: false,
+    note: 'Genuine dollar pricing rather than tether. Returns newest first, capped at 300 candles.',
+    async fetch() {
+      const d = await fetchJson('https://api.exchange.coinbase.com/products/BTC-USD/candles?granularity=300');
+      // [ time(s), low, high, open, close, volume ]
+      return sane(d.map((k) => bar(k[0] * 1000, k[3], k[2], k[1], k[4], k[5])));
+    },
+  },
+  {
+    id: 'kraken',
+    label: 'Kraken (XBT/USD)',
+    instrument: 'true BTC/USD',
+    needsKey: false,
+    note: 'Genuine dollar pricing.',
+    async fetch() {
+      const d = await fetchJson('https://api.kraken.com/0/public/OHLC?pair=XBTUSD&interval=5');
+      if (d.error && d.error.length) throw new Error(d.error.join(', '));
+      const key = Object.keys(d.result).find((k) => k !== 'last');
+      return sane(d.result[key].map((k) => bar(k[0] * 1000, k[1], k[2], k[3], k[4], k[6])));
+    },
+  },
+  {
+    id: 'okx',
+    label: 'OKX (BTC-USDT)',
+    instrument: 'BTCUSDT — tether-quoted',
+    needsKey: false,
+    note: 'Newest first.',
+    async fetch(limit = 300) {
+      const d = await fetchJson(`https://www.okx.com/api/v5/market/candles?instId=BTC-USDT&bar=5m&limit=${Math.min(300, limit)}`);
+      if (d.code !== '0') throw new Error(d.msg || 'OKX error');
+      return sane(d.data.map((k) => bar(k[0], k[1], k[2], k[3], k[4], k[5])));
+    },
+  },
+  {
+    id: 'bitstamp',
+    label: 'Bitstamp (BTC/USD)',
+    instrument: 'true BTC/USD',
+    needsKey: false,
+    note: 'Genuine dollar pricing.',
+    async fetch(limit = 300) {
+      const d = await fetchJson(`https://www.bitstamp.net/api/v2/ohlc/btcusd/?step=300&limit=${Math.min(1000, limit)}`);
+      return sane(d.data.ohlc.map((k) => bar(k.timestamp * 1000, k.open, k.high, k.low, k.close, k.volume)));
+    },
+  },
+];
+
+/* ---------------------------------------------------------------- gold */
+
+/**
+ * Gold is the hard one. There is no free, key-free, CORS-enabled source of
+ * 5-minute XAU/USD history that could be confirmed. The realistic options all
+ * want a free API key, so the tool asks for one rather than pretending.
+ */
+const XAU_SOURCES = [
+  {
+    id: 'twelvedata',
+    label: 'Twelve Data',
+    needsKey: true,
+    keyUrl: 'https://twelvedata.com/pricing',
+    note: 'Free tier is rate-limited per minute and per day. At one poll a minute a single session can exhaust a day\'s allowance, so the tool polls conservatively and backs off on a 429.',
+    async fetch(limit = 300, key) {
+      if (!key) throw new Error('needs an API key');
+      const d = await fetchJson(`https://api.twelvedata.com/time_series?symbol=XAU/USD&interval=5min&outputsize=${limit}&apikey=${encodeURIComponent(key)}`);
+      if (d.status === 'error') throw new Error(d.message || 'Twelve Data error');
+      if (!d.values) throw new Error('no values returned');
+      return sane(d.values.map((v) => bar(
+        new Date(v.datetime.replace(' ', 'T') + 'Z').getTime(),
+        v.open, v.high, v.low, v.close, v.volume,
+      )));
+    },
+  },
+  {
+    id: 'alphavantage',
+    label: 'Alpha Vantage',
+    needsKey: true,
+    keyUrl: 'https://www.alphavantage.co/support/#api-key',
+    note: 'Free tier is very tightly rate-limited. Intraday FX coverage of XAU/USD is inconsistent — verify before relying on it.',
+    async fetch(limit = 300, key) {
+      if (!key) throw new Error('needs an API key');
+      const d = await fetchJson(`https://www.alphavantage.co/query?function=FX_INTRADAY&from_symbol=XAU&to_symbol=USD&interval=5min&outputsize=full&apikey=${encodeURIComponent(key)}`);
+      const series = d['Time Series FX (5min)'];
+      if (!series) throw new Error(d.Note || d['Error Message'] || 'no series returned');
+      return sane(Object.entries(series).slice(0, limit).map(([ts, v]) => bar(
+        new Date(ts.replace(' ', 'T') + 'Z').getTime(),
+        v['1. open'], v['2. high'], v['3. low'], v['4. close'], 0,
+      )));
+    },
+  },
+  {
+    id: 'paxg-kraken',
+    label: 'PAXG proxy (Kraken)',
+    needsKey: false,
+    proxy: true,
+    note: 'NOT GOLD. PAXG is a token redeemable for gold; it tracks spot loosely but carries its own premium, its own liquidity and its own spread. Usable to see shape and rough structure when nothing else is available. Never size a position from it.',
+    async fetch() {
+      const d = await fetchJson('https://api.kraken.com/0/public/OHLC?pair=PAXGUSD&interval=5');
+      if (d.error && d.error.length) throw new Error(d.error.join(', '));
+      const key = Object.keys(d.result).find((k) => k !== 'last');
+      return sane(d.result[key].map((k) => bar(k[0] * 1000, k[1], k[2], k[3], k[4], k[6])));
+    },
+  },
+];
+
+/**
+ * Try each source in order. Returns the bars plus a full account of what was
+ * attempted, so the UI can name the source and show what failed.
+ */
+async function loadBars(pair, { keys = {}, limit = 300, preferred = null, allowProxy = false } = {}) {
+  const all = pair === 'BTCUSD' ? BTC_SOURCES : XAU_SOURCES;
+  let sources = allowProxy ? all : all.filter((s) => !s.proxy);
+  if (preferred) {
+    const i = sources.findIndex((s) => s.id === preferred);
+    if (i > 0) sources = [sources[i], ...sources.slice(0, i), ...sources.slice(i + 1)];
+  }
+
+  const attempts = [];
+  for (const src of sources) {
+    if (src.needsKey && !keys[src.id]) {
+      attempts.push({ id: src.id, label: src.label, ok: false, reason: 'no API key saved' });
+      continue;
+    }
+    try {
+      const bars = await src.fetch(limit, keys[src.id]);
+      if (!bars.length) throw new Error('returned no usable bars');
+      attempts.push({ id: src.id, label: src.label, ok: true, bars: bars.length });
+      return {
+        ok: true, bars, source: src, attempts,
+        proxyWarning: src.proxy ? src.note : null,
+        staleness: Date.now() - bars[bars.length - 1].t,
+      };
+    } catch (e) {
+      attempts.push({ id: src.id, label: src.label, ok: false, reason: String(e.message || e) });
+    }
+  }
+  return {
+    ok: false, bars: [], source: null, attempts,
+    reason: 'No data source answered. This is expected if the endpoints are blocked on your network, or if gold needs an API key you have not entered yet. Manual mode below works without any of them.',
+  };
+}
+
+/**
+ * Turn typed-in values into a usable bar series.
+ *
+ * Manual mode is not a toy fallback — it is the mode that always works, and on
+ * a phone next to an open MT5 chart it is often faster than waiting for an API.
+ * You read the numbers off your own broker's chart, which means the analysis
+ * is running on YOUR prices rather than a reference feed that differs from them.
+ */
+function manualBars(rows) {
+  return sane(rows.map((r) => bar(r.t, r.o, r.h, r.l, r.c, r.v || 0)));
+}
+
+/**
+ * Live spread as a fraction of current ATR — the single ratio that decides
+ * whether a five-minute scalp is viable at all.
+ *
+ * Above roughly 40% the cost structure is broken: the spread consumes so much
+ * of the available range that even a correct read loses money over a series.
+ */
+function spreadViability(spread, atrValue) {
+  if (!(spread > 0) || !(atrValue > 0)) return { ok: null, reason: 'need both a live spread and an ATR reading' };
+  const ratio = spread / atrValue;
+  return {
+    ok: ratio <= 0.4,
+    ratio,
+    pct: +(ratio * 100).toFixed(0),
+    verdict:
+      ratio <= 0.15 ? 'healthy — the spread is a small fraction of the available range'
+        : ratio <= 0.25 ? 'workable, but the spread is a real drag'
+          : ratio <= 0.4 ? 'expensive — the spread is eating a quarter to a third of a typical bar'
+            : 'not viable — the spread is too large a share of the range to scalp against',
+  };
+}
+
+/**
+ * A keyless spot-gold price, for sanity-checking whatever the candle feed says.
+ *
+ * It returns a single number with no history, so it cannot drive the analysis.
+ * Its job is narrower and useful: if the PAXG proxy is standing in for gold,
+ * this says how far the proxy has drifted from the real thing.
+ */
+async function goldSpotCheck() {
+  try {
+    const d = await fetchJson('https://api.gold-api.com/price/XAU');
+    const price = Number(d.price ?? d.Price ?? d.value);
+    return Number.isFinite(price) ? { ok: true, price } : { ok: false };
+  } catch (e) {
+    return { ok: false, reason: String(e.message || e) };
+  }
+}
+
+/* ======================= signal-engine.js ======================= */
+/**
+ * signal-engine.js — turning indicator readings into an honest observation.
+ *
+ * ===========================================================================
+ * WHAT THIS ENGINE CANNOT SEE
+ * ===========================================================================
+ * Read this before you read anything it outputs.
+ *
+ *  - ORDER FLOW. It sees bars, not the book. It has no idea where the resting
+ *    orders are, who is buying, or how much size is behind a move.
+ *  - REAL VOLUME. An MT5 gold feed reports TICK volume — the number of price
+ *    updates, not contracts traded. Every volume-derived reading here is a
+ *    proxy for activity, not a measure of participation.
+ *  - YOUR BROKER'S PRICE. It reads a reference feed. Your fill, your spread
+ *    and your slippage are your broker's, and they diverge most at exactly the
+ *    moments this tool finds interesting.
+ *  - CORRELATED MARKETS. It does not watch DXY, real yields, the Nasdaq, or
+ *    bitcoin's funding. Gold can be technically perfect and get run over by a
+ *    move in the dollar.
+ *  - POSITIONING. No COT, no open interest, no options gamma.
+ *  - THE NEWS ITSELF. It knows WHEN scheduled releases happen. It cannot read
+ *    the number, and it has no idea an unscheduled headline just landed.
+ *  - WHETHER IT IS RIGHT. It has no memory of its own past readings and no
+ *    track record. Nothing here has been backtested. The weights below are
+ *    reasoned, not fitted, which makes them honest rather than optimal.
+ *
+ * The engine therefore describes what the chart is doing. It does not predict
+ * and it does not instruct. Phrasing is deliberate: "price is above the M15
+ * VWAP with range expanding", never "BUY NOW".
+ * ===========================================================================
+ */
+
+
+
+
+
+/** Bars of M5 history below which the engine simply declines to read. */
+const MIN_BARS = 60;
+
+/* ------------------------------------------------------------- regime */
+
+/**
+ * Kaufman efficiency ratio: net movement divided by total movement.
+ * 1.0 is a straight line; near 0 is churn covering no ground. It is the single
+ * most useful regime statistic on a five-minute chart because it directly
+ * measures the thing that decides whether trend-following can work.
+ */
+function efficiencyRatio(values, period = 20) {
+  if (values.length < period + 1) return null;
+  const slice = values.slice(-(period + 1));
+  const net = Math.abs(slice[slice.length - 1] - slice[0]);
+  let total = 0;
+  for (let i = 1; i < slice.length; i++) total += Math.abs(slice[i] - slice[i - 1]);
+  return total === 0 ? 0 : net / total;
+}
+
+/**
+ * Trending / ranging / compressed.
+ *
+ * This gate runs FIRST and changes everything downstream. In a range, trend
+ * signals are not merely less useful — they are actively harmful, because a
+ * range manufactures convincing-looking breakouts that fail. So rather than
+ * quietly down-weighting them, the engine says out loud that it is discarding
+ * them.
+ */
+function detectRegime(bars, ind) {
+  const cs = closes(bars);
+  const er = efficiencyRatio(cs, 20);
+  const adxVal = lastOf(ind.adx.adx);
+  const bbw = lastOf(ind.bb.width);
+
+  // Where does current Bollinger width sit within its own recent history?
+  const widthHist = ind.bb.width.filter((x) => x !== null).slice(-96);
+  let widthPct = null;
+  if (widthHist.length > 20 && bbw !== null) {
+    widthPct = widthHist.filter((w) => w < bbw).length / widthHist.length;
+  }
+
+  const notes = [];
+  let regime = 'ranging';
+
+  // Bottom fifth of the recent distribution. Bollinger's own "Squeeze" is
+  // stricter (a multi-month low), but on M5 that would fire a handful of times
+  // a year and be useless. A fifth is the common intraday convention and is
+  // what a scalper can act on: quieter than four-fifths of the last eight hours.
+  if (widthPct !== null && widthPct < 0.20) {
+    regime = 'compressed';
+    notes.push(`Bollinger width is in the bottom ${Math.round(widthPct * 100)}% of its recent range — coiled`);
+  } else if (adxVal !== null && adxVal > 23 && er !== null && er > 0.35) {
+    regime = 'trending';
+    notes.push(`ADX ${adxVal.toFixed(0)} with efficiency ${er.toFixed(2)} — price is covering ground`);
+  } else if (adxVal !== null && adxVal < 20 && er !== null && er < 0.25) {
+    regime = 'ranging';
+    notes.push(`ADX ${adxVal.toFixed(0)} with efficiency ${er.toFixed(2)} — churning, not travelling`);
+  } else {
+    regime = 'mixed';
+    notes.push('neither clearly trending nor clearly ranging — the least tradeable state');
+  }
+
+  return { regime, efficiency: er, adx: adxVal, bbWidth: bbw, widthPercentile: widthPct, notes };
+}
+
+/** Weights per regime. They sum to 1 and are reasoned, not fitted. */
+const WEIGHTS = {
+  trending:   { trend: 0.30, momentum: 0.18, structure: 0.20, location: 0.10, volatility: 0.10, volume: 0.12 },
+  ranging:    { trend: 0.04, momentum: 0.14, structure: 0.20, location: 0.36, volatility: 0.10, volume: 0.16 },
+  compressed: { trend: 0.06, momentum: 0.10, structure: 0.16, location: 0.20, volatility: 0.34, volume: 0.14 },
+  mixed:      { trend: 0.16, momentum: 0.16, structure: 0.20, location: 0.22, volatility: 0.12, volume: 0.14 },
+};
+
+const clamp = (x, lo = -1, hi = 1) => Math.max(lo, Math.min(hi, x));
+
+/* ------------------------------------------------------------ buckets */
+
+/**
+ * Each bucket returns a score in [-1, +1] and its reasoning.
+ *
+ * The bucket structure is the point. EMA slope, MACD and ADX all measure
+ * roughly the same underlying thing; a flat weighted sum over individual
+ * indicators would let one observation vote three times and manufacture
+ * confidence that is not there. Inside a bucket, indicators average. Only the
+ * bucket gets a weight.
+ */
+function trendBucket(bars, ind) {
+  const reasons = [];
+  const parts = [];
+  const price = bars[bars.length - 1].c;
+
+  const e9 = lastOf(ind.ema9), e21 = lastOf(ind.ema21), e50 = lastOf(ind.ema50);
+  if (e9 !== null && e21 !== null && e50 !== null) {
+    if (e9 > e21 && e21 > e50) { parts.push(1); reasons.push('EMAs stacked 9 > 21 > 50'); }
+    else if (e9 < e21 && e21 < e50) { parts.push(-1); reasons.push('EMAs stacked 9 < 21 < 50'); }
+    else { parts.push(0); reasons.push('EMAs tangled — no clean stack'); }
+  }
+
+  // Slope of the 21 EMA over 5 bars, normalised by ATR so it is comparable
+  // across instruments.
+  const e21Prev = valueAt(ind.ema21, 5);
+  const a = lastOf(ind.atr);
+  if (e21 !== null && e21Prev !== null && a) {
+    const slope = (e21 - e21Prev) / a;
+    parts.push(clamp(slope * 2));
+    if (Math.abs(slope) > 0.15) reasons.push(`21 EMA sloping ${slope > 0 ? 'up' : 'down'} at ${Math.abs(slope).toFixed(2)} ATR / 5 bars`);
+  }
+
+  const stDir = lastOf(ind.supertrend.direction);
+  if (stDir !== null) { parts.push(stDir); reasons.push(`Supertrend ${stDir > 0 ? 'long' : 'short'}`); }
+
+  // DMI is deliberately ABSENT from the directional score.
+  //
+  // Under close-only true range, (+DI - -DI) is algebraically identical to
+  // 2*RSI - 100 — not merely correlated, the same quantity. Scoring DMI here
+  // and RSI in the momentum bucket would be the exact double-count the bucket
+  // structure exists to prevent, smuggled across two buckets instead of within
+  // one. RSI keeps the seat because it is the more directly interpretable of
+  // the two. ADX itself is a MAGNITUDE measure (it correlates ~0.86 with
+  // |MACD| and ~0.02 with signed MACD), so it lives in regime detection where
+  // it belongs, and never votes on direction.
+  const pdi = lastOf(ind.adx.plusDI), mdi = lastOf(ind.adx.minusDI);
+  if (pdi !== null && mdi !== null) {
+    reasons.push(`DMI reads ${pdi > mdi ? 'up' : 'down'} (${pdi.toFixed(0)} vs ${mdi.toFixed(0)}) — shown, not scored, because it duplicates RSI`);
+  }
+
+  if (e50 !== null) reasons.push(`price ${price > e50 ? 'above' : 'below'} the 50 EMA`);
+  return { score: parts.length ? clamp(parts.reduce((s, x) => s + x, 0) / parts.length) : 0, reasons };
+}
+
+function momentumBucket(bars, ind) {
+  const reasons = [];
+  const parts = [];
+
+  const r = lastOf(ind.rsi);
+  if (r !== null) {
+    parts.push(clamp((r - 50) / 25));
+    if (r > 70) reasons.push(`RSI ${r.toFixed(0)} — stretched up`);
+    else if (r < 30) reasons.push(`RSI ${r.toFixed(0)} — stretched down`);
+    else reasons.push(`RSI ${r.toFixed(0)}`);
+  }
+
+  const h = lastOf(ind.macd.histogram), hPrev = valueAt(ind.macd.histogram, 1);
+  const a = lastOf(ind.atr);
+  if (h !== null && a) {
+    parts.push(clamp((h / a) * 3));
+    if (hPrev !== null) {
+      const growing = Math.abs(h) > Math.abs(hPrev);
+      reasons.push(`MACD histogram ${h > 0 ? 'positive' : 'negative'} and ${growing ? 'expanding' : 'contracting'}`);
+    }
+  }
+
+  const k = lastOf(ind.stoch.k);
+  if (k !== null) {
+    parts.push(clamp((k - 50) / 35));
+    if (k > 80) reasons.push(`Stochastic ${k.toFixed(0)} — overbought`);
+    else if (k < 20) reasons.push(`Stochastic ${k.toFixed(0)} — oversold`);
+  }
+
+  return { score: parts.length ? clamp(parts.reduce((s, x) => s + x, 0) / parts.length) : 0, reasons };
+}
+
+function structureBucket(bars, ind) {
+  const reasons = [];
+  const parts = [];
+
+  const ms = ind.structure;
+  if (ms.trend === 'up') { parts.push(0.8); reasons.push('structure making higher highs and higher lows'); }
+  else if (ms.trend === 'down') { parts.push(-0.8); reasons.push('structure making lower highs and lower lows'); }
+  else reasons.push('structure unclear — not enough confirmed swings');
+
+  const recentChoch = ms.events.filter((e) => e.type === 'CHoCH').slice(-1)[0];
+  if (recentChoch && bars.length - recentChoch.index < 20) {
+    parts.push(recentChoch.dir === 'up' ? 0.9 : -0.9);
+    reasons.push(`CHoCH ${recentChoch.dir} ${bars.length - 1 - recentChoch.index} bars ago — the first structural turn`);
+  }
+
+  for (const s of ind.sweeps) {
+    if (s.barsAgo <= 3) {
+      // A sweep is a reversal hint AGAINST the direction it swept.
+      parts.push(s.type === 'buy-side-sweep' ? 0.7 : -0.7);
+      reasons.push(`${s.type === 'buy-side-sweep' ? 'lows' : 'highs'} swept at ${s.level.toFixed(2)} then reclaimed, ${s.barsAgo} bars ago`);
+    }
+  }
+
+  const openGaps = ind.fvgs.filter((g) => !g.filled);
+  if (openGaps.length) {
+    const g = openGaps[openGaps.length - 1];
+    reasons.push(`unfilled ${g.type} gap ${g.from.toFixed(2)}-${g.to.toFixed(2)} overhead`);
+  }
+
+  return { score: parts.length ? clamp(parts.reduce((s, x) => s + x, 0) / parts.length) : 0, reasons };
+}
+
+function locationBucket(bars, ind) {
+  const reasons = [];
+  const parts = [];
+  const price = bars[bars.length - 1].c;
+  const a = lastOf(ind.atr);
+
+  const vw = lastOf(ind.vwap.vwap);
+  if (vw !== null && a) {
+    const dist = (price - vw) / a;
+    // Deliberately MEAN-REVERTING: being far above VWAP is a reason to be
+    // cautious about buying, not a reason to chase.
+    parts.push(clamp(-dist / 2));
+    reasons.push(`${Math.abs(dist).toFixed(1)} ATR ${dist > 0 ? 'above' : 'below'} session VWAP`);
+  }
+
+  const pb = lastOf(ind.bb.percentB);
+  if (pb !== null) {
+    parts.push(clamp(-(pb - 0.5) * 2));
+    if (pb > 1) reasons.push('trading outside the upper Bollinger band');
+    else if (pb < 0) reasons.push('trading outside the lower Bollinger band');
+    else reasons.push(`sitting ${(pb * 100).toFixed(0)}% up the Bollinger range`);
+  }
+
+  // Proximity to a clustered level, which cuts both ways: near resistance is
+  // a reason not to buy, near support a reason not to sell.
+  if (ind.levels.length && a) {
+    let nearest = null, best = Infinity;
+    for (const L of ind.levels) {
+      const d = Math.abs(L.price - price);
+      if (d < best) { best = d; nearest = L; }
+    }
+    if (nearest && best < a * 0.75) {
+      const above = nearest.price > price;
+      parts.push(above ? -0.5 : 0.5);
+      reasons.push(`${(best / a).toFixed(1)} ATR ${above ? 'below' : 'above'} a ${nearest.touches}-touch level at ${nearest.price.toFixed(2)}`);
+    }
+  }
+
+  return { score: parts.length ? clamp(parts.reduce((s, x) => s + x, 0) / parts.length) : 0, reasons };
+}
+
+/**
+ * Volatility is DIRECTIONLESS. It scores whether conditions suit a scalp at
+ * all, not which way to go, so it returns a magnitude that modulates
+ * confidence rather than a signed direction.
+ */
+function volatilityBucket(bars, ind, inst) {
+  const reasons = [];
+  const a = lastOf(ind.atr);
+  const aPrev = valueAt(ind.atr, 12);
+  let quality = 0;
+
+  if (a && aPrev) {
+    const ratio = a / aPrev;
+    if (ratio > 1.25) { quality += 0.6; reasons.push(`range expanding — ATR up ${((ratio - 1) * 100).toFixed(0)}% over the last hour`); }
+    else if (ratio < 0.75) { quality -= 0.4; reasons.push(`range contracting — ATR down ${((1 - ratio) * 100).toFixed(0)}% over the last hour`); }
+    else reasons.push('range steady');
+  }
+
+  if (a) {
+    reasons.push(`M5 ATR ${a.toFixed(inst.decimalsForDisplay)}`);
+    if (a < minStop(inst, bars[bars.length - 1].c) * 0.6) {
+      quality -= 0.8;
+      reasons.push('ATR is small relative to the spread — thin conditions, costs dominate');
+    }
+  }
+  return { score: clamp(quality), reasons, directionless: true };
+}
+
+function volumeBucket(bars, ind) {
+  const reasons = [];
+  const rv = lastOf(ind.relVol);
+  // No data is NOT the same as no direction. Relative volume needs several
+  // days of history to compare like-for-like time slots; until it has them
+  // this bucket abstains, and abstaining must not quietly redistribute its
+  // weight onto the others.
+  if (rv === null) {
+    return {
+      score: 0,
+      reasons: ['relative volume needs a few days of history for this time of day — abstaining'],
+      noData: true,
+    };
+  }
+  const last = bars[bars.length - 1];
+  const bullish = last.c > last.o;
+  let s = 0;
+  if (rv > 1.6) { s = bullish ? 0.7 : -0.7; reasons.push(`volume ${rv.toFixed(1)}x normal for this time of day, on a ${bullish ? 'up' : 'down'} bar`); }
+  else if (rv < 0.6) { s = 0; reasons.push(`volume ${rv.toFixed(1)}x normal — quiet for the time of day`); }
+  else reasons.push(`volume ${rv.toFixed(1)}x normal`);
+  return { score: clamp(s), reasons };
+}
+
+/* ------------------------------------------------- higher-timeframe bias */
+
+/**
+ * Bias from M15 and H1, using only CLOSED bars. `resample` drops the forming
+ * bar, so a half-built H1 candle can never leak into the read.
+ */
+function higherTimeframeBias(bars) {
+  const out = { m15: null, h1: null, agree: false, notes: [] };
+
+  for (const [key, mins, need] of [['m15', 15, 30], ['h1', 60, 30]]) {
+    const htf = resample(bars, mins, true);
+    if (htf.length < need) { out.notes.push(`not enough closed ${key.toUpperCase()} bars yet`); continue; }
+    const cs = closes(htf);
+    const e21 = lastOf(ema(cs, 21));
+    const price = cs[cs.length - 1];
+    const st = supertrend(htf, 10, 3);
+    const dir = lastOf(st.direction);
+    let score = 0;
+    if (e21 !== null) score += price > e21 ? 1 : -1;
+    if (dir !== null) score += dir;
+    out[key] = { bias: score > 0 ? 'up' : score < 0 ? 'down' : 'flat', score, closedBars: htf.length };
+    out.notes.push(`${key.toUpperCase()} ${out[key].bias} (last closed bar only)`);
+  }
+
+  if (out.m15 && out.h1) out.agree = out.m15.bias === out.h1.bias && out.m15.bias !== 'flat';
+  return out;
+}
+
+/* ------------------------------------------------------------- the read */
+
+/**
+ * The main entry point.
+ *
+ * Returns an observation, never an instruction. Guarantees, enforced below:
+ *   - a directional read always carries an invalidation price;
+ *   - a tier-1 news blackout overrides everything;
+ *   - a target that does not clear the spread by `minSpreadMultiple` is
+ *     rejected with the arithmetic shown;
+ *   - `whyNot` is never empty for a directional read — the engine always
+ *     argues the other side.
+ */
+function analyse({
+  bars,
+  instrument,
+  spread = null,
+  blackout = null,
+  nowMs = null,
+  minSpreadMultiple = 3,
+  atrStopMultiple = 1.2,
+}) {
+  const inst = instrument;
+  const dp = inst.decimalsForDisplay;
+  const fmt = (x) => (x === null || x === undefined ? '—' : Number(x).toFixed(dp));
+
+  if (!bars || bars.length < MIN_BARS) {
+    return {
+      ok: false,
+      state: 'insufficient-data',
+      headline: 'Not enough history to read the chart',
+      detail: `Need at least ${MIN_BARS} five-minute bars, have ${bars ? bars.length : 0}.`,
+      bias: 'none', confidence: 0, invalidation: null, whyNot: [], reasons: [],
+    };
+  }
+
+  const price = bars[bars.length - 1].c;
+  const cs = closes(bars);
+  const effSpread = spread !== null && spread > 0 ? spread : null;
+
+  const ind = {
+    ema9: ema(cs, 9), ema21: ema(cs, 21), ema50: ema(cs, 50),
+    rsi: rsi(cs, 14), atr: atr(bars, 14), macd: macd(cs, 12, 26, 9),
+    bb: bollingerBands(cs, 20, 2), adx: adx(bars, 14),
+    supertrend: supertrend(bars, 10, 3), stoch: stochastic(bars, 14, 3, 3),
+    vwap: sessionVwap(bars, inst.vwapReset ?? 0, [1, 2]),
+    relVol: relativeVolume(bars, 5),
+    structure: marketStructure(bars, 3),
+    pivots: swingPivots(bars, 3),
+  };
+  const atrNow = lastOf(ind.atr);
+  ind.levels = clusterLevels(bars, atrNow, { lookback: 3, toleranceAtr: 0.5, maxLevels: 8 });
+  ind.fvgs = findFVGs(bars, atrNow, { minAtr: 0.25 });
+  ind.sweeps = detectLiquiditySweep(bars, { lookback: 3, withinBars: 6, atrValue: atrNow });
+
+  const regime = detectRegime(bars, ind);
+  const htf = higherTimeframeBias(bars);
+
+  const buckets = {
+    trend: trendBucket(bars, ind),
+    momentum: momentumBucket(bars, ind),
+    structure: structureBucket(bars, ind),
+    location: locationBucket(bars, ind),
+    volatility: volatilityBucket(bars, ind, inst),
+    volume: volumeBucket(bars, ind),
+  };
+
+  const w = WEIGHTS[regime.regime];
+
+  // Three kinds of bucket, kept strictly apart:
+  //   directionless — volatility, which describes conditions, not direction;
+  //   abstaining    — has no data this bar, so it votes on nothing;
+  //   contributing  — everything else.
+  // Abstaining buckets are removed from the numerator AND the denominator, so
+  // a missing input never inflates the remaining ones. The lost information is
+  // charged to confidence instead, which is where it belongs.
+  const contributing = Object.entries(buckets).filter(([, b]) => !b.directionless && !b.noData);
+  const abstaining = Object.entries(buckets).filter(([, b]) => !b.directionless && b.noData);
+
+  let net = 0;
+  for (const [name, b] of contributing) net += b.score * w[name];
+  const liveWeight = contributing.reduce((s, [n]) => s + w[n], 0);
+  const abstainedWeight = abstaining.reduce((s, [n]) => s + w[n], 0);
+  net = liveWeight > 0 ? net / liveWeight : 0;
+
+  // --- confidence -------------------------------------------------------
+  // Low by default. It rises only when independent buckets agree, and is
+  // capped hard when conditions or data do not support a read.
+  const directional = contributing;
+  const agreeing = directional.filter(([, b]) => Math.sign(b.score) === Math.sign(net) && Math.abs(b.score) > 0.2).length;
+  let confidence = directional.length
+    ? Math.min(0.95, Math.abs(net) * 0.55 + (agreeing / directional.length) * 0.35)
+    : 0;
+
+  // Every abstaining bucket is information the engine does not have.
+  if (abstainedWeight > 0) confidence *= (1 - abstainedWeight);
+
+  if (regime.regime === 'mixed') confidence *= 0.55;
+  if (regime.regime === 'compressed') confidence *= 0.6;
+  if (buckets.volatility.score < 0) confidence *= 0.7;
+  if (!htf.agree) confidence *= 0.8;
+  if (bars.length < 150) confidence *= 0.85;
+  confidence = Math.max(0, Math.min(0.95, confidence));
+
+  const bias = Math.abs(net) < 0.12 ? 'neutral' : net > 0 ? 'long' : 'short';
+
+  // --- invalidation: mandatory -----------------------------------------
+  // Prefer a structural level (the swing the read would be wrong beneath).
+  // Fall back to ATR. If neither can be produced, the engine refuses.
+  let invalidation = null, invalidationBasis = null;
+  if (bias !== 'neutral' && atrNow) {
+    const piv = bias === 'long' ? ind.pivots.lows : ind.pivots.highs;
+    const recent = piv.filter((p) => (bias === 'long' ? p.price < price : p.price > price)).slice(-3);
+    if (recent.length) {
+      const chosen = bias === 'long'
+        ? Math.max(...recent.map((p) => p.price))
+        : Math.min(...recent.map((p) => p.price));
+      const pad = atrNow * 0.25;
+      const candidate = bias === 'long' ? chosen - pad : chosen + pad;
+      if (Math.abs(price - candidate) >= minStop(inst, price) * 0.5) {
+        invalidation = candidate;
+        invalidationBasis = `beyond the last confirmed swing ${bias === 'long' ? 'low' : 'high'} at ${fmt(chosen)}, plus a quarter-ATR of room`;
+      }
+    }
+    if (invalidation === null) {
+      const d = Math.max(atrNow * atrStopMultiple, minStop(inst, price));
+      invalidation = bias === 'long' ? price - d : price + d;
+      invalidationBasis = `${atrStopMultiple} x M5 ATR — no usable swing level nearby, so this is a volatility stop, not a structural one`;
+    }
+  }
+
+  const stopDistance = invalidation !== null ? Math.abs(price - invalidation) : null;
+
+  // --- targets and the spread gate -------------------------------------
+  const targets = [];
+  let spreadVerdict = null;
+  if (bias !== 'neutral' && stopDistance) {
+    const nextLevels = ind.levels
+      .filter((L) => (bias === 'long' ? L.price > price : L.price < price))
+      .sort((a, b) => (bias === 'long' ? a.price - b.price : b.price - a.price));
+
+    if (nextLevels.length) {
+      targets.push({
+        price: nextLevels[0].price,
+        basis: `next clustered level (${nextLevels[0].touches} touches)`,
+        r: rMultiple(price, invalidation, nextLevels[0].price, effSpread || 0),
+      });
+    }
+    const oneR = bias === 'long' ? price + stopDistance : price - stopDistance;
+    // Only add the 1R target if it is meaningfully different from the level
+    // target already listed. Two rows a few cents apart, both reading 1R, is
+    // noise dressed up as confluence.
+    const dupe = targets.some((t) => Math.abs(t.price - oneR) < (atrNow || stopDistance) * 0.25);
+    if (!dupe) {
+      targets.push({ price: oneR, basis: '1R from the invalidation level', r: rMultiple(price, invalidation, oneR, effSpread || 0) });
+    }
+
+    if (effSpread !== null) {
+      const first = targets[0];
+      const reach = Math.abs(first.price - price);
+      const targetOk = reach >= effSpread * minSpreadMultiple;
+
+      // The STOP-to-spread ratio matters at least as much as the target one.
+      // Below 5x, the spread costs more than ten points of win rate at 1:1 and
+      // the setup is arithmetically unsound however good the pattern looks.
+      // Between 5x and 10x it is workable but expensive.
+      const stopMult = stopDistance / effSpread;
+      const stopOk = stopMult >= 5;
+      spreadVerdict = {
+        ok: targetOk && stopOk,
+        targetOk,
+        stopOk,
+        stopMultiple: +stopMult.toFixed(1),
+        spread: effSpread,
+        firstTargetDistance: reach,
+        multiple: +(reach / effSpread).toFixed(1),
+        required: minSpreadMultiple,
+        text: !stopOk
+          ? `the stop is only ${stopMult.toFixed(1)}x the spread — below 5x the cost structure is unsound whatever the chart looks like`
+          : targetOk
+            ? `first target is ${(reach / effSpread).toFixed(1)}x the spread away, stop is ${stopMult.toFixed(1)}x`
+            : `first target is only ${(reach / effSpread).toFixed(1)}x the spread away — below the ${minSpreadMultiple}x floor, the cost eats the move`,
+        warn: stopOk && stopMult < 10
+          ? `A stop ${stopMult.toFixed(1)}x the spread is workable but expensive; 10x is the comfortable floor.`
+          : null,
+      };
+    }
+  }
+
+  const be = (bias !== 'neutral' && stopDistance && targets.length)
+    ? breakEvenWinRate(Math.abs(targets[0].price - price), stopDistance, effSpread || 0)
+    : null;
+
+  // --- the case against -------------------------------------------------
+  const whyNot = [];
+  if (regime.regime === 'ranging' && Math.abs(buckets.trend.score) > 0.4) {
+    whyNot.push('Trend readings are being discarded: in a range they generate breakouts that fail. This read rests on location, not direction.');
+  }
+  if (regime.regime === 'mixed') whyNot.push('Neither trending nor ranging cleanly — historically the least tradeable state, and the one where a confluence score is least meaningful.');
+  if (regime.regime === 'compressed') whyNot.push('Volatility is compressed. The break can come either way, and compression alone says nothing about which.');
+  if (!htf.agree) whyNot.push(`M15 and H1 do not agree (${htf.notes.join('; ')}) — a scalp against the higher timeframe needs to be quicker and smaller.`);
+  for (const [name, b] of directional) {
+    if (Math.sign(b.score) !== Math.sign(net) && Math.abs(b.score) > 0.3) {
+      whyNot.push(`${name} argues the other way: ${b.reasons[0] || 'opposed'}.`);
+    }
+  }
+  if (buckets.volatility.score < 0) whyNot.push(buckets.volatility.reasons.join('; ') + '.');
+  if (spreadVerdict && !spreadVerdict.ok) whyNot.push(spreadVerdict.text + '.');
+  if (spreadVerdict && spreadVerdict.warn) whyNot.push(spreadVerdict.warn);
+  if (be && be.impossible) whyNot.push(`The target does not clear the spread at all — ${be.reason}.`);
+  if (be && !be.impossible && be.rate > 55) whyNot.push(`This shape needs a ${be.rate}% win rate just to break even after the spread.`);
+  for (const [name, b] of abstaining) {
+    whyNot.push(`No ${name} input this bar: ${b.reasons[0]}. The read is being made on less than the full picture.`);
+  }
+  if (confidence < 0.35) whyNot.push('Bucket agreement is weak. Treat this as an observation about the chart, not a setup.');
+  if (bias !== 'neutral' && whyNot.length === 0) {
+    whyNot.push('Nothing in the visible data argues against this read — which usually means the engine is missing something it cannot see, not that the trade is safe.');
+  }
+
+  // --- news blackout: a hard override, not a factor ---------------------
+  if (blackout && blackout.active) {
+    return {
+      ok: true,
+      state: 'stand-aside',
+      headline: `Stand aside — ${blackout.event.name}`,
+      detail: blackout.phase === 'before'
+        ? `${blackout.event.name} is released in ${blackout.minutesAway} minutes. Spreads widen and stops get skipped through before the number lands, not after.`
+        : `${blackout.event.name} was released ${blackout.minutesSince} minutes ago. The spread has not normalised yet.`,
+      bias: 'none',
+      technicalBiasSuppressed: bias,
+      confidence: 0,
+      blackout,
+      regime, htf, buckets, indicators: ind, price, atr: atrNow,
+      invalidation: null,
+      whyNot: ['A scheduled release overrides the technical read entirely. The chart cannot see the number.'],
+      reasons: [`Technicals read ${bias} before the override, at ${(confidence * 100).toFixed(0)}% confidence. That is shown so you know what you are setting aside, not as a reason to trade it.`],
+    };
+  }
+
+  // --- refuse rather than emit a read with no invalidation ---------------
+  if (bias !== 'neutral' && invalidation === null) {
+    return {
+      ok: true,
+      state: 'no-read',
+      headline: 'No usable invalidation level',
+      detail: 'The technicals lean one way but no defensible level to be wrong at could be found. A scalp without an invalidation price is a guess with a position on it.',
+      bias: 'neutral', confidence: 0, invalidation: null,
+      regime, htf, buckets, indicators: ind, price, atr: atrNow,
+      whyNot: ['No structural or volatility-based stop could be derived from the visible bars.'],
+      reasons: [],
+    };
+  }
+
+  const reasons = [];
+  const order = regime.regime === 'ranging'
+    ? ['location', 'structure', 'momentum', 'volume', 'volatility', 'trend']
+    : ['trend', 'structure', 'momentum', 'location', 'volume', 'volatility'];
+  for (const name of order) {
+    for (const r of buckets[name].reasons) reasons.push({ bucket: name, text: r });
+  }
+
+  const headline = bias === 'neutral'
+    ? 'No directional edge visible'
+    : `${bias === 'long' ? 'Upward' : 'Downward'} lean, ${regime.regime} conditions`;
+
+  return {
+    ok: true,
+    state: bias === 'neutral' ? 'neutral' : 'read',
+    headline,
+    bias,
+    net: +net.toFixed(3),
+    confidence: +confidence.toFixed(2),
+    confidenceLabel: confidence < 0.3 ? 'low' : confidence < 0.55 ? 'moderate' : 'firm',
+    price, atr: atrNow,
+    regime, htf, buckets,
+    weights: w,
+    abstained: abstaining.map(([n]) => n),
+    liveWeight: +liveWeight.toFixed(3),
+    invalidation,
+    invalidationBasis,
+    stopDistance,
+    targets,
+    spreadVerdict,
+    breakEven: be,
+    levels: ind.levels,
+    reasons,
+    whyNot,
+    indicators: ind,
+    generatedAtMs: nowMs,
+    // Deliberate phrasing: this describes, it does not instruct.
+    statement: bias === 'neutral'
+      ? 'The chart is not offering a directional read right now.'
+      : `Price is leaning ${bias === 'long' ? 'up' : 'down'} in ${regime.regime} conditions. This read is wrong ${bias === 'long' ? 'below' : 'above'} ${fmt(invalidation)}.`,
+  };
+}
+
+/* ======================= app.js ======================= */
+/* ===========================================================================
+   app.js — wiring. Everything it renders comes from the modules above.
+   =========================================================================== */
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+/* ---- persistence: per-viewer convenience only, never load-bearing ------- */
+const store = {
+  get(k, d) { try { const v = localStorage.getItem('msd.' + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem('msd.' + k, JSON.stringify(v)); } catch { /* private mode */ } },
+};
+
+const state = {
+  pair: store.get('pair', 'XAUUSD'),
+  tab: 'read',
+  mode: store.get('mode', 'live'),
+  keys: store.get('keys', {}),
+  serverOffset: store.get('serverOffset', 3),
+  overrides: store.get('overrides', {}),
+  bars: [],
+  sample: true,
+  feed: null,
+  spread: store.get('spread', {}),
+  lastAnalysis: null,
+};
+
+/* ---- a plausible sample series so the page opens showing what it does --- */
+function sampleBars(pair) {
+  const base = pair === 'BTCUSD' ? 81000 : 4391;
+  const scale = pair === 'BTCUSD' ? 140 : 3.4;
+  const n = 260;
+  const now = Date.now();
+  const t0 = Math.floor((now - n * 300000) / 300000) * 300000;
+  const out = [];
+  let p = base - scale * 9;
+  for (let i = 0; i < n; i++) {
+    // A deterministic wander: drift, a session-scale swing, and bar noise.
+    const drift = scale * 0.055;
+    const swing = Math.sin(i / 17) * scale * 2.6 + Math.sin(i / 5.5) * scale * 0.8;
+    const noise = Math.sin(i * 2.399) * scale * 0.45;
+    const c = base - scale * 9 + drift * i + swing + noise;
+    const o = p;
+    const h = Math.max(o, c) + Math.abs(Math.sin(i * 1.7)) * scale * 0.5;
+    const l = Math.min(o, c) - Math.abs(Math.cos(i * 1.31)) * scale * 0.5;
+    out.push({ t: t0 + i * 300000, o, h, l, c, v: 800 + Math.abs(Math.sin(i / 3)) * 900 });
+    p = c;
+  }
+  return out;
+}
+
+const inst = () => INSTRUMENTS[state.pair];
+const dp = () => inst().decimalsForDisplay;
+const fmt = (x, d) => (x === null || x === undefined || Number.isNaN(x) ? '—'
+  : Number(x).toLocaleString('en-GB', { minimumFractionDigits: d ?? dp(), maximumFractionDigits: d ?? dp() }));
+
+/* ======================================================= clocks & header */
+
+function renderClock() {
+  const now = Date.now();
+  $('clock-utc').textContent = formatHM(now, 'UTC');
+  const local = localZone();
+  const parts = [`UTC · ${formatHM(now, local)} local`];
+  if (state.serverOffset !== null && state.serverOffset !== '') {
+    const b = brokerChartTime(now, Number(state.serverOffset));
+    if (b) parts.push(`${b.text} chart`);
+  }
+  $('clock-sub').textContent = parts.join(' · ');
+}
+
+function renderFeed() {
+  const dot = $('feed-dot'), txt = $('feed-text');
+  if (state.sample) {
+    dot.className = 'dot stale';
+    txt.textContent = 'Sample data — not live. Connect a feed or type your own bars in Setup.';
+  } else if (state.feed && state.feed.ok) {
+    const ageMin = Math.round((Date.now() - state.bars[state.bars.length - 1].t) / 60000);
+    const stale = ageMin > 12;
+    dot.className = 'dot ' + (stale ? 'stale' : 'live');
+    txt.textContent = `${state.feed.source.label} · ${state.bars.length} bars · last ${ageMin}m ago`
+      + (state.feed.source.proxy ? ' · PROXY, not gold' : '');
+  } else if (state.mode === 'manual') {
+    dot.className = 'dot live';
+    txt.textContent = `Your own bars · ${state.bars.length} read from MT5`;
+  } else {
+    dot.className = 'dot off';
+    txt.textContent = 'No feed. Everything except price still works.';
+  }
+}
+
+/* ============================================================== the read */
+
+function renderRead(a) {
+  const el = $('readout');
+
+  // A substituted instrument must be impossible to miss. PAXG is a token, not
+  // spot gold, and it diverges from spot exactly on short timeframes. Burying
+  // that in a tooltip would be the single most misleading thing this tool
+  // could do, so it gets a banner above the price.
+  let banner = '';
+  if (state.feed && state.feed.ok && state.feed.source.proxy) {
+    banner = `<div class="unconfirmed" style="color:var(--danger);background:var(--danger-dim);margin:0 0 13px">
+      <b>This is ${esc(state.feed.source.instrument)}.</b> ${esc(state.feed.source.note)}</div>`;
+  } else if (state.sample) {
+    banner = `<div class="unconfirmed" style="margin:0 0 13px">
+      <b>Sample data.</b> These are generated bars so you can see how the tool reads a chart.
+      Nothing here is a real price. Connect a feed or type your own bars under Setup.</div>`;
+  } else if (state.feed && state.feed.ok && state.feed.source.instrument) {
+    banner = `<div style="font-size:11.5px;color:var(--label-3);margin:0 0 11px">
+      ${esc(state.feed.source.instrument)} · not your broker's price. Take entries, stops and targets from MT5.</div>`;
+  }
+
+  if (!a.ok) {
+    el.innerHTML = banner + `<div class="bias-line"><span class="bias flat">${esc(a.headline)}</span></div>
+      <p class="statement">${esc(a.detail)}</p>`;
+    return;
+  }
+
+  const dir = a.bias === 'long' ? 'up' : a.bias === 'short' ? 'down' : 'flat';
+  const arrow = a.bias === 'long' ? '&#9650;' : a.bias === 'short' ? '&#9660;' : '&#9644;';
+  const word = a.bias === 'long' ? 'Upward lean' : a.bias === 'short' ? 'Downward lean' : 'No lean';
+  const pct = Math.round((a.confidence || 0) * 100);
+
+  let html = banner + `
+    <div class="bias-line">
+      <span class="arrow ${dir}">${arrow}</span>
+      <span class="bias ${dir}">${word}</span>
+    </div>
+    <div class="price-big">${fmt(a.price)}</div>
+    <p class="statement">${esc(a.statement)}</p>`;
+
+  if (a.bias !== 'neutral') {
+    html += `
+      <div class="conf-wrap">
+        <div class="conf-head"><span>Confidence · ${esc(a.confidenceLabel)}</span><span class="num">${pct}%</span></div>
+        <div class="conf-track"><div class="conf-fill" style="width:${pct}%;background:var(--${dir === 'flat' ? 'flat' : dir})"></div></div>
+      </div>
+      <div class="hr"></div>
+      <div class="row"><dt>Wrong ${a.bias === 'long' ? 'below' : 'above'}</dt><dd class="${dir}">${fmt(a.invalidation)}</dd></div>
+      <div class="row"><dt>Stop distance</dt><dd>${fmt(a.stopDistance)}</dd></div>`;
+
+    for (const t of a.targets.slice(0, 2)) {
+      html += `<div class="row"><dt>Target · ${esc(t.basis)}</dt><dd>${fmt(t.price)}${t.r !== null ? ` <span style="color:var(--label-3)">${t.r}R</span>` : ''}</dd></div>`;
+    }
+    if (a.breakEven && !a.breakEven.impossible) {
+      const hard = a.breakEven.rate > 55;
+      html += `<div class="row"><dt>Win rate needed to break even</dt><dd style="color:var(--${hard ? 'warn' : 'label'})">${a.breakEven.rate}%</dd></div>`;
+    }
+    html += `<details class="more"><summary>How that invalidation was chosen</summary>
+      <p style="font-size:13px;color:var(--label-2);margin:6px 0 0">${esc(a.invalidationBasis)}</p></details>`;
+  }
+  el.innerHTML = html;
+}
+
+/* ============================================================ conditions */
+
+function renderConditions(a, now) {
+  const q = sessionQuality(now, state.pair);
+  const open = openSessions(now).map((s) => s.label);
+  const roll = rolloverWindow(now, state.serverOffset === '' ? null : Number(state.serverOffset));
+  const boundary = barBoundaryNote(now);
+
+  const sv = a.ok && a.atr ? spreadViability(currentSpread(), a.atr) : { ok: null };
+
+  let html = `<p class="card-title">Conditions</p>
+    <div class="chips">
+      <span class="chip ${q.band === 'green' ? 'green' : q.band === 'red' ? 'red' : 'amber'}">${q.band === 'green' ? 'Prime hours' : q.band === 'amber' ? 'Thinner hours' : 'Poor hours'}</span>
+      ${open.length ? `<span class="chip">${esc(open.join(' + '))} open</span>` : '<span class="chip">All majors closed</span>'}
+      ${a.ok && a.regime ? `<span class="chip">${esc(a.regime.regime)}</span>` : ''}
+      ${a.ok && a.htf && a.htf.agree ? '<span class="chip green">M15 and H1 agree</span>' : '<span class="chip amber">Timeframes disagree</span>'}
+    </div>
+    <p style="font-size:13px;color:var(--label-2);margin:11px 0 0">${esc(q.note)}</p>`;
+
+  if (a.ok && a.atr) {
+    html += `<div class="hr"></div>
+      <div class="row"><dt>M5 ATR(14)</dt><dd>${fmt(a.atr)} <span style="color:var(--label-3)">${((a.atr / a.price) * 100).toFixed(2)}%</span></dd></div>`;
+    if (sv.ok !== null) {
+      const col = sv.ok ? (sv.ratio <= 0.25 ? 'up' : 'warn') : 'danger';
+      html += `<div class="row"><dt>Spread as share of ATR</dt><dd style="color:var(--${col})">${sv.pct}%</dd></div>
+        <p style="font-size:12.5px;color:var(--label-2);margin:9px 0 0">${esc(sv.verdict)}</p>`;
+    } else {
+      html += `<p style="font-size:12.5px;color:var(--label-3);margin:9px 0 0">Enter your live spread under Size to see whether the cost structure supports a scalp right now. It is the single ratio that decides it.</p>`;
+    }
+  }
+
+  if (roll && roll.warning) html += `<div class="unconfirmed" style="color:var(--danger);background:var(--danger-dim)">${esc(roll.warning)}</div>`;
+  if (boundary.strong) html += `<div class="unconfirmed">${esc(boundary.note)}</div>`;
+  if (a.ok && a.regime) html += `<p style="font-size:12.5px;color:var(--label-3);margin:11px 0 0">${esc(a.regime.notes.join(' · '))}</p>`;
+
+  $('conditions').innerHTML = html;
+}
+
+/* =============================================================== blackout */
+
+function renderBlackout(bl, now) {
+  const slot = $('blackout-slot');
+  if (!bl) {
+    const next = getUpcomingEvents(now, 12, state.pair, { includeContext: false })
+      .filter((e) => e.tier <= 2 && e.ts > now)[0];
+    if (next && next.msAway < 75 * 60000) {
+      slot.innerHTML = `<div class="alert caution">
+        <h3>${esc(next.name)} in <span class="num">${formatCountdown(next.msAway)}</span></h3>
+        <p>Tier ${next.tier}. Plan to be flat by ${formatHM(next.ts - next.blackoutBefore * 60000, 'UTC')} UTC.</p></div>`;
+    } else {
+      slot.innerHTML = '';
+    }
+    return;
+  }
+  const ev = bl.event;
+  slot.innerHTML = `<div class="alert stand-aside">
+    <h3>Stand aside &mdash; ${esc(ev.name)}</h3>
+    <div class="big-count">${bl.phase === 'before' ? formatCountdown(ev.ts - now) : `+${bl.minutesSince}m`}</div>
+    <p style="margin-top:6px">${bl.phase === 'before'
+      ? 'Spreads widen and stops get skipped through before the number lands, not after.'
+      : 'The spread has not normalised yet. The release candle and the one after it are frequently a false direction.'}</p>
+    <p style="margin-top:8px;color:var(--label-3);font-size:12.5px">Clear at ${formatHM(bl.endsAtMs, 'UTC')} UTC${state.serverOffset !== '' ? ` · ${brokerChartTime(bl.endsAtMs, Number(state.serverOffset)).text} on your chart` : ''}.</p>
+  </div>`;
+}
+
+/* =================================================================== news */
+
+function renderNews(now) {
+  // Seven days rather than two: opened on a Saturday, a 48-hour window shows
+  // almost nothing and reads as "nothing is coming" when Monday is stacked.
+  const rows = getUpcomingEvents(now, 24 * 7, state.pair);
+  const dst = dstMisalignment(now);
+
+  $('dst-slot').innerHTML = dst ? `<div class="alert caution">
+    <h3>Clocks are out of step this week</h3>
+    <p>${esc(dst.message)} ${esc(dst.note)}. Normal service resumes ${esc(dst.to)}.</p></div>` : '';
+
+  if (!rows.length) {
+    $('news-list').innerHTML = '<p class="card-title">Next 7 days</p><p style="color:var(--label-2);font-size:13.5px;margin:0">Nothing scheduled for this instrument in the window.</p>';
+  } else {
+    let html = '<p class="card-title">Next 7 days</p>';
+    for (const e of rows.slice(0, 30)) {
+      const cls = e.tier === 1 ? 't1' : e.tier === 2 ? 't2' : e.tier === 3 ? 't3' : 'tc';
+      const past = e.ts < now;
+      const bt = state.serverOffset !== '' ? brokerChartTime(e.ts, Number(state.serverOffset)) : null;
+      html += `<div class="ev">
+        <div class="ev-stripe ${cls}"></div>
+        <div>
+          <div class="ev-name">${esc(e.name)}${e.confidence !== 'verified' ? `<span class="flag">${e.approximate ? 'approx' : 'unconfirmed'}</span>` : ''}${e.dateShifted ? '<span class="flag">shifted</span>' : ''}</div>
+          <div class="ev-meta">${esc(e.agency)} · ${e.tier === 'context' ? 'context only' : `tier ${e.tier}`}${e.tier !== 'context' ? ` · flat ${e.blackoutBefore}m before, ${e.blackoutAfter}m after` : ''}</div>
+          <div class="ev-why">${esc(e.why)}</div>
+          ${e.note ? `<details class="more"><summary>Caveat</summary><p style="font-size:12.5px;color:var(--label-2);margin:5px 0 0">${esc(e.note)}</p></details>` : ''}
+        </div>
+        <div class="ev-when">
+          <div class="ev-count" style="color:var(--${past ? 'label-3' : e.tier === 1 ? 'danger' : e.tier === 2 ? 'warn' : 'label'})">${past ? 'past' : formatCountdown(e.msAway)}</div>
+          <div class="ev-clock">${formatHM(e.ts, 'UTC')} UTC</div>
+          ${bt ? `<div class="ev-clock">${bt.text} chart</div>` : ''}
+        </div>
+      </div>`;
+    }
+    $('news-list').innerHTML = html;
+  }
+
+  $('unschedulable').innerHTML = `<p class="card-title">What no calendar can time</p>
+    <ul class="reasons against">${UNSCHEDULABLE.map((u) => `<li>${esc(u)}</li>`).join('')}</ul>
+    <p style="font-size:12.5px;color:var(--label-3);margin:11px 0 0">
+      These have no schedule, so nothing here can warn you about them. The only honest protection is
+      position size and a stop that is already in the market.</p>`;
+
+  const urgent = rows.find((e) => e.tier === 1 && e.msAway > 0 && e.msAway < 90 * 60000);
+  $('news-badge').hidden = !urgent;
+}
+
+/* =================================================================== risk */
+
+function currentSpread() {
+  const v = Number($('live-spread').value);
+  return v > 0 ? v : null;
+}
+
+function renderRisk() {
+  const a = state.lastAnalysis;
+  const i = inst();
+  const bal = Number($('acct-bal').value) || 0;
+  const pct = Number($('risk-pct').value) || 0;
+  const fx = Number($('fx-rate').value) || 1;
+  const ccy = $('acct-ccy').value;
+  const spread = currentSpread() || 0;
+  let stop = Number($('stop-dist').value);
+  if (!(stop > 0) && a && a.ok && a.stopDistance) {
+    stop = +a.stopDistance.toFixed(dp());
+    $('stop-dist').placeholder = String(stop);
+  }
+
+  const contract = Number($('contract-size').value) || spec(i, 'dollarMoveValuePerLot');
+  const r = positionSize({
+    accountBalance: bal, riskPercent: pct, stopDistance: stop,
+    valuePerUnitMovePerLot: contract, spread,
+    minLot: Number($('min-lot').value) || spec(i, 'minLot'),
+    lotStep: Number($('lot-step').value) || spec(i, 'lotStep'),
+    accountCurrency: ccy, quoteCurrency: 'USD', fxRate: ccy === 'USD' ? 1 : fx,
+  });
+
+  let html = '<div class="hr"></div>';
+  if (r.blocked.length) {
+    html += `<div class="unconfirmed">${r.blocked.map(esc).join('<br>')}</div>`;
+  }
+  if (r.lots !== null && r.lots > 0) {
+    html += `<div class="row"><dt>Lot size</dt><dd style="font-size:22px;font-weight:700">${r.lots.toFixed(2)}</dd></div>
+      <div class="row"><dt>Risk if stopped</dt><dd>${ccy} ${fmt(r.actualRisk, 2)}</dd></div>
+      <div class="row"><dt>Stop incl. spread</dt><dd>${fmt(r.effectiveStop)}</dd></div>
+      <div class="row"><dt>Spread cost at this size</dt><dd style="color:var(--warn)">${ccy} ${fmt(r.spreadCostAtSize, 2)}</dd></div>`;
+  }
+  $('size-out').innerHTML = html;   // replaced again below once margin is known
+
+  // The toll nobody works out before they start.
+  // Margin: the constraint the risk formula knows nothing about.
+  if (r.lots > 0) {
+    const lev = Number($('leverage').value) || 100;
+    const m = marginRequired({
+      price: a && a.ok ? a.price : 0, lots: r.lots,
+      contractSize: spec(i, 'contractSize'), leverage: lev,
+      accountBalance: bal, fxRate: ccy === 'USD' ? 1 : fx,
+    });
+    if (m) {
+      html += `<div class="hr"></div>
+        <div class="row"><dt>Notional</dt><dd>${ccy} ${fmt(m.notional, 0)}</dd></div>
+        <div class="row"><dt>Margin at ${lev}:1</dt><dd style="color:var(--${m.tight ? 'warn' : 'label'})">${ccy} ${fmt(m.margin, 2)} · ${m.pctOfAccount}%</dd></div>
+        <div class="row"><dt>Free after</dt><dd>${ccy} ${fmt(m.freeAfter, 2)}</dd></div>`;
+      if (m.tight) {
+        html += `<div class="unconfirmed">This position is sized correctly for risk but takes
+          ${m.pctOfAccount}% of your margin. Risk sizing has no idea what margin costs, so a
+          "safe" 1% trade can still leave you unable to hold anything else.</div>`;
+      }
+      $('size-out').innerHTML = html;
+    }
+  }
+
+  let cost = '<p class="card-title">What scalping costs you</p>';
+  if (r.lots > 0 && spread > 0) {
+    const d = spreadDrag({ spread, valuePerUnitMovePerLot: contract, lots: r.lots, tradesPerDay: 15 });
+    cost += `<div class="row"><dt>Per trade</dt><dd>${ccy} ${fmt(d.perTrade, 2)}</dd></div>
+      <div class="row"><dt>15 trades a day</dt><dd>${ccy} ${fmt(d.perDay, 2)}</dd></div>
+      <div class="row"><dt>Over a month</dt><dd style="color:var(--warn);font-size:17px;font-weight:700">${ccy} ${fmt(d.perMonth, 2)}</dd></div>
+      <p style="font-size:12.5px;color:var(--label-2);margin:11px 0 0">
+        That is the spread alone, before a single losing trade. It is paid whether you are right or wrong,
+        and it is why a scalping edge has to be larger than it first looks.</p>`;
+  } else {
+    cost += '<p style="color:var(--label-2);font-size:13.5px;margin:0">Enter your live spread and a stop distance to see the monthly toll.</p>';
+  }
+  const be = stop > 0 && a && a.ok && a.targets && a.targets.length
+    ? breakEvenWinRate(Math.abs(a.targets[0].price - a.price), stop, spread) : null;
+  if (be && !be.impossible) {
+    cost += `<div class="hr"></div>
+      <div class="row"><dt>Gross reward:risk</dt><dd>${be.grossR}R</dd></div>
+      <div class="row"><dt>Net of spread</dt><dd>${be.netR}R</dd></div>
+      <div class="row"><dt>Break-even win rate</dt><dd style="color:var(--${be.rate > 55 ? 'warn' : 'label'})">${be.rate}%</dd></div>
+      <div class="row"><dt>If the spread were free</dt><dd style="color:var(--label-3)">${be.costlessRate}%</dd></div>
+      <p style="font-size:12.5px;color:var(--label-2);margin:9px 0 0">
+        The gap between those two numbers is what the spread costs you in win rate.
+        You need <b>${be.rate}%</b>, not ${be.costlessRate}%.</p>`;
+  }
+  $('cost-out').innerHTML = cost;
+
+  $('corr-note').innerHTML = `<p class="card-title">You trade both of these</p>
+    <p style="font-size:13.5px;color:var(--label-2);margin:0">${esc(CORRELATION_NOTE.message)}</p>
+    <p style="font-size:12px;color:var(--label-3);margin:9px 0 0">
+      ${esc(CORRELATION_NOTE.window)} correlation ${CORRELATION_NOTE.value}, as of ${esc(CORRELATION_NOTE.asOf)}.
+      Correlations move — this one swung hard during 2026. Treat it as a live assumption to re-check, not a constant.</p>
+    ${state.pair === 'BTCUSD' ? `<div class="hr"></div>
+      <p style="font-size:12.5px;color:var(--label-2);margin:0">
+        <b>Worth knowing which entity this symbol sits on.</b> The FCA bans crypto CFDs for retail
+        clients, so if you hold a BTCUSD position it is not on an FCA-regulated retail account —
+        which usually means different leverage, and often no negative balance protection, from the
+        account your gold sits on. Two symbols, possibly two sets of rules.</p>` : ''}`;
+}
+
+/* ================================================================== chart */
+
+function drawChart(a) {
+  const cv = $('chart');
+  const ratio = window.devicePixelRatio || 1;
+  const cssW = cv.clientWidth || 340, cssH = 190;
+  cv.width = cssW * ratio; cv.height = cssH * ratio;
+  const g = cv.getContext('2d');
+  g.setTransform(ratio, 0, 0, ratio, 0, 0);
+  g.clearRect(0, 0, cssW, cssH);
+
+  const bars = state.bars.slice(-70);
+  if (!bars.length) return;
+
+  const padL = 6, padR = 52, padT = 10, padB = 8;
+  const W = cssW - padL - padR, H = cssH - padT - padB;
+  let lo = Infinity, hi = -Infinity;
+  for (const b of bars) { if (b.l < lo) lo = b.l; if (b.h > hi) hi = b.h; }
+  if (a && a.ok && a.invalidation) { lo = Math.min(lo, a.invalidation); hi = Math.max(hi, a.invalidation); }
+  const pad = (hi - lo) * 0.08 || 1;
+  lo -= pad; hi += pad;
+  const y = (p) => padT + H - ((p - lo) / (hi - lo)) * H;
+  const bw = W / bars.length;
+
+  // horizontal guides + right-hand price labels
+  g.font = '9px ui-monospace, monospace';
+  g.textAlign = 'left';
+  for (let i = 0; i <= 3; i++) {
+    const p = lo + ((hi - lo) * i) / 3;
+    const yy = y(p);
+    g.strokeStyle = '#242428'; g.lineWidth = 1;
+    g.beginPath(); g.moveTo(padL, yy); g.lineTo(padL + W, yy); g.stroke();
+    g.fillStyle = '#6A6A70';
+    g.fillText(p.toFixed(dp()), padL + W + 6, yy + 3);
+  }
+
+  // session VWAP
+  if (a && a.ok && a.indicators && a.indicators.vwap) {
+    const vw = a.indicators.vwap.vwap.slice(-bars.length);
+    g.strokeStyle = 'rgba(10,132,255,.85)'; g.lineWidth = 1.4;
+    g.beginPath();
+    let started = false;
+    vw.forEach((v, i) => {
+      if (v === null) { started = false; return; }
+      const xx = padL + i * bw + bw / 2;
+      // A session-anchored VWAP restarts at each reset, so the value jumps.
+      // Joining across that gap would draw a vertical line that looks like a
+      // price move. Break the path instead and start a new segment.
+      const jumped = i > 0 && vw[i - 1] !== null
+        && Math.abs(v - vw[i - 1]) > (hi - lo) * 0.08;
+      if (!started || jumped) { g.moveTo(xx, y(v)); started = true; } else g.lineTo(xx, y(v));
+    });
+    g.stroke();
+  }
+
+  // clustered levels
+  if (a && a.ok && a.levels) {
+    for (const L of a.levels.slice(0, 5)) {
+      if (L.price < lo || L.price > hi) continue;
+      g.strokeStyle = 'rgba(155,155,161,.32)';
+      g.setLineDash([3, 4]); g.lineWidth = 1;
+      g.beginPath(); g.moveTo(padL, y(L.price)); g.lineTo(padL + W, y(L.price)); g.stroke();
+      g.setLineDash([]);
+    }
+  }
+
+  // candles
+  bars.forEach((b, i) => {
+    const x = padL + i * bw + bw / 2;
+    const up = b.c >= b.o;
+    g.strokeStyle = up ? '#30D9A4' : '#FF6B4A';
+    g.fillStyle = up ? '#30D9A4' : '#FF6B4A';
+    g.lineWidth = 1;
+    g.beginPath(); g.moveTo(x, y(b.h)); g.lineTo(x, y(b.l)); g.stroke();
+    const bodyW = Math.max(1.5, bw * 0.62);
+    const top = y(Math.max(b.o, b.c)), bot = y(Math.min(b.o, b.c));
+    g.fillRect(x - bodyW / 2, top, bodyW, Math.max(1, bot - top));
+  });
+
+  // invalidation
+  if (a && a.ok && a.invalidation) {
+    const col = a.bias === 'long' ? '#FF6B4A' : '#30D9A4';
+    g.strokeStyle = col; g.lineWidth = 1.2; g.setLineDash([5, 3]);
+    g.beginPath(); g.moveTo(padL, y(a.invalidation)); g.lineTo(padL + W, y(a.invalidation)); g.stroke();
+    g.setLineDash([]);
+    g.fillStyle = col; g.font = '600 9px ui-monospace, monospace'; g.textAlign = 'left';
+    g.fillText('invalid', padL + W + 6, y(a.invalidation) + 3);
+  }
+
+  $('chart-chips').innerHTML = `
+    <span class="chip" style="color:var(--accent)">&mdash; session VWAP</span>
+    <span class="chip">&middot;&middot;&middot; levels</span>
+    ${a && a.ok && a.invalidation ? '<span class="chip">- - invalidation</span>' : ''}
+    <span class="chip">${bars.length} bars</span>`;
+}
+
+/* ============================================================== reasoning */
+
+function renderReasoning(a) {
+  if (!a.ok || !a.reasons || !a.reasons.length) {
+    $('reasoning').innerHTML = '<p class="card-title">What it sees</p><p style="color:var(--label-2);font-size:13.5px;margin:0">Not enough data to describe.</p>';
+    $('whynot').innerHTML = '';
+    return;
+  }
+  $('reasoning').innerHTML = `<p class="card-title">What it sees</p>
+    <ul class="reasons">${a.reasons.slice(0, 14).map((r) => `<li><b>${esc(r.bucket)}</b> — ${esc(r.text)}</li>`).join('')}</ul>
+    <details class="more"><summary>How the score is weighted right now</summary>
+      <div style="margin-top:8px">
+        ${Object.entries(a.weights).map(([k, v]) => `<div class="row"><dt>${esc(k)}</dt><dd>${Math.round(v * 100)}%</dd></div>`).join('')}
+      </div>
+      <p style="font-size:12.5px;color:var(--label-3);margin:10px 0 0">
+        Correlated indicators share a bucket, so trend-following measures cannot vote three times for
+        one observation. Weights change with the regime. ${a.abstained && a.abstained.length
+    ? `Abstaining this bar: ${a.abstained.map(esc).join(', ')} — that weight is removed, not redistributed.` : ''}</p>
+    </details>`;
+
+  $('whynot').innerHTML = `<p class="card-title">The case against</p>
+    <ul class="reasons against">${a.whyNot.map((w) => `<li>${esc(w)}</li>`).join('')}</ul>`;
+}
+
+/* ================================================================= limits */
+
+function renderLimits() {
+  const i = inst();
+  const un = unconfirmedFields(i, store.get('confirmed_' + state.pair, {}));
+  $('spec-warn').innerHTML = un.length
+    ? `These are defaults, not your broker's numbers: <b>${un.map((u) => esc(u.key)).join(', ')}</b>. Contract size in particular varies enough between brokers to scale every position by 100. Check them in the app and overwrite above.`
+    : 'Specs confirmed.';
+
+  $('limits').innerHTML = `<p class="card-title">What this does not do</p>
+    <ul class="reasons against">
+      <li>It cannot see order flow or the order book, and it has no real traded volume. What MT5 calls volume is <b>tick activity</b> — the number of price updates on your broker's feed, not contracts traded. It is allowed to scale or veto a read here, never to confirm direction.</li>
+      <li>It reads a reference price, not your broker's. Your fill, spread and slippage are yours, and they diverge most at the moments it finds interesting.</li>
+      <li>It has no track record and nothing in it is backtested. The weights are reasoned, not fitted.</li>
+      <li>It knows <i>when</i> releases are scheduled. It cannot read the number, and it has no idea an unscheduled headline just landed.</li>
+      <li>It does not watch the dollar, real yields or the Nasdaq. Gold can be technically perfect and get run over by a move in DXY.</li>
+      <li>Release dates were gathered from search results, not read off the issuing agency. Anything marked <span class="flag">unconfirmed</span> needs checking against your broker's calendar.</li>
+      <li>It will never tell you to buy or sell. It describes the chart and names the level it is wrong at. The decision stays yours.</li>
+    </ul>
+    <div class="hr"></div>
+    <p style="font-size:12.5px;color:var(--label-3);margin:0">
+      A note on the odds: most retail CFD accounts lose money, and scalping is the style where costs bite
+      hardest, because the spread is paid in full on every trade while the target is small. The break-even
+      win rate shown under Size is the honest version of that arithmetic. Nothing in this tool changes it.</p>`;
+}
+
+/* ================================================================== cycle */
+
+function analyseNow() {
+  const now = Date.now();
+  const bl = getActiveBlackout(now, state.pair, state.overrides);
+  const a = analyse({
+    bars: state.bars,
+    instrument: inst(),
+    spread: currentSpread(),
+    blackout: bl,
+    nowMs: now,
+  });
+  state.lastAnalysis = a;
+
+  renderClock(); renderFeed();
+  renderBlackout(bl, now);
+  renderRead(a);
+  renderConditions(a, now);
+  renderReasoning(a);
+  drawChart(a);
+  renderNews(now);
+  renderRisk();
+  renderLimits();
+}
+
+async function refresh() {
+  if (state.mode === 'manual') { analyseNow(); return; }
+  $('feed-text').textContent = 'Connecting…';
+  const res = await loadBars(state.pair, { keys: state.keys, limit: 300, allowProxy: true });
+  if (res.ok) {
+    state.bars = res.bars; state.feed = res; state.sample = false;
+  } else {
+    state.feed = res;
+    if (!state.bars.length || state.sample) { state.bars = sampleBars(state.pair); state.sample = true; }
+  }
+  $('feed-detail').innerHTML = `<div class="hr"></div><p class="card-title">Feed attempts</p>` +
+    (res.attempts || []).map((x) => `<div class="row"><dt>${esc(x.label)}</dt><dd style="color:var(--${x.ok ? 'up' : 'label-3'})">${x.ok ? `${x.bars} bars` : esc(x.reason)}</dd></div>`).join('') +
+    (res.ok ? '' : `<p style="font-size:12.5px;color:var(--label-2);margin:11px 0 0">${esc(res.reason)}</p>`);
+  analyseNow();
+}
+
+/* =================================================================== wire */
+
+function selectTab(name) {
+  state.tab = name;
+  for (const t of ['read', 'news', 'risk', 'setup']) {
+    $('tab-' + t).hidden = t !== name;
+    $('nav-' + t).setAttribute('aria-selected', String(t === name));
+  }
+  window.scrollTo({ top: 0, behavior: 'instant' });
+  if (name === 'read') drawChart(state.lastAnalysis);
+}
+
+function setPair(p) {
+  state.pair = p; store.set('pair', p);
+  $('pair-XAUUSD').setAttribute('aria-selected', String(p === 'XAUUSD'));
+  $('pair-BTCUSD').setAttribute('aria-selected', String(p === 'BTCUSD'));
+  const i = inst();
+  $('contract-size').placeholder = String(spec(i, 'dollarMoveValuePerLot'));
+  $('min-lot').placeholder = String(spec(i, 'minLot'));
+  $('lot-step').placeholder = String(spec(i, 'lotStep'));
+  $('live-spread').value = state.spread[p] ?? '';
+  state.bars = sampleBars(p); state.sample = true;
+  analyseNow();
+  refresh();
+}
+
+function boot() {
+  $('pair-XAUUSD').onclick = () => setPair('XAUUSD');
+  $('pair-BTCUSD').onclick = () => setPair('BTCUSD');
+  for (const t of ['read', 'news', 'risk', 'setup']) $('nav-' + t).onclick = () => selectTab(t);
+
+  $('mode').value = state.mode;
+  $('manual-panel').hidden = state.mode !== 'manual';
+  $('mode').onchange = (e) => {
+    state.mode = e.target.value; store.set('mode', state.mode);
+    $('manual-panel').hidden = state.mode !== 'manual';
+    refresh();
+  };
+
+  $('key-twelvedata').value = state.keys.twelvedata || '';
+  $('key-twelvedata').onchange = (e) => {
+    state.keys = { ...state.keys, twelvedata: e.target.value.trim() };
+    store.set('keys', state.keys); refresh();
+  };
+
+  $('server-offset').value = String(state.serverOffset);
+  $('server-offset').onchange = (e) => {
+    state.serverOffset = e.target.value === '' ? '' : Number(e.target.value);
+    store.set('serverOffset', state.serverOffset); analyseNow();
+  };
+
+  $('refresh').onclick = refresh;
+
+  $('manual-apply').onclick = () => {
+    const now = Date.now();
+    const lines = $('manual-input').value.trim().split('\n').filter(Boolean);
+    const rows = [];
+    lines.forEach((ln, idx) => {
+      const p = ln.trim().split(/[\s,]+/).map(Number);
+      if (p.length >= 4 && p.every((x) => Number.isFinite(x))) {
+        rows.push({ t: now - (lines.length - 1 - idx) * 300000, o: p[0], h: p[1], l: p[2], c: p[3], v: p[4] || 0 });
+      }
+    });
+    if (rows.length < 5) {
+      alert('Need at least 5 bars, one per line, as: open high low close');
+      return;
+    }
+    state.bars = manualBars(rows); state.sample = false; state.feed = null;
+    selectTab('read'); analyseNow();
+  };
+
+  for (const id of ['acct-bal', 'risk-pct', 'fx-rate', 'stop-dist', 'acct-ccy', 'contract-size', 'min-lot', 'lot-step', 'leverage']) {
+    $(id).oninput = renderRisk;
+  }
+  $('live-spread').oninput = () => {
+    state.spread[state.pair] = $('live-spread').value;
+    store.set('spread', state.spread);
+    analyseNow();
+  };
+
+  setPair(state.pair);
+  setInterval(() => { renderClock(); }, 1000);
+  setInterval(() => { analyseNow(); }, 20000);
+  // Poll on the bar, not on a timer.
+  //
+  // A five-minute chart carries no new information between bar closes, and the
+  // free tiers are metered per day: Twelve Data's 800 daily credits vanish in
+  // under seven hours at sixty-second polling, which means the feed dies
+  // mid-session. So: wake a few seconds AFTER each 5-minute boundary, when the
+  // closing bar is final, and not otherwise.
+  const scheduleNextPoll = () => {
+    const now = Date.now();
+    const nextBar = Math.ceil(now / 300000) * 300000;
+    const wait = (nextBar - now) + 8000;   // 8s past the close, so it is settled
+    setTimeout(() => { if (state.mode === 'live') refresh(); scheduleNextPoll(); }, wait);
+  };
+  scheduleNextPoll();
+  window.addEventListener('resize', () => drawChart(state.lastAnalysis));
+}
+
+boot();
+
+</script>

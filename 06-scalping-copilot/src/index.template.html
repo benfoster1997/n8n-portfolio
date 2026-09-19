@@ -1,0 +1,466 @@
+<title>M5 Scalp Desk</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap">
+<style>
+/* ---------------------------------------------------------------------------
+   A deliberate single visual world: the App Store's near-black, because this
+   is read one-handed at 07:00 and at 23:00 next to a live MT5 chart, and a
+   tool that flashes white in a dark room at 5am is a tool you stop opening.
+   Every colour is painted explicitly so the page never borrows the host ground.
+   --------------------------------------------------------------------------- */
+:root {
+  --bg:            #000000;
+  --surface:       #141416;
+  --surface-2:     #1C1C1E;
+  --surface-3:     #2C2C2E;
+  --hairline:      #303034;
+  --label:         #FFFFFF;
+  --label-2:       #9B9BA1;
+  --label-3:       #6A6A70;
+  --accent:        #0A84FF;
+
+  /* Directional colour is NOT stock red/green. These two are separable under
+     deuteranopia, and every use is paired with a word so colour is never the
+     only channel carrying the meaning. */
+  --up:            #30D9A4;
+  --up-dim:        rgba(48,217,164,.14);
+  --down:          #FF6B4A;
+  --down-dim:      rgba(255,107,74,.14);
+  --flat:          #8E8E93;
+
+  --warn:          #FFD60A;
+  --warn-dim:      rgba(255,214,10,.13);
+  --danger:        #FF453A;
+  --danger-dim:    rgba(255,69,58,.15);
+  --good:          #30D9A4;
+
+  --ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  --r-lg: 18px;
+  --r-md: 13px;
+  --r-sm: 9px;
+  --tab-h: 58px;
+}
+
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--label);
+  font-family: var(--ui);
+  font-size: 15px;
+  line-height: 1.45;
+  -webkit-text-size-adjust: 100%;
+  overscroll-behavior-y: none;
+  padding-bottom: calc(var(--tab-h) + env(safe-area-inset-bottom, 0px) + 12px);
+}
+
+.num { font-family: var(--mono); font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
+
+/* --------------------------------------------------------------- chrome -- */
+
+header.top {
+  position: sticky;
+  top: env(safe-area-inset-top, 0px);
+  z-index: 40;
+  background: rgba(0,0,0,.82);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  border-bottom: .5px solid var(--hairline);
+  padding: 10px 16px 9px;
+}
+.top-row { display: flex; align-items: center; gap: 12px; }
+
+.seg {
+  display: flex; gap: 2px; padding: 2px;
+  background: var(--surface-3); border-radius: 10px; flex: 1;
+}
+.seg button {
+  flex: 1; min-height: 34px; border: 0; border-radius: 8px;
+  background: transparent; color: var(--label-2);
+  font-family: var(--ui); font-size: 13.5px; font-weight: 600;
+  letter-spacing: .01em; cursor: pointer; transition: background .15s, color .15s;
+}
+.seg button[aria-selected="true"] { background: #48484C; color: var(--label); }
+
+.clock { text-align: right; font-size: 11px; color: var(--label-3); line-height: 1.3; }
+.clock b { display: block; font-family: var(--mono); font-size: 15px; color: var(--label); font-weight: 500; }
+
+.feed-line {
+  display: flex; align-items: center; gap: 7px;
+  margin-top: 8px; font-size: 11.5px; color: var(--label-3);
+}
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--label-3); flex: none; }
+.dot.live { background: var(--up); box-shadow: 0 0 0 3px var(--up-dim); }
+.dot.stale { background: var(--warn); box-shadow: 0 0 0 3px var(--warn-dim); }
+.dot.off { background: var(--danger); box-shadow: 0 0 0 3px var(--danger-dim); }
+
+/* ---------------------------------------------------------------- layout -- */
+
+main { padding: 14px 16px 8px; display: grid; gap: 14px; }
+section[hidden] { display: none !important; }
+
+.card {
+  background: var(--surface-2);
+  border-radius: var(--r-lg);
+  padding: 15px 16px;
+}
+.card.flat { background: transparent; padding: 0; }
+
+.card-title {
+  font-size: 11px; font-weight: 700; letter-spacing: .07em;
+  text-transform: uppercase; color: var(--label-3);
+  margin: 0 0 11px;
+}
+
+h2.sec { font-size: 21px; font-weight: 700; letter-spacing: -.02em; margin: 2px 0 -2px; }
+
+.row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.row + .row { margin-top: 9px; }
+.row dt { color: var(--label-2); font-size: 13.5px; }
+.row dd { margin: 0; font-family: var(--mono); font-size: 14px; text-align: right; }
+
+.hr { height: .5px; background: var(--hairline); margin: 13px -16px; }
+
+/* ------------------------------------------------------------- the read -- */
+
+.readout { padding: 18px 16px 16px; }
+.bias-line { display: flex; align-items: center; gap: 10px; margin-bottom: 3px; }
+.arrow { font-size: 26px; line-height: 1; }
+.bias {
+  font-size: 27px; font-weight: 700; letter-spacing: -.03em;
+}
+.up   { color: var(--up); }
+.down { color: var(--down); }
+.flat { color: var(--flat); }
+
+.price-big { font-family: var(--mono); font-size: 34px; font-weight: 500; letter-spacing: -.035em; }
+.statement { color: var(--label-2); font-size: 14px; margin: 10px 0 0; }
+
+.conf-wrap { margin-top: 15px; }
+.conf-head { display: flex; justify-content: space-between; font-size: 11.5px; color: var(--label-3); margin-bottom: 6px; }
+.conf-track { height: 5px; border-radius: 3px; background: var(--surface-3); overflow: hidden; }
+.conf-fill { height: 100%; border-radius: 3px; transition: width .4s ease; }
+
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 13px; }
+.chip {
+  font-size: 11.5px; font-weight: 600; padding: 4px 9px;
+  border-radius: 7px; background: var(--surface-3); color: var(--label-2);
+  white-space: nowrap;
+}
+.chip.green { background: var(--up-dim); color: var(--up); }
+.chip.amber { background: var(--warn-dim); color: var(--warn); }
+.chip.red   { background: var(--danger-dim); color: var(--danger); }
+
+/* --------------------------------------------------------------- alerts -- */
+
+.alert {
+  border-radius: var(--r-lg); padding: 15px 16px;
+  border: 1px solid transparent;
+}
+.alert.stand-aside { background: var(--danger-dim); border-color: rgba(255,69,58,.4); }
+.alert.caution     { background: var(--warn-dim);   border-color: rgba(255,214,10,.32); }
+.alert.info        { background: var(--surface-2);  border-color: var(--hairline); }
+.alert h3 { margin: 0 0 5px; font-size: 16.5px; font-weight: 700; letter-spacing: -.01em; }
+.alert p  { margin: 0; font-size: 13.5px; color: var(--label-2); }
+.alert.stand-aside h3 { color: var(--danger); }
+.alert.caution h3 { color: var(--warn); }
+
+.big-count { font-family: var(--mono); font-size: 32px; font-weight: 700; letter-spacing: -.03em; }
+
+/* ----------------------------------------------------------------- news -- */
+
+.ev {
+  display: grid; grid-template-columns: 4px 1fr auto;
+  gap: 12px; align-items: start;
+  padding: 11px 0;
+}
+.ev + .ev { border-top: .5px solid var(--hairline); }
+.ev-stripe { border-radius: 2px; align-self: stretch; min-height: 34px; }
+.t1 { background: var(--danger); }
+.t2 { background: var(--warn); }
+.t3 { background: var(--label-3); }
+.tc { background: var(--surface-3); }
+
+.ev-name { font-size: 14.5px; font-weight: 600; }
+.ev-meta { font-size: 11.5px; color: var(--label-3); margin-top: 2px; }
+.ev-why  { font-size: 12.5px; color: var(--label-2); margin-top: 5px; }
+.ev-when { text-align: right; }
+.ev-count { font-family: var(--mono); font-size: 15px; font-weight: 700; }
+.ev-clock { font-family: var(--mono); font-size: 11px; color: var(--label-3); margin-top: 2px; white-space: nowrap; }
+
+.flag {
+  display: inline-block; font-size: 9.5px; font-weight: 700; letter-spacing: .05em;
+  text-transform: uppercase; padding: 2px 5px; border-radius: 4px;
+  background: var(--warn-dim); color: var(--warn); margin-left: 6px; vertical-align: 1px;
+}
+
+/* ---------------------------------------------------------------- chart -- */
+
+.chart-wrap { position: relative; }
+canvas { display: block; width: 100%; height: 190px; border-radius: var(--r-md); background: var(--surface); }
+
+/* ---------------------------------------------------------------- forms -- */
+
+label.f { display: block; font-size: 12.5px; color: var(--label-2); margin: 0 0 5px; }
+input.f, select.f {
+  width: 100%; min-height: 44px; padding: 10px 12px;
+  background: var(--surface-3); color: var(--label);
+  border: 1px solid transparent; border-radius: var(--r-sm);
+  font-family: var(--mono); font-size: 16px; /* 16px prevents iOS zoom-on-focus */
+}
+input.f:focus, select.f:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: transparent; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; }
+.field + .field, .grid2 + .field, .field + .grid2, .grid2 + .grid2 { margin-top: 12px; }
+
+button.btn {
+  width: 100%; min-height: 46px; border: 0; border-radius: var(--r-md);
+  background: var(--accent); color: #fff;
+  font-family: var(--ui); font-size: 15.5px; font-weight: 600; cursor: pointer;
+}
+button.btn.ghost { background: var(--surface-3); color: var(--label); }
+button.btn:active { opacity: .75; }
+
+.unconfirmed {
+  font-size: 12px; color: var(--warn); background: var(--warn-dim);
+  padding: 9px 11px; border-radius: var(--r-sm); margin-top: 10px;
+}
+
+/* ------------------------------------------------------------ reasoning -- */
+
+ul.reasons { list-style: none; margin: 0; padding: 0; }
+ul.reasons li {
+  font-size: 13.5px; color: var(--label-2);
+  padding: 7px 0 7px 16px; position: relative;
+}
+ul.reasons li::before {
+  content: ""; position: absolute; left: 0; top: 14px;
+  width: 5px; height: 5px; border-radius: 50%; background: var(--label-3);
+}
+ul.reasons li + li { border-top: .5px solid var(--hairline); }
+ul.reasons li b { color: var(--label); font-weight: 600; }
+ul.reasons.against li::before { background: var(--warn); }
+
+details.more { margin-top: 11px; }
+details.more summary {
+  font-size: 13px; color: var(--accent); cursor: pointer; list-style: none;
+  padding: 7px 0; min-height: 32px;
+}
+details.more summary::-webkit-details-marker { display: none; }
+
+/* ------------------------------------------------------------- tab bar -- */
+
+nav.tabs {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 50;
+  display: grid; grid-template-columns: repeat(4, 1fr);
+  background: rgba(0,0,0,.9);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  border-top: .5px solid var(--hairline);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+nav.tabs button {
+  min-height: var(--tab-h); border: 0; background: transparent;
+  color: var(--label-3); font-family: var(--ui); font-size: 10.5px; font-weight: 600;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+  cursor: pointer;
+}
+nav.tabs button[aria-selected="true"] { color: var(--accent); }
+nav.tabs .ic { font-size: 18px; line-height: 1; }
+nav.tabs .badge {
+  position: absolute; transform: translate(14px, -12px);
+  min-width: 8px; height: 8px; border-radius: 50%; background: var(--danger);
+}
+
+footer.fine {
+  padding: 4px 16px 20px; font-size: 11.5px; color: var(--label-3); line-height: 1.55;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
+</style>
+
+<header class="top">
+  <div class="top-row">
+    <div class="seg" role="tablist" aria-label="Instrument">
+      <button id="pair-XAUUSD" role="tab" aria-selected="true">Gold</button>
+      <button id="pair-BTCUSD" role="tab" aria-selected="false">Bitcoin</button>
+    </div>
+    <div class="clock">
+      <b class="num" id="clock-utc">--:--</b>
+      <span id="clock-sub">UTC</span>
+    </div>
+  </div>
+  <div class="feed-line">
+    <span class="dot off" id="feed-dot"></span>
+    <span id="feed-text">Not connected</span>
+  </div>
+</header>
+
+<main>
+  <!-- ============================ READ ============================ -->
+  <section id="tab-read">
+    <div id="blackout-slot"></div>
+    <div class="card readout" id="readout"></div>
+    <div class="card">
+      <p class="card-title">Last 5-minute bars</p>
+      <div class="chart-wrap"><canvas id="chart" width="700" height="380"></canvas></div>
+      <div class="chips" id="chart-chips"></div>
+    </div>
+    <div class="card" id="conditions"></div>
+    <div class="card" id="whynot"></div>
+    <div class="card" id="reasoning"></div>
+  </section>
+
+  <!-- ============================ NEWS ============================ -->
+  <section id="tab-news" hidden>
+    <h2 class="sec">Scheduled</h2>
+    <div id="dst-slot"></div>
+    <div class="card" id="news-list"></div>
+    <div class="card" id="unschedulable"></div>
+  </section>
+
+  <!-- ============================ RISK ============================ -->
+  <section id="tab-risk" hidden>
+    <h2 class="sec">Size &amp; cost</h2>
+    <div class="card" id="corr-note"></div>
+    <div class="card">
+      <p class="card-title">Position size</p>
+      <div class="grid2">
+        <div class="field">
+          <label class="f" for="acct-bal">Account balance</label>
+          <input class="f num" id="acct-bal" type="number" inputmode="decimal" value="10000">
+        </div>
+        <div class="field">
+          <label class="f" for="acct-ccy">Currency</label>
+          <select class="f" id="acct-ccy">
+            <option>USD</option><option>GBP</option><option>EUR</option>
+          </select>
+        </div>
+      </div>
+      <div class="grid2">
+        <div class="field">
+          <label class="f" for="risk-pct">Risk per trade %</label>
+          <input class="f num" id="risk-pct" type="number" inputmode="decimal" step="0.1" value="1">
+        </div>
+        <div class="field">
+          <label class="f" for="fx-rate">Account per 1 USD</label>
+          <input class="f num" id="fx-rate" type="number" inputmode="decimal" step="0.0001" value="1">
+        </div>
+      </div>
+      <div class="grid2">
+        <div class="field">
+          <label class="f" for="stop-dist">Stop distance</label>
+          <input class="f num" id="stop-dist" type="number" inputmode="decimal" step="0.01">
+        </div>
+        <div class="field">
+          <label class="f" for="live-spread">Live spread</label>
+          <input class="f num" id="live-spread" type="number" inputmode="decimal" step="0.01">
+        </div>
+      </div>
+      <div class="field">
+        <label class="f" for="leverage">Leverage on this symbol</label>
+        <select class="f" id="leverage">
+          <option value="20">20:1 — FCA cap on gold</option>
+          <option value="30">30:1</option>
+          <option value="100" selected>100:1</option>
+          <option value="200">200:1</option>
+          <option value="500">500:1</option>
+          <option value="2">2:1</option>
+        </select>
+      </div>
+      <div id="size-out"></div>
+    </div>
+    <div class="card" id="cost-out"></div>
+  </section>
+
+  <!-- =========================== SETUP ============================ -->
+  <section id="tab-setup" hidden>
+    <h2 class="sec">Setup</h2>
+    <div class="card">
+      <p class="card-title">Data</p>
+      <div class="field">
+        <label class="f" for="mode">Where prices come from</label>
+        <select class="f" id="mode">
+          <option value="live">Live feed</option>
+          <option value="manual">Manual — type from my MT5 chart</option>
+        </select>
+      </div>
+      <div class="field">
+        <label class="f" for="key-twelvedata">Twelve Data API key (for gold)</label>
+        <input class="f" id="key-twelvedata" type="text" autocomplete="off" placeholder="free key from twelvedata.com">
+      </div>
+      <div id="manual-panel" hidden>
+        <div class="hr"></div>
+        <p class="card-title">Manual bars</p>
+        <div class="field">
+          <label class="f" for="manual-input">One bar per line: <span class="num">open high low close</span></label>
+          <textarea class="f num" id="manual-input" rows="7" style="min-height:130px;line-height:1.5"></textarea>
+        </div>
+        <button class="btn" id="manual-apply">Read these bars</button>
+      </div>
+      <div style="margin-top:12px"><button class="btn ghost" id="refresh">Refresh now</button></div>
+      <div id="feed-detail"></div>
+    </div>
+
+    <div class="card">
+      <p class="card-title">Your broker</p>
+      <div class="grid2">
+        <div class="field">
+          <label class="f" for="server-offset">MT5 server clock (UTC offset)</label>
+          <select class="f" id="server-offset">
+            <option value="">Not set</option>
+            <option value="0">UTC+0</option><option value="1">UTC+1</option>
+            <option value="2">UTC+2</option><option value="3" selected>UTC+3</option>
+            <option value="-5">UTC-5</option>
+          </select>
+        </div>
+        <div class="field">
+          <label class="f" for="contract-size">Contract size (per 1.00 lot)</label>
+          <input class="f num" id="contract-size" type="number" inputmode="decimal">
+        </div>
+      </div>
+      <div class="grid2">
+        <div class="field">
+          <label class="f" for="min-lot">Minimum lot</label>
+          <input class="f num" id="min-lot" type="number" inputmode="decimal" step="0.01">
+        </div>
+        <div class="field">
+          <label class="f" for="lot-step">Lot step</label>
+          <input class="f num" id="lot-step" type="number" inputmode="decimal" step="0.01">
+        </div>
+      </div>
+      <div class="unconfirmed" id="spec-warn"></div>
+      <details class="more">
+        <summary>Where to find these on the iPhone app</summary>
+        <p style="font-size:13px;color:var(--label-2);margin:6px 0 0">
+          MetaTrader 5 &rarr; <b>Quotes</b> &rarr; press and hold the symbol &rarr; <b>Specification</b>.
+          Read off Contract size, Digits, Tick value and Volume min / step. Read the server clock from
+          the time shown at the top of the Quotes list.
+        </p>
+      </details>
+    </div>
+
+    <div class="card" id="limits"></div>
+  </section>
+</main>
+
+<nav class="tabs" role="tablist" aria-label="Sections">
+  <button id="nav-read"  role="tab" aria-selected="true"><span class="ic">&#9678;</span>Read</button>
+  <button id="nav-news"  role="tab" aria-selected="false"><span class="ic">&#9888;</span>News<span class="badge" id="news-badge" hidden></span></button>
+  <button id="nav-risk"  role="tab" aria-selected="false"><span class="ic">&#9878;</span>Size</button>
+  <button id="nav-setup" role="tab" aria-selected="false"><span class="ic">&#9881;</span>Setup</button>
+</nav>
+
+<footer class="fine">
+  Decision support, not advice. It reads bars; it cannot see order flow, your broker's actual fill,
+  or the contents of a release. Nothing here is backtested.
+</footer>
+
+<script type="module">
+/*__BUNDLE__*/
+</script>
