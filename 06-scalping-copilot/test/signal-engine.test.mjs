@@ -173,6 +173,44 @@ test('empty and malformed input do not throw', () => {
   assert.equal(analyse({ bars: null, instrument: XAU }).state, 'insufficient-data');
 });
 
+test('the dead zone withholds the read rather than showing it weakly', () => {
+  const bars = trendingUp();
+  const clean = analyse({ bars, instrument: XAU });
+  assert.ok(clean.bias !== 'none', 'baseline should produce a read');
+
+  const dead = analyse({
+    bars, instrument: XAU,
+    session: { band: 'dead', name: 'Dead zone', note: 'The structural low of your day.' },
+  });
+  assert.equal(dead.state, 'stand-down');
+  assert.equal(dead.bias, 'none');
+  assert.equal(dead.confidence, 0);
+  assert.equal(dead.invalidation, null, 'a withheld read must not ship a tradeable level');
+  // It must still disclose what it suppressed — hiding that is its own dishonesty.
+  assert.equal(dead.technicalBiasSuppressed, clean.bias);
+  assert.ok(dead.suppressedConfidence > 0);
+  assert.ok(dead.whyNot.some((x) => /cost|spread/i.test(x)),
+    'the reason must be the cost structure, not vague caution');
+});
+
+test('a news blackout outranks the dead zone', () => {
+  const r = analyse({
+    bars: trendingUp(), instrument: XAU,
+    session: { band: 'dead', name: 'Dead zone', note: 'quiet' },
+    blackout: { active: true, phase: 'before', minutesAway: 4, event: { name: 'US CPI', tier: 1 } },
+  });
+  assert.equal(r.state, 'stand-aside', 'the news reason is the more urgent one to show');
+  assert.ok(r.headline.includes('CPI'));
+});
+
+test('a green session does not suppress anything', () => {
+  const r = analyse({
+    bars: trendingUp(), instrument: XAU,
+    session: { band: 'green', name: 'COMEX ramp and US data', note: 'prime' },
+  });
+  assert.notEqual(r.state, 'stand-down');
+});
+
 console.log('\nscoring discipline');
 
 test('confidence is low by default and never pins at certainty', () => {

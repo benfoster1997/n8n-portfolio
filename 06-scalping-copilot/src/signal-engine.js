@@ -371,6 +371,7 @@ export function analyse({
   instrument,
   spread = null,
   blackout = null,
+  session = null,
   nowMs = null,
   minSpreadMultiple = 3,
   atrStopMultiple = 1.2,
@@ -589,6 +590,34 @@ export function analyse({
       invalidation: null,
       whyNot: ['A scheduled release overrides the technical read entirely. The chart cannot see the number.'],
       reasons: [`Technicals read ${bias} before the override, at ${(confidence * 100).toFixed(0)}% confidence. That is shown so you know what you are setting aside, not as a reason to trade it.`],
+    };
+  }
+
+  // --- dead zone: suppress, do not merely down-weight --------------------
+  //
+  // In the structurally quiet hours the range collapses while the spread does
+  // not, so a marginal read that would be worth taking at 13:45 is a losing
+  // trade at 10:30 purely on cost. Down-weighting it still puts a direction on
+  // the screen, and a direction on the screen gets traded. So the engine
+  // withholds the read entirely and says why.
+  if (session && session.band === 'dead') {
+    return {
+      ok: true,
+      state: 'stand-down',
+      headline: session.name,
+      detail: session.note,
+      bias: 'none',
+      technicalBiasSuppressed: bias,
+      suppressedConfidence: +confidence.toFixed(2),
+      confidence: 0,
+      regime, htf, buckets, indicators: ind, price, atr: atrNow,
+      invalidation: null,
+      session,
+      whyNot: [
+        'The read is being withheld rather than shown weakly. In these hours the range contracts but the spread does not, so a marginal setup loses money on cost even when the direction is right.',
+        `The technicals did read ${bias} at ${(confidence * 100).toFixed(0)}% confidence. That is disclosed so you know what is being set aside, not as a reason to take it.`,
+      ],
+      reasons: [],
     };
   }
 

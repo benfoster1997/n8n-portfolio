@@ -8,7 +8,7 @@
 import assert from 'node:assert/strict';
 import {
   zonedTimeToUtc, tzOffsetMs, nthWeekdayOfMonth, nthWeekdayOrNull,
-  lastWeekdayOfMonth, daysInMonth, formatCountdown,
+  lastWeekdayOfMonth, daysInMonth, formatCountdown, formatDuration,
 } from '../src/timezone.js';
 
 let passed = 0, failed = 0;
@@ -142,6 +142,15 @@ test('last weekday of month, for CME and Deribit expiries', () => {
   assert.equal(lastWeekdayOfMonth(2026, 12, 5), 25);
   assert.equal(daysInMonth(2028, 2), 29, 'leap year');
   assert.equal(daysInMonth(2026, 2), 28);
+});
+
+test('durations are unambiguous next to clock times', () => {
+  // "15:00 left" beside a 15:00 LBMA auction reads as a time, not a duration.
+  assert.equal(formatDuration(15 * 60e3), '15 min');
+  assert.equal(formatDuration(2 * 3600e3 + 35 * 60e3), '2h 35m');
+  assert.equal(formatDuration(3 * 3600e3), '3h');
+  assert.equal(formatDuration(-1), 'none');
+  assert.notEqual(formatDuration(15 * 60e3), formatCountdown(15 * 60e3));
 });
 
 test('countdown formatting is legible at a glance', () => {

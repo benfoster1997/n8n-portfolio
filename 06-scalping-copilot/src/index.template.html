@@ -275,6 +275,26 @@ nav.tabs .badge {
   min-width: 8px; height: 8px; border-radius: 50%; background: var(--danger);
 }
 
+.sess-strip {
+  display: flex; align-items: center; gap: 8px;
+  margin-top: 8px; font-size: 11.5px;
+}
+.sess-bar { flex: 1; height: 4px; border-radius: 2px; background: var(--surface-3); overflow: hidden; }
+.sess-fill { height: 100%; border-radius: 2px; background: var(--accent); transition: width .5s ease; }
+
+.plan { display: grid; grid-template-columns: 54px 4px 1fr; gap: 10px; align-items: start; padding: 9px 0; }
+.plan + .plan { border-top: .5px solid var(--hairline); }
+.plan-time { font-family: var(--mono); font-size: 11.5px; color: var(--label-3); padding-top: 1px; }
+.plan-stripe { border-radius: 2px; align-self: stretch; min-height: 28px; }
+.plan.now { background: rgba(255,255,255,.035); margin: 0 -8px; padding: 9px 8px; border-radius: 8px; }
+.plan.now .plan-time { color: var(--label); font-weight: 700; }
+.g-green { background: var(--up); }
+.g-amber { background: var(--warn); }
+.g-red   { background: var(--danger); }
+.g-dead  { background: var(--label-3); }
+.plan-name { font-size: 13.5px; font-weight: 600; }
+.plan-note { font-size: 12.5px; color: var(--label-2); margin-top: 3px; }
+
 footer.fine {
   padding: 4px 16px 20px; font-size: 11.5px; color: var(--label-3); line-height: 1.55;
 }
@@ -292,19 +312,21 @@ footer.fine {
     </div>
     <div class="clock">
       <b class="num" id="clock-utc">--:--</b>
-      <span id="clock-sub">UTC</span>
+      <span id="clock-sub">London</span>
     </div>
   </div>
   <div class="feed-line">
     <span class="dot off" id="feed-dot"></span>
     <span id="feed-text">Not connected</span>
   </div>
+  <div class="sess-strip" id="sess-strip"></div>
 </header>
 
 <main>
   <!-- ============================ READ ============================ -->
   <section id="tab-read">
     <div id="blackout-slot"></div>
+    <div class="card" id="session-card"></div>
     <div class="card readout" id="readout"></div>
     <div class="card">
       <p class="card-title">Last 5-minute bars</p>
@@ -320,7 +342,8 @@ footer.fine {
   <section id="tab-news" hidden>
     <h2 class="sec">Scheduled</h2>
     <div id="dst-slot"></div>
-    <div class="card" id="news-list"></div>
+    <div class="card" id="news-inside"></div>
+    <div class="card" id="news-outside"></div>
     <div class="card" id="unschedulable"></div>
   </section>
 
@@ -443,6 +466,32 @@ footer.fine {
           the time shown at the top of the Quotes list.
         </p>
       </details>
+    </div>
+
+    <div class="card">
+      <p class="card-title">Your trading window</p>
+      <div class="grid2">
+        <div class="field">
+          <label class="f" for="win-start">Start</label>
+          <input class="f num" id="win-start" type="time" value="08:00">
+        </div>
+        <div class="field">
+          <label class="f" for="win-end">End</label>
+          <input class="f num" id="win-end" type="time" value="16:00">
+        </div>
+      </div>
+      <div class="field">
+        <label class="f" for="win-tz">Clock</label>
+        <select class="f" id="win-tz">
+          <option value="Europe/London" selected>Europe/London</option>
+          <option value="America/New_York">America/New_York</option>
+          <option value="UTC">UTC</option>
+        </select>
+      </div>
+      <p style="font-size:12.5px;color:var(--label-2);margin:11px 0 0">
+        Everything in the tool is ranked against this window: which hours are worth trading,
+        which releases land while you are at the screen, and which happen after you have stopped.
+      </p>
     </div>
 
     <div class="card" id="limits"></div>

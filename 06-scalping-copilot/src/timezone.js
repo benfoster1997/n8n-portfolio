@@ -155,3 +155,16 @@ export function formatCountdown(ms) {
   if (h > 0) return `${h}h ${String(m).padStart(2, '0')}m`;
   return `${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
 }
+
+/**
+ * A duration in words, for places where a countdown sits next to clock times
+ * and "15:00" would read as a quarter past three rather than fifteen minutes.
+ */
+export function formatDuration(ms) {
+  if (ms <= 0) return 'none';
+  const mins = Math.round(ms / 60000);
+  if (mins < 60) return `${mins} min`;
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return m === 0 ? `${h}h` : `${h}h ${m}m`;
+}

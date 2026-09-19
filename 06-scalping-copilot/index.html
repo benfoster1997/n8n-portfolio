@@ -275,6 +275,26 @@ nav.tabs .badge {
   min-width: 8px; height: 8px; border-radius: 50%; background: var(--danger);
 }
 
+.sess-strip {
+  display: flex; align-items: center; gap: 8px;
+  margin-top: 8px; font-size: 11.5px;
+}
+.sess-bar { flex: 1; height: 4px; border-radius: 2px; background: var(--surface-3); overflow: hidden; }
+.sess-fill { height: 100%; border-radius: 2px; background: var(--accent); transition: width .5s ease; }
+
+.plan { display: grid; grid-template-columns: 54px 4px 1fr; gap: 10px; align-items: start; padding: 9px 0; }
+.plan + .plan { border-top: .5px solid var(--hairline); }
+.plan-time { font-family: var(--mono); font-size: 11.5px; color: var(--label-3); padding-top: 1px; }
+.plan-stripe { border-radius: 2px; align-self: stretch; min-height: 28px; }
+.plan.now { background: rgba(255,255,255,.035); margin: 0 -8px; padding: 9px 8px; border-radius: 8px; }
+.plan.now .plan-time { color: var(--label); font-weight: 700; }
+.g-green { background: var(--up); }
+.g-amber { background: var(--warn); }
+.g-red   { background: var(--danger); }
+.g-dead  { background: var(--label-3); }
+.plan-name { font-size: 13.5px; font-weight: 600; }
+.plan-note { font-size: 12.5px; color: var(--label-2); margin-top: 3px; }
+
 footer.fine {
   padding: 4px 16px 20px; font-size: 11.5px; color: var(--label-3); line-height: 1.55;
 }
@@ -292,19 +312,21 @@ footer.fine {
     </div>
     <div class="clock">
       <b class="num" id="clock-utc">--:--</b>
-      <span id="clock-sub">UTC</span>
+      <span id="clock-sub">London</span>
     </div>
   </div>
   <div class="feed-line">
     <span class="dot off" id="feed-dot"></span>
     <span id="feed-text">Not connected</span>
   </div>
+  <div class="sess-strip" id="sess-strip"></div>
 </header>
 
 <main>
   <!-- ============================ READ ============================ -->
   <section id="tab-read">
     <div id="blackout-slot"></div>
+    <div class="card" id="session-card"></div>
     <div class="card readout" id="readout"></div>
     <div class="card">
       <p class="card-title">Last 5-minute bars</p>
@@ -320,7 +342,8 @@ footer.fine {
   <section id="tab-news" hidden>
     <h2 class="sec">Scheduled</h2>
     <div id="dst-slot"></div>
-    <div class="card" id="news-list"></div>
+    <div class="card" id="news-inside"></div>
+    <div class="card" id="news-outside"></div>
     <div class="card" id="unschedulable"></div>
   </section>
 
@@ -443,6 +466,32 @@ footer.fine {
           the time shown at the top of the Quotes list.
         </p>
       </details>
+    </div>
+
+    <div class="card">
+      <p class="card-title">Your trading window</p>
+      <div class="grid2">
+        <div class="field">
+          <label class="f" for="win-start">Start</label>
+          <input class="f num" id="win-start" type="time" value="08:00">
+        </div>
+        <div class="field">
+          <label class="f" for="win-end">End</label>
+          <input class="f num" id="win-end" type="time" value="16:00">
+        </div>
+      </div>
+      <div class="field">
+        <label class="f" for="win-tz">Clock</label>
+        <select class="f" id="win-tz">
+          <option value="Europe/London" selected>Europe/London</option>
+          <option value="America/New_York">America/New_York</option>
+          <option value="UTC">UTC</option>
+        </select>
+      </div>
+      <p style="font-size:12.5px;color:var(--label-2);margin:11px 0 0">
+        Everything in the tool is ranked against this window: which hours are worth trading,
+        which releases land while you are at the screen, and which happen after you have stopped.
+      </p>
     </div>
 
     <div class="card" id="limits"></div>
@@ -620,6 +669,19 @@ function formatCountdown(ms) {
   if (d > 0) return `${d}d ${String(h).padStart(2, '0')}h`;
   if (h > 0) return `${h}h ${String(m).padStart(2, '0')}m`;
   return `${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
+}
+
+/**
+ * A duration in words, for places where a countdown sits next to clock times
+ * and "15:00" would read as a quarter past three rather than fifteen minutes.
+ */
+function formatDuration(ms) {
+  if (ms <= 0) return 'none';
+  const mins = Math.round(ms / 60000);
+  if (mins < 60) return `${mins} min`;
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return m === 0 ? `${h}h` : `${h}h ${m}m`;
 }
 
 /* ======================= indicators.js ======================= */
@@ -2267,125 +2329,238 @@ const UNSCHEDULABLE = [
 
 /* ======================= sessions.js ======================= */
 /**
- * sessions.js — when it is worth scalping, and when it is a chop trap.
+ * sessions.js — the trading window, and which hours inside it are worth taking.
  *
- * Presenting all 24 hours as equally tradeable is the most common failure of a
- * trading dashboard. They are not remotely equal, and for a five-minute
- * scalper the hour of the day is a bigger determinant of outcome than most of
- * the indicators in this tool.
+ * This file is written around ONE assumption that changes everything: the user
+ * trades a fixed daily window and is not at the screen outside it. The default
+ * is the London session, 08:00-16:00 Europe/London.
  *
- * Session boundaries are a market CONVENTION, not an exchange rule — nothing
- * rings a bell at the London open. They are computed from real local times in
- * real IANA zones so they follow DST rather than drifting an hour twice a year.
+ * That assumption makes most of a 24-hour session clock irrelevant. What
+ * matters instead is: how much of my window is left, which hours inside it are
+ * actually worth trading, and what is going to happen after I have stopped.
+ *
+ * EVERYTHING HERE IS ANCHORED TO LOCAL TIME IN A NAMED ZONE, NOT TO A UTC HOUR.
+ * An earlier version keyed the quality bands to fixed UTC hours, which drifts
+ * by an hour twice a year — the London open would have been graded as the
+ * mid-morning lull all winter. The London session is 07:00-15:00 UTC in summer
+ * and 08:00-16:00 UTC in winter; neither is "the" answer.
  */
 
 
 
-const SESSIONS = [
-  { id: 'sydney', label: 'Sydney', tz: 'Australia/Sydney', open: 8, close: 17 },
-  { id: 'tokyo', label: 'Tokyo', tz: 'Asia/Tokyo', open: 9, close: 18 },
-  { id: 'london', label: 'London', tz: 'Europe/London', open: 8, close: 16, key: true },
-  { id: 'newyork', label: 'New York', tz: 'America/New_York', open: 8, close: 17, key: true },
-];
-
-/** Which sessions are open at a given instant, DST handled. */
-function openSessions(atMs) {
-  const d = new Date(atMs);
-  const out = [];
-  for (const s of SESSIONS) {
-    // Check today and yesterday, since a session can span the UTC date line.
-    for (const offset of [-1, 0]) {
-      const probe = new Date(atMs + offset * 86400e3);
-      const y = probe.getUTCFullYear(), m = probe.getUTCMonth() + 1, day = probe.getUTCDate();
-      const openTs = zonedTimeToUtc(y, m, day, s.open, 0, s.tz);
-      const closeTs = zonedTimeToUtc(y, m, day, s.close, 0, s.tz);
-      if (atMs >= openTs && atMs < closeTs) {
-        out.push({ ...s, openTs, closeTs, closesInMin: Math.round((closeTs - atMs) / 60000) });
-        break;
-      }
-    }
-  }
-  void d;
-  return out;
-}
-
-/**
- * Quality band for the current hour.
- *
- * The two instruments genuinely differ, so they get separate maps:
- *  - Gold's worst hour is the broker rollover, when the spread blows out and
- *    swap is charged. Its best is the London/New York overlap.
- *  - Bitcoin's variance is heavily concentrated in US hours; roughly half its
- *    daily realised variance falls in the 13:00-22:00 UTC window, and it is
- *    quietest around 02:00-06:00.
- *
- * Bands are by UTC hour. They shift by an hour across DST, which is why the
- * rollover window is given as a range rather than a fixed hour.
- */
-const BANDS = {
-  XAUUSD: {
-    green: [[12, 17]],
-    amber: [[7, 12], [17, 20]],
-    red: [[0, 7], [20, 24]],
-    notes: {
-      green: 'London/New York overlap — the deepest liquidity of the day and where the M5 range is worth trading.',
-      amber: 'Tradeable but thinner. London morning before US data, or the post-New-York drift.',
-      red: 'Asian session chop, or the broker rollover window where the spread widens sharply and swap is charged. Costs dominate.',
-    },
-  },
-  BTCUSD: {
-    green: [[13, 18]],
-    amber: [[12, 13], [18, 22]],
-    red: [[0, 2], [2, 6], [6, 12], [22, 24]],
-    notes: {
-      green: 'US equity hours. Roughly half of bitcoin\'s daily realised variance falls in this window.',
-      amber: 'Moving, but less reliably. The European morning and the US afternoon.',
-      red: 'Asian and pre-European hours are bitcoin\'s quietest. The CFD spread does not shrink to match, so it is a larger share of a smaller range.',
-    },
-  },
+/** The user's window. Editable in Setup; this is the London default. */
+const DEFAULT_WINDOW = {
+  start: { h: 8, m: 0 },
+  end: { h: 16, m: 0 },
+  tz: 'Europe/London',
+  label: 'London session',
 };
 
-function sessionQuality(atMs, pair) {
-  const h = new Date(atMs).getUTCHours() + new Date(atMs).getUTCMinutes() / 60;
-  const map = BANDS[pair] || BANDS.XAUUSD;
-  for (const band of ['green', 'amber', 'red']) {
-    for (const [from, to] of map[band]) {
-      if (h >= from && h < to) return { band, note: map.notes[band], utcHour: h };
-    }
-  }
-  return { band: 'amber', note: map.notes.amber, utcHour: h };
+/** Fractional local hour (13.5 = 13:30) in a named zone. */
+function localHour(atMs, tz) {
+  const off = tzOffsetMs(atMs, tz) / 3600e3;
+  const d = new Date(atMs);
+  return (((d.getUTCHours() + d.getUTCMinutes() / 60 + d.getUTCSeconds() / 3600) + off) % 24 + 24) % 24;
+}
+
+/** Local calendar date in a named zone, as {y, m, d}. */
+function localDate(atMs, tz) {
+  const p = {};
+  for (const { type, value } of new Intl.DateTimeFormat('en-US', {
+    timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(new Date(atMs))) p[type] = value;
+  return { y: +p.year, m: +p.month, d: +p.day };
+}
+
+/** Local weekday in a named zone. 0 = Sunday. */
+function localWeekday(atMs, tz) {
+  const { y, m, d } = localDate(atMs, tz);
+  return new Date(Date.UTC(y, m - 1, d)).getUTCDay();
 }
 
 /**
- * The gold rollover window, computed rather than hardcoded.
+ * Where the clock is relative to the trading window.
  *
- * Most brokers run a GMT+2/+3 server clock, so 00:00 server time — where the
- * day rolls, swap is charged and the spread blows out — is 21:00 or 22:00 UTC
- * depending on the season. Returns null for instruments it does not apply to.
+ * Phases are deliberately more granular than open/closed, because the last
+ * hour of a session is a distinct state that deserves different handling from
+ * the middle of one.
+ */
+function windowState(atMs, win = DEFAULT_WINDOW) {
+  const { y, m, d } = localDate(atMs, win.tz);
+  const opens = zonedTimeToUtc(y, m, d, win.start.h, win.start.m, win.tz);
+  const closes = zonedTimeToUtc(y, m, d, win.end.h, win.end.m, win.tz);
+  const dow = localWeekday(atMs, win.tz);
+  const weekend = dow === 0 || dow === 6;
+
+  const minutesLeft = Math.round((closes - atMs) / 60000);
+  const minutesIn = Math.round((atMs - opens) / 60000);
+  const total = Math.round((closes - opens) / 60000);
+
+  let phase;
+  if (weekend) phase = 'weekend';
+  else if (atMs < opens) phase = 'before';
+  else if (atMs >= closes) phase = 'after';
+  else if (minutesLeft <= 30) phase = 'last-30';
+  else if (minutesLeft <= 60) phase = 'closing';
+  else if (minutesIn <= 15) phase = 'opening';
+  else phase = 'open';
+
+  return {
+    phase,
+    open: phase === 'open' || phase === 'opening' || phase === 'closing' || phase === 'last-30',
+    weekend,
+    opensAtMs: opens,
+    closesAtMs: closes,
+    minutesLeft: Math.max(0, minutesLeft),
+    minutesIn: Math.max(0, minutesIn),
+    totalMinutes: total,
+    fractionElapsed: total > 0 ? Math.min(1, Math.max(0, minutesIn / total)) : 0,
+    localHour: localHour(atMs, win.tz),
+    tz: win.tz,
+  };
+}
+
+/** Is a given instant inside the window on its own local day? */
+function insideWindow(atMs, win = DEFAULT_WINDOW) {
+  const { y, m, d } = localDate(atMs, win.tz);
+  const opens = zonedTimeToUtc(y, m, d, win.start.h, win.start.m, win.tz);
+  const closes = zonedTimeToUtc(y, m, d, win.end.h, win.end.m, win.tz);
+  const dow = localWeekday(atMs, win.tz);
+  if (dow === 0 || dow === 6) return false;
+  return atMs >= opens && atMs < closes;
+}
+
+/**
+ * Quality bands, in LONDON LOCAL HOURS.
+ *
+ * The two instruments differ sharply for a London-hours trader, and the honest
+ * summary is that they are not equally well served by this window:
+ *
+ *  - Gold gets a volatility burst at the open, a genuinely poor mid-morning
+ *    grind, and then its best liquidity of the day from 12:30 as US data lands
+ *    and New York arrives. Most of a London session's opportunity in gold sits
+ *    in its last three and a half hours.
+ *
+ *  - Bitcoin is largely asleep through the European morning. Its volume and
+ *    range concentrate in US hours, which only begin as this window is ending.
+ *    A London-session trader catches the start of bitcoin's best stretch and
+ *    then stops. That is worth saying plainly rather than colouring in.
+ */
+const BANDS = {
+  XAUUSD: [
+    { from: 8, to: 9, band: 'amber', name: 'London satellite',
+      note: 'Some genuine activity as London arrives, but gold is not an FX pair and it does not hand over liquidity at 08:00 the way the folklore says. Tradeable in small size; not the main event.' },
+    { from: 9, to: 12.5, band: 'dead', name: 'Dead zone',
+      note: 'The structural low of your day. Volume thins, the range collapses and the spread does not, so cost takes a far larger share of every trade. The 10:30 LBMA auction is statistically a non-event and will not rescue it. This is the stretch to sit out.' },
+    { from: 12.5, to: 13.3, band: 'amber', name: 'Pre-data build',
+      note: 'Books thickening ahead of the US data slot. Worth watching, not yet worth paying the spread for.' },
+    { from: 13.3, to: 15, band: 'green', name: 'COMEX ramp and US data',
+      note: 'Your day. COMEX regular hours open around 13:20, US data lands 13:30, New York equities at 14:30. The liquidity handover that matters for gold is this one, not the London open.' },
+    { from: 15, to: 15.95, band: 'green', name: 'Late overlap',
+      note: '15:00 carries the US 10:00 ET data slot AND the LBMA PM auction on the same minute — they are confounded, so read it as a data event that happens to coincide with an auction.' },
+    { from: 15.95, to: 16.05, band: 'amber', name: 'The 16:00 fix',
+      note: 'The WM/Reuters fix window. A documented volatility burst rather than a wind-down, and at month-end it is the most extreme flow of the day. Not a quiet way to finish.' },
+  ],
+  BTCUSD: [
+    { from: 8, to: 12, band: 'dead', name: 'Worst hours of your day',
+      note: 'These are the poorest bitcoin hours you could pick. The range is near its daily low while the CFD spread is unchanged, so it takes roughly a fifth of a typical candle. Gold is the better use of this stretch.' },
+    { from: 12, to: 13.3, band: 'amber', name: 'Waking up',
+      note: 'US participants beginning to arrive. Improving, not yet good.' },
+    { from: 13.3, to: 16, band: 'green', name: 'Your bitcoin window',
+      note: 'The only genuinely good bitcoin hours your schedule reaches — and its single most volatile hour falls in your last one. Roughly 38% of bitcoin\'s daily range comes in the seven hours after you close, so this is the end of your day, not the middle of its.' },
+  ],
+};
+
+/**
+ * Which of the two instruments is worth watching right now.
+ *
+ * This split is anchored to the London clock and is stable across both
+ * seasons, which is a genuinely useful property: the LBMA auctions are defined
+ * in London time and do not move, while bitcoin's peak tracks New York, so the
+ * handover lands in the same place year-round.
+ */
+function preferredInstrument(atMs, win = DEFAULT_WINDOW) {
+  const h = localHour(atMs, win.tz);
+  const dow = localWeekday(atMs, win.tz);
+  if (dow === 0 || dow === 6) {
+    return { pair: 'BTCUSD', confident: false, reason: 'Gold is closed at the weekend. Bitcoin trades on, but broker CFD feeds thin out and spreads widen.' };
+  }
+  if (h < 8 || h >= 16) return { pair: null, confident: false, reason: 'Outside your window.' };
+  if (h < 13.3) {
+    return {
+      pair: 'XAUUSD', confident: true,
+      reason: 'Before roughly 13:20 London, gold is the better of your two. Bitcoin is in its worst hours of the day and its spread does not shrink to match the smaller range.',
+    };
+  }
+  return {
+    pair: 'BTCUSD', confident: false,
+    reason: 'From the US data slot onward both are live. Bitcoin only becomes properly tradeable here, and gold is at its best too — so this is a choice, not a steer.',
+  };
+}
+
+/**
+ * The cost floor: what one round trip costs before the chart is even consulted.
+ *
+ * Probably the single most actionable number for a trader running both of
+ * these. It does not vary with the hour, and it says plainly that bitcoin
+ * needs several times the move gold does just to get back to flat.
+ */
+function costFloorBps(spread, price) {
+  if (!(spread > 0) || !(price > 0)) return null;
+  return +((spread / price) * 10000).toFixed(2);
+}
+
+function sessionQuality(atMs, pair, win = DEFAULT_WINDOW) {
+  const h = localHour(atMs, win.tz);
+  const dow = localWeekday(atMs, win.tz);
+  if (dow === 0 || dow === 6) {
+    return {
+      band: 'dead', name: 'Weekend',
+      note: pair === 'BTCUSD'
+        ? 'Bitcoin trades on, but many broker CFD feeds close or widen sharply at the weekend, and liquidity is thin.'
+        : 'Gold is closed. Nothing here is live.',
+      localHour: h, outsideWindow: true,
+    };
+  }
+
+  const table = BANDS[pair] || BANDS.XAUUSD;
+  const hit = table.find((b) => h >= b.from && h < b.to);
+  if (!hit) {
+    return {
+      band: 'red', name: 'Outside your hours',
+      note: `Outside ${win.start.h}:00-${win.end.h}:00 ${win.label || win.tz}. The tool still reads the chart, but this is not a window you have said you trade.`,
+      localHour: h, outsideWindow: true,
+    };
+  }
+  return { ...hit, localHour: h, outsideWindow: false };
+}
+
+/**
+ * The gold rollover window. Most brokers run a GMT+2/+3 server clock, so the
+ * day rolls at 21:00 or 22:00 UTC — comfortably outside a London session, which
+ * is one of the quiet advantages of trading these hours. Kept because the tool
+ * should still say so if the window is ever moved.
  */
 function rolloverWindow(atMs, serverUtcOffsetHours) {
   if (serverUtcOffsetHours === null || serverUtcOffsetHours === undefined) return null;
   const d = new Date(atMs);
   const rolloverUtcHour = (24 - serverUtcOffsetHours) % 24;
   const h = d.getUTCHours() + d.getUTCMinutes() / 60;
-  const start = rolloverUtcHour - 0.5;
-  const end = rolloverUtcHour + 0.75;
-  const inside = h >= start && h <= end;
+  const inside = h >= rolloverUtcHour - 0.5 && h <= rolloverUtcHour + 0.75;
   return {
     utcHour: rolloverUtcHour,
     inside,
     text: `Broker day rolls at ${String(rolloverUtcHour).padStart(2, '0')}:00 UTC`,
     warning: inside
-      ? 'Inside the rollover window. Spreads widen sharply, fills get poor and swap is charged. This is the worst hour of the day to hold a scalp.'
+      ? 'Inside the rollover window. Spreads widen sharply, fills get poor and swap is charged.'
       : null,
   };
 }
 
 /**
- * Algorithmic order bursts cluster on round clock boundaries, strongest at
- * :00, :15, :30 and :45. A five-minute bar closing exactly on one of those is
- * systematically contaminated, so an entry triggered purely by that bar's
- * close is worth a second look.
+ * Algorithmic order flow clusters on round clock boundaries, strongest at :00,
+ * :15, :30 and :45. A five-minute bar closing exactly on one is systematically
+ * contaminated, so a signal from that candle alone deserves more scepticism.
  */
 function barBoundaryNote(atMs) {
   const m = new Date(atMs).getUTCMinutes();
@@ -2393,6 +2568,25 @@ function barBoundaryNote(atMs) {
   return strong
     ? { strong: true, note: 'This bar closes on a :00/:15/:30/:45 boundary, where scheduled algorithmic flow clusters. Treat a signal from this candle alone with more scepticism than usual.' }
     : { strong: false, note: null };
+}
+
+/**
+ * A plain-language plan for the rest of the window: which bands are still to
+ * come today, so the first thing the user sees at 08:00 is what their day
+ * actually looks like rather than a snapshot of one bar.
+ */
+function remainingBands(atMs, pair, win = DEFAULT_WINDOW) {
+  const table = BANDS[pair] || BANDS.XAUUSD;
+  const h = localHour(atMs, win.tz);
+  const { y, m, d } = localDate(atMs, win.tz);
+  return table
+    .filter((b) => b.to > h)
+    .map((b) => ({
+      ...b,
+      startsAtMs: zonedTimeToUtc(y, m, d, Math.floor(b.from), Math.round((b.from % 1) * 60), win.tz),
+      endsAtMs: zonedTimeToUtc(y, m, d, Math.floor(b.to), Math.round((b.to % 1) * 60), win.tz),
+      current: h >= b.from && h < b.to,
+    }));
 }
 
 /* ======================= data-feeds.js ======================= */
@@ -3046,6 +3240,7 @@ function analyse({
   instrument,
   spread = null,
   blackout = null,
+  session = null,
   nowMs = null,
   minSpreadMultiple = 3,
   atrStopMultiple = 1.2,
@@ -3267,6 +3462,34 @@ function analyse({
     };
   }
 
+  // --- dead zone: suppress, do not merely down-weight --------------------
+  //
+  // In the structurally quiet hours the range collapses while the spread does
+  // not, so a marginal read that would be worth taking at 13:45 is a losing
+  // trade at 10:30 purely on cost. Down-weighting it still puts a direction on
+  // the screen, and a direction on the screen gets traded. So the engine
+  // withholds the read entirely and says why.
+  if (session && session.band === 'dead') {
+    return {
+      ok: true,
+      state: 'stand-down',
+      headline: session.name,
+      detail: session.note,
+      bias: 'none',
+      technicalBiasSuppressed: bias,
+      suppressedConfidence: +confidence.toFixed(2),
+      confidence: 0,
+      regime, htf, buckets, indicators: ind, price, atr: atrNow,
+      invalidation: null,
+      session,
+      whyNot: [
+        'The read is being withheld rather than shown weakly. In these hours the range contracts but the spread does not, so a marginal setup loses money on cost even when the direction is right.',
+        `The technicals did read ${bias} at ${(confidence * 100).toFixed(0)}% confidence. That is disclosed so you know what is being set aside, not as a reason to take it.`,
+      ],
+      reasons: [],
+    };
+  }
+
   // --- refuse rather than emit a read with no invalidation ---------------
   if (bias !== 'neutral' && invalidation === null) {
     return {
@@ -3349,6 +3572,7 @@ const state = {
   sample: true,
   feed: null,
   spread: store.get('spread', {}),
+  window: store.get('window', DEFAULT_WINDOW),
   lastAnalysis: null,
 };
 
@@ -3376,6 +3600,7 @@ function sampleBars(pair) {
   return out;
 }
 
+const zoneLabel = () => state.window.tz.split('/').pop().replace('_', ' ');
 const inst = () => INSTRUMENTS[state.pair];
 const dp = () => inst().decimalsForDisplay;
 const fmt = (x, d) => (x === null || x === undefined || Number.isNaN(x) ? '—'
@@ -3385,14 +3610,38 @@ const fmt = (x, d) => (x === null || x === undefined || Number.isNaN(x) ? '—'
 
 function renderClock() {
   const now = Date.now();
-  $('clock-utc').textContent = formatHM(now, 'UTC');
-  const local = localZone();
-  const parts = [`UTC · ${formatHM(now, local)} local`];
+  const win = state.window;
+  // The window's own clock leads, because that is the one the user is on.
+  $('clock-utc').textContent = formatHM(now, win.tz);
+  const parts = [`${formatHM(now, 'UTC')} UTC`];
   if (state.serverOffset !== null && state.serverOffset !== '') {
     const b = brokerChartTime(now, Number(state.serverOffset));
     if (b) parts.push(`${b.text} chart`);
   }
   $('clock-sub').textContent = parts.join(' · ');
+  renderSessionStrip(now);
+}
+
+/** A thin progress bar for how much of the window is gone. */
+function renderSessionStrip(now) {
+  const w = windowState(now, state.window);
+  const el = $('sess-strip');
+  if (w.phase === 'weekend') {
+    el.innerHTML = '<span style="color:var(--label-3)">Weekend — markets closed or thin</span>';
+    return;
+  }
+  if (w.phase === 'before') {
+    el.innerHTML = `<span style="color:var(--label-3)">Opens in ${formatDuration(w.opensAtMs - now)}</span>`;
+    return;
+  }
+  if (w.phase === 'after') {
+    el.innerHTML = '<span style="color:var(--label-3)">Your window has closed for today</span>';
+    return;
+  }
+  const col = w.phase === 'last-30' ? 'warn' : 'accent';
+  el.innerHTML = `
+    <span style="color:var(--label-3)">${formatDuration(w.closesAtMs - now)} left</span>
+    <span class="sess-bar"><span class="sess-fill" style="width:${(w.fractionElapsed * 100).toFixed(1)}%;background:var(--${col})"></span></span>`;
 }
 
 function renderFeed() {
@@ -3443,6 +3692,21 @@ function renderRead(a) {
     return;
   }
 
+  if (a.state === 'stand-down') {
+    el.innerHTML = banner + `
+      <div class="bias-line"><span class="arrow flat">&#9644;</span>
+        <span class="bias flat" style="font-size:22px">Stand down</span></div>
+      <div class="price-big" style="font-size:26px;color:var(--label-2)">${fmt(a.price)}</div>
+      <p class="statement"><b style="color:var(--label)">${esc(a.headline)}.</b> ${esc(a.detail)}</p>
+      <div class="hr"></div>
+      <p style="font-size:13px;color:var(--label-2);margin:0">
+        The read is withheld rather than shown weakly — a direction on the screen gets traded, and
+        in these hours the spread takes it back. Technicals read
+        <b>${esc(a.technicalBiasSuppressed)}</b> at ${Math.round((a.suppressedConfidence || 0) * 100)}%,
+        shown so you know what is being set aside.</p>`;
+    return;
+  }
+
   const dir = a.bias === 'long' ? 'up' : a.bias === 'short' ? 'down' : 'flat';
   const arrow = a.bias === 'long' ? '&#9650;' : a.bias === 'short' ? '&#9660;' : '&#9644;';
   const word = a.bias === 'long' ? 'Upward lean' : a.bias === 'short' ? 'Downward lean' : 'No lean';
@@ -3456,7 +3720,10 @@ function renderRead(a) {
     <div class="price-big">${fmt(a.price)}</div>
     <p class="statement">${esc(a.statement)}</p>`;
 
-  if (a.bias !== 'neutral') {
+  // 'none' is the blackout state and carries no targets or weights; only a
+  // real directional read has those. Checking for 'neutral' alone let the
+  // blackout object fall into this branch and blow up on a.targets.
+  if (a.bias === 'long' || a.bias === 'short') {
     html += `
       <div class="conf-wrap">
         <div class="conf-head"><span>Confidence · ${esc(a.confidenceLabel)}</span><span class="num">${pct}%</span></div>
@@ -3479,11 +3746,92 @@ function renderRead(a) {
   el.innerHTML = html;
 }
 
+/* =============================================================== session */
+
+/**
+ * The first card on the screen, because for someone who trades one fixed
+ * window a day the most useful thing is not a snapshot of one bar — it is what
+ * the rest of the window looks like.
+ */
+function renderSessionCard(now) {
+  const w = windowState(now, state.window);
+  const q = sessionQuality(now, state.pair, state.window);
+  const bands = remainingBands(now, state.pair, state.window);
+  const el = $('session-card');
+
+  const head = (title, sub, tone = 'label') =>
+    `<div style="margin-bottom:11px">
+       <div style="font-size:19px;font-weight:700;letter-spacing:-.02em;color:var(--${tone})">${esc(title)}</div>
+       <p style="font-size:13.5px;color:var(--label-2);margin:4px 0 0">${sub}</p>
+     </div>`;
+
+  let html = '';
+
+  if (w.phase === 'weekend') {
+    html = head('Weekend', esc(q.note), 'label-3');
+  } else if (w.phase === 'before') {
+    const next = bands[0];
+    html = head(`Opens in ${formatDuration(w.opensAtMs - now)}`,
+      next ? `First up: <b>${esc(next.name)}</b>. ${esc(next.note)}` : 'Window not started.');
+  } else if (w.phase === 'after') {
+    html = head('Window closed', 'Outside the hours you trade. The tool still reads the chart, but nothing here is aimed at a position you would open now.', 'label-3');
+  } else if (w.phase === 'last-30') {
+    // The end of a session is its own risk. Say so without nagging.
+    html = head(`${w.minutesLeft} minutes left`,
+      'Worth knowing what the clock does to judgement here. A position opened now has to work inside the time remaining, which is a constraint the chart knows nothing about — and the urge to make the day back before it closes is the most expensive one in scalping.',
+      'warn');
+  } else {
+    html = head(esc(q.name), esc(q.note),
+      q.band === 'green' ? 'up' : q.band === 'amber' ? 'warn' : 'danger');
+  }
+
+  if (w.open || w.phase === 'before') {
+    html += `<div class="hr"></div><p class="card-title">The rest of your window</p>`;
+    for (const b of bands) {
+      const from = formatHM(b.startsAtMs, state.window.tz);
+      const to = formatHM(b.endsAtMs, state.window.tz);
+      html += `<div class="plan${b.current ? ' now' : ''}">
+        <div class="plan-time">${from}<br>${to}</div>
+        <div class="plan-stripe g-${b.band}"></div>
+        <div>
+          <div class="plan-name">${esc(b.name)}${b.current ? ' · now' : ''}</div>
+          <div class="plan-note">${esc(b.note)}</div>
+        </div>
+      </div>`;
+    }
+    if (!bands.length) html += '<p style="font-size:13px;color:var(--label-2);margin:0">Nothing left in the window today.</p>';
+  }
+
+  // Which of the two is worth watching right now.
+  const pref = preferredInstrument(now, state.window);
+  if (pref.pair && w.open) {
+    const mismatch = pref.confident && pref.pair !== state.pair;
+    html += `<div class="hr"></div>
+      <div class="unconfirmed" style="${mismatch ? '' : 'color:var(--label-2);background:var(--surface-3)'}">
+        <b>${pref.confident ? `${esc(INSTRUMENTS[pref.pair].label)} is the better of your two right now.` : 'Both are live from here.'}</b>
+        ${esc(pref.reason)}
+        ${mismatch ? `<br><br>You are looking at ${esc(inst().label)}.` : ''}
+      </div>`;
+  }
+
+  // Events still to come inside the window — the ones that will actually reach him.
+  const evs = getUpcomingEvents(now, 12, state.pair, { includeContext: false })
+    .filter((e) => e.ts > now && e.tier <= 2 && insideWindow(e.ts, state.window));
+  if (evs.length) {
+    html += `<div class="hr"></div><p class="card-title">Landing while you are at the screen</p>`;
+    for (const e of evs.slice(0, 4)) {
+      html += `<div class="row"><dt>${esc(e.short || e.name)}</dt>
+        <dd style="color:var(--${e.tier === 1 ? 'danger' : 'warn'})">${formatHM(e.ts, state.window.tz)} · ${formatCountdown(e.msAway)}</dd></div>`;
+    }
+  }
+
+  el.innerHTML = html;
+}
+
 /* ============================================================ conditions */
 
 function renderConditions(a, now) {
-  const q = sessionQuality(now, state.pair);
-  const open = openSessions(now).map((s) => s.label);
+  const q = sessionQuality(now, state.pair, state.window);
   const roll = rolloverWindow(now, state.serverOffset === '' ? null : Number(state.serverOffset));
   const boundary = barBoundaryNote(now);
 
@@ -3491,8 +3839,7 @@ function renderConditions(a, now) {
 
   let html = `<p class="card-title">Conditions</p>
     <div class="chips">
-      <span class="chip ${q.band === 'green' ? 'green' : q.band === 'red' ? 'red' : 'amber'}">${q.band === 'green' ? 'Prime hours' : q.band === 'amber' ? 'Thinner hours' : 'Poor hours'}</span>
-      ${open.length ? `<span class="chip">${esc(open.join(' + '))} open</span>` : '<span class="chip">All majors closed</span>'}
+      <span class="chip ${q.band === 'green' ? 'green' : (q.band === 'red' || q.band === 'dead') ? 'red' : 'amber'}">${esc(q.name)}</span>
       ${a.ok && a.regime ? `<span class="chip">${esc(a.regime.regime)}</span>` : ''}
       ${a.ok && a.htf && a.htf.agree ? '<span class="chip green">M15 and H1 agree</span>' : '<span class="chip amber">Timeframes disagree</span>'}
     </div>
@@ -3527,7 +3874,7 @@ function renderBlackout(bl, now) {
     if (next && next.msAway < 75 * 60000) {
       slot.innerHTML = `<div class="alert caution">
         <h3>${esc(next.name)} in <span class="num">${formatCountdown(next.msAway)}</span></h3>
-        <p>Tier ${next.tier}. Plan to be flat by ${formatHM(next.ts - next.blackoutBefore * 60000, 'UTC')} UTC.</p></div>`;
+        <p>Tier ${next.tier}. Lands ${formatHM(next.ts, state.window.tz)} ${zoneLabel()} — plan to be flat by ${formatHM(next.ts - next.blackoutBefore * 60000, state.window.tz)}.</p></div>`;
     } else {
       slot.innerHTML = '';
     }
@@ -3540,11 +3887,31 @@ function renderBlackout(bl, now) {
     <p style="margin-top:6px">${bl.phase === 'before'
       ? 'Spreads widen and stops get skipped through before the number lands, not after.'
       : 'The spread has not normalised yet. The release candle and the one after it are frequently a false direction.'}</p>
-    <p style="margin-top:8px;color:var(--label-3);font-size:12.5px">Clear at ${formatHM(bl.endsAtMs, 'UTC')} UTC${state.serverOffset !== '' ? ` · ${brokerChartTime(bl.endsAtMs, Number(state.serverOffset)).text} on your chart` : ''}.</p>
+    <p style="margin-top:8px;color:var(--label-3);font-size:12.5px">Lands ${formatHM(bl.event.ts, state.window.tz)} · clear at ${formatHM(bl.endsAtMs, state.window.tz)} ${zoneLabel()}${state.serverOffset !== '' ? ` · ${brokerChartTime(bl.endsAtMs, Number(state.serverOffset)).text} on your chart` : ''}.</p>
   </div>`;
 }
 
 /* =================================================================== news */
+
+function eventRow(e, now) {
+  const cls = e.tier === 1 ? 't1' : e.tier === 2 ? 't2' : e.tier === 3 ? 't3' : 'tc';
+  const past = e.ts < now;
+  const bt = state.serverOffset !== '' ? brokerChartTime(e.ts, Number(state.serverOffset)) : null;
+  return `<div class="ev">
+    <div class="ev-stripe ${cls}"></div>
+    <div>
+      <div class="ev-name">${esc(e.name)}${e.confidence !== 'verified' ? `<span class="flag">${e.approximate ? 'approx' : 'unconfirmed'}</span>` : ''}${e.dateShifted ? '<span class="flag">shifted</span>' : ''}</div>
+      <div class="ev-meta">${esc(e.agency)} · ${e.tier === 'context' ? 'context only' : `tier ${e.tier}`}${e.tier !== 'context' ? ` · flat ${e.blackoutBefore}m before, ${e.blackoutAfter}m after` : ''}</div>
+      <div class="ev-why">${esc(e.why)}</div>
+      ${e.note ? `<details class="more"><summary>Caveat</summary><p style="font-size:12.5px;color:var(--label-2);margin:5px 0 0">${esc(e.note)}</p></details>` : ''}
+    </div>
+    <div class="ev-when">
+      <div class="ev-count" style="color:var(--${past ? 'label-3' : e.tier === 1 ? 'danger' : e.tier === 2 ? 'warn' : 'label'})">${past ? 'past' : formatCountdown(e.msAway)}</div>
+      <div class="ev-clock">${formatHM(e.ts, state.window.tz)} ${esc(zoneLabel())}</div>
+      ${bt ? `<div class="ev-clock">${bt.text} chart</div>` : ''}
+    </div>
+  </div>`;
+}
 
 function renderNews(now) {
   // Seven days rather than two: opened on a Saturday, a 48-hour window shows
@@ -3556,31 +3923,25 @@ function renderNews(now) {
     <h3>Clocks are out of step this week</h3>
     <p>${esc(dst.message)} ${esc(dst.note)}. Normal service resumes ${esc(dst.to)}.</p></div>` : '';
 
-  if (!rows.length) {
-    $('news-list').innerHTML = '<p class="card-title">Next 7 days</p><p style="color:var(--label-2);font-size:13.5px;margin:0">Nothing scheduled for this instrument in the window.</p>';
-  } else {
-    let html = '<p class="card-title">Next 7 days</p>';
-    for (const e of rows.slice(0, 30)) {
-      const cls = e.tier === 1 ? 't1' : e.tier === 2 ? 't2' : e.tier === 3 ? 't3' : 'tc';
-      const past = e.ts < now;
-      const bt = state.serverOffset !== '' ? brokerChartTime(e.ts, Number(state.serverOffset)) : null;
-      html += `<div class="ev">
-        <div class="ev-stripe ${cls}"></div>
-        <div>
-          <div class="ev-name">${esc(e.name)}${e.confidence !== 'verified' ? `<span class="flag">${e.approximate ? 'approx' : 'unconfirmed'}</span>` : ''}${e.dateShifted ? '<span class="flag">shifted</span>' : ''}</div>
-          <div class="ev-meta">${esc(e.agency)} · ${e.tier === 'context' ? 'context only' : `tier ${e.tier}`}${e.tier !== 'context' ? ` · flat ${e.blackoutBefore}m before, ${e.blackoutAfter}m after` : ''}</div>
-          <div class="ev-why">${esc(e.why)}</div>
-          ${e.note ? `<details class="more"><summary>Caveat</summary><p style="font-size:12.5px;color:var(--label-2);margin:5px 0 0">${esc(e.note)}</p></details>` : ''}
-        </div>
-        <div class="ev-when">
-          <div class="ev-count" style="color:var(--${past ? 'label-3' : e.tier === 1 ? 'danger' : e.tier === 2 ? 'warn' : 'label'})">${past ? 'past' : formatCountdown(e.msAway)}</div>
-          <div class="ev-clock">${formatHM(e.ts, 'UTC')} UTC</div>
-          ${bt ? `<div class="ev-clock">${bt.text} chart</div>` : ''}
-        </div>
-      </div>`;
-    }
-    $('news-list').innerHTML = html;
-  }
+  // Split by whether it will actually reach him. A release three hours after
+  // he has closed the laptop is a different kind of fact from one landing
+  // mid-session, and collapsing them into one list hides that.
+  const inside = rows.filter((e) => insideWindow(e.ts, state.window));
+  const outside = rows.filter((e) => !insideWindow(e.ts, state.window));
+  const zoneName = zoneLabel();
+
+  $('news-inside').innerHTML = inside.length
+    ? `<p class="card-title">While you are trading · next 7 days</p>${inside.slice(0, 26).map((e) => eventRow(e, now)).join('')}`
+    : `<p class="card-title">While you are trading</p><p style="color:var(--label-2);font-size:13.5px;margin:0">Nothing scheduled inside your window for this instrument over the next week.</p>`;
+
+  $('news-outside').innerHTML = outside.length
+    ? `<p class="card-title">After you have stopped</p>
+       <p style="font-size:12.5px;color:var(--label-2);margin:0 0 9px">
+         These land outside ${esc(formatHM(windowState(now, state.window).opensAtMs, state.window.tz))}–${esc(formatHM(windowState(now, state.window).closesAtMs, state.window.tz))} ${esc(zoneName)}.
+         They matter only if you are still holding something, or thinking of opening a position late in your session that would run into one.
+         The FOMC statement is the standing example: 14:00 New York is 19:00 in London, three hours after you have finished.</p>
+       ${outside.slice(0, 14).map((e) => eventRow(e, now)).join('')}`
+    : '';
 
   $('unschedulable').innerHTML = `<p class="card-title">What no calendar can time</p>
     <ul class="reasons against">${UNSCHEDULABLE.map((u) => `<li>${esc(u)}</li>`).join('')}</ul>
@@ -3683,7 +4044,24 @@ function renderRisk() {
   }
   $('cost-out').innerHTML = cost;
 
-  $('corr-note').innerHTML = `<p class="card-title">You trade both of these</p>
+  // The cost floor does not vary with the hour, and it is the number that
+  // decides how big a move each instrument needs before it is even worth trying.
+  const goldFloor = costFloorBps(Number(state.spread.XAUUSD) || 0.35, 4391);
+  const btcFloor = costFloorBps(Number(state.spread.BTCUSD) || 30, 81000);
+  let floorHtml = '';
+  if (goldFloor && btcFloor) {
+    floorHtml = `<div class="hr"></div>
+      <p class="card-title">Cost floor per round trip</p>
+      <div class="row"><dt>Gold</dt><dd>${goldFloor} bps</dd></div>
+      <div class="row"><dt>Bitcoin</dt><dd style="color:var(--warn)">${btcFloor} bps</dd></div>
+      <p style="font-size:12.5px;color:var(--label-2);margin:9px 0 0">
+        Bitcoin needs roughly ${(btcFloor / goldFloor).toFixed(1)}x the move gold does just to get back to flat,
+        at every hour of your day. It does not change with the session — it is the constant you are
+        trading against. ${state.spread.XAUUSD && state.spread.BTCUSD ? 'Computed from the spreads you entered.'
+        : 'Using indicative spreads until you enter your own on each instrument.'}</p>`;
+  }
+
+  $('corr-note').innerHTML = floorHtml + `<div class="hr"></div><p class="card-title">You trade both of these</p>
     <p style="font-size:13.5px;color:var(--label-2);margin:0">${esc(CORRELATION_NOTE.message)}</p>
     <p style="font-size:12px;color:var(--label-3);margin:9px 0 0">
       ${esc(CORRELATION_NOTE.window)} correlation ${CORRELATION_NOTE.value}, as of ${esc(CORRELATION_NOTE.asOf)}.
@@ -3795,9 +4173,13 @@ function drawChart(a) {
 /* ============================================================== reasoning */
 
 function renderReasoning(a) {
-  if (!a.ok || !a.reasons || !a.reasons.length) {
-    $('reasoning').innerHTML = '<p class="card-title">What it sees</p><p style="color:var(--label-2);font-size:13.5px;margin:0">Not enough data to describe.</p>';
-    $('whynot').innerHTML = '';
+  if (!a.ok || !a.reasons || !a.reasons.length || !a.weights) {
+    $('reasoning').innerHTML = a.reasons && a.reasons.length
+      ? `<p class="card-title">What it sees</p><ul class="reasons">${a.reasons.map((r) => `<li>${esc(typeof r === 'string' ? r : r.text)}</li>`).join('')}</ul>`
+      : '<p class="card-title">What it sees</p><p style="color:var(--label-2);font-size:13.5px;margin:0">Not enough data to describe.</p>';
+    $('whynot').innerHTML = a.whyNot && a.whyNot.length
+      ? `<p class="card-title">The case against</p><ul class="reasons against">${a.whyNot.map((w) => `<li>${esc(w)}</li>`).join('')}</ul>`
+      : '';
     return;
   }
   $('reasoning').innerHTML = `<p class="card-title">What it sees</p>
@@ -3852,12 +4234,14 @@ function analyseNow() {
     instrument: inst(),
     spread: currentSpread(),
     blackout: bl,
+    session: sessionQuality(now, state.pair, state.window),
     nowMs: now,
   });
   state.lastAnalysis = a;
 
   renderClock(); renderFeed();
   renderBlackout(bl, now);
+  renderSessionCard(now);
   renderRead(a);
   renderConditions(a, now);
   renderReasoning(a);
@@ -3935,6 +4319,24 @@ function boot() {
   };
 
   $('refresh').onclick = refresh;
+
+  const pad = (n) => String(n).padStart(2, '0');
+  $('win-start').value = `${pad(state.window.start.h)}:${pad(state.window.start.m)}`;
+  $('win-end').value = `${pad(state.window.end.h)}:${pad(state.window.end.m)}`;
+  $('win-tz').value = state.window.tz;
+  const saveWindow = () => {
+    const [sh, sm] = $('win-start').value.split(':').map(Number);
+    const [eh, em] = $('win-end').value.split(':').map(Number);
+    if (![sh, sm, eh, em].every(Number.isFinite)) return;
+    const tz = $('win-tz').value;
+    state.window = {
+      start: { h: sh, m: sm }, end: { h: eh, m: em }, tz,
+      label: tz.split('/').pop().replace('_', ' '),
+    };
+    store.set('window', state.window);
+    analyseNow();
+  };
+  for (const id of ['win-start', 'win-end', 'win-tz']) $(id).onchange = saveWindow;
 
   $('manual-apply').onclick = () => {
     const now = Date.now();

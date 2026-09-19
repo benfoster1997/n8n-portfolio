@@ -22,6 +22,7 @@ const state = {
   sample: true,
   feed: null,
   spread: store.get('spread', {}),
+  window: store.get('window', DEFAULT_WINDOW),
   lastAnalysis: null,
 };
 
@@ -49,6 +50,7 @@ function sampleBars(pair) {
   return out;
 }
 
+const zoneLabel = () => state.window.tz.split('/').pop().replace('_', ' ');
 const inst = () => INSTRUMENTS[state.pair];
 const dp = () => inst().decimalsForDisplay;
 const fmt = (x, d) => (x === null || x === undefined || Number.isNaN(x) ? '—'
@@ -58,14 +60,38 @@ const fmt = (x, d) => (x === null || x === undefined || Number.isNaN(x) ? '—'
 
 function renderClock() {
   const now = Date.now();
-  $('clock-utc').textContent = formatHM(now, 'UTC');
-  const local = localZone();
-  const parts = [`UTC · ${formatHM(now, local)} local`];
+  const win = state.window;
+  // The window's own clock leads, because that is the one the user is on.
+  $('clock-utc').textContent = formatHM(now, win.tz);
+  const parts = [`${formatHM(now, 'UTC')} UTC`];
   if (state.serverOffset !== null && state.serverOffset !== '') {
     const b = brokerChartTime(now, Number(state.serverOffset));
     if (b) parts.push(`${b.text} chart`);
   }
   $('clock-sub').textContent = parts.join(' · ');
+  renderSessionStrip(now);
+}
+
+/** A thin progress bar for how much of the window is gone. */
+function renderSessionStrip(now) {
+  const w = windowState(now, state.window);
+  const el = $('sess-strip');
+  if (w.phase === 'weekend') {
+    el.innerHTML = '<span style="color:var(--label-3)">Weekend — markets closed or thin</span>';
+    return;
+  }
+  if (w.phase === 'before') {
+    el.innerHTML = `<span style="color:var(--label-3)">Opens in ${formatDuration(w.opensAtMs - now)}</span>`;
+    return;
+  }
+  if (w.phase === 'after') {
+    el.innerHTML = '<span style="color:var(--label-3)">Your window has closed for today</span>';
+    return;
+  }
+  const col = w.phase === 'last-30' ? 'warn' : 'accent';
+  el.innerHTML = `
+    <span style="color:var(--label-3)">${formatDuration(w.closesAtMs - now)} left</span>
+    <span class="sess-bar"><span class="sess-fill" style="width:${(w.fractionElapsed * 100).toFixed(1)}%;background:var(--${col})"></span></span>`;
 }
 
 function renderFeed() {
@@ -116,6 +142,21 @@ function renderRead(a) {
     return;
   }
 
+  if (a.state === 'stand-down') {
+    el.innerHTML = banner + `
+      <div class="bias-line"><span class="arrow flat">&#9644;</span>
+        <span class="bias flat" style="font-size:22px">Stand down</span></div>
+      <div class="price-big" style="font-size:26px;color:var(--label-2)">${fmt(a.price)}</div>
+      <p class="statement"><b style="color:var(--label)">${esc(a.headline)}.</b> ${esc(a.detail)}</p>
+      <div class="hr"></div>
+      <p style="font-size:13px;color:var(--label-2);margin:0">
+        The read is withheld rather than shown weakly — a direction on the screen gets traded, and
+        in these hours the spread takes it back. Technicals read
+        <b>${esc(a.technicalBiasSuppressed)}</b> at ${Math.round((a.suppressedConfidence || 0) * 100)}%,
+        shown so you know what is being set aside.</p>`;
+    return;
+  }
+
   const dir = a.bias === 'long' ? 'up' : a.bias === 'short' ? 'down' : 'flat';
   const arrow = a.bias === 'long' ? '&#9650;' : a.bias === 'short' ? '&#9660;' : '&#9644;';
   const word = a.bias === 'long' ? 'Upward lean' : a.bias === 'short' ? 'Downward lean' : 'No lean';
@@ -129,7 +170,10 @@ function renderRead(a) {
     <div class="price-big">${fmt(a.price)}</div>
     <p class="statement">${esc(a.statement)}</p>`;
 
-  if (a.bias !== 'neutral') {
+  // 'none' is the blackout state and carries no targets or weights; only a
+  // real directional read has those. Checking for 'neutral' alone let the
+  // blackout object fall into this branch and blow up on a.targets.
+  if (a.bias === 'long' || a.bias === 'short') {
     html += `
       <div class="conf-wrap">
         <div class="conf-head"><span>Confidence · ${esc(a.confidenceLabel)}</span><span class="num">${pct}%</span></div>
@@ -152,11 +196,92 @@ function renderRead(a) {
   el.innerHTML = html;
 }
 
+/* =============================================================== session */
+
+/**
+ * The first card on the screen, because for someone who trades one fixed
+ * window a day the most useful thing is not a snapshot of one bar — it is what
+ * the rest of the window looks like.
+ */
+function renderSessionCard(now) {
+  const w = windowState(now, state.window);
+  const q = sessionQuality(now, state.pair, state.window);
+  const bands = remainingBands(now, state.pair, state.window);
+  const el = $('session-card');
+
+  const head = (title, sub, tone = 'label') =>
+    `<div style="margin-bottom:11px">
+       <div style="font-size:19px;font-weight:700;letter-spacing:-.02em;color:var(--${tone})">${esc(title)}</div>
+       <p style="font-size:13.5px;color:var(--label-2);margin:4px 0 0">${sub}</p>
+     </div>`;
+
+  let html = '';
+
+  if (w.phase === 'weekend') {
+    html = head('Weekend', esc(q.note), 'label-3');
+  } else if (w.phase === 'before') {
+    const next = bands[0];
+    html = head(`Opens in ${formatDuration(w.opensAtMs - now)}`,
+      next ? `First up: <b>${esc(next.name)}</b>. ${esc(next.note)}` : 'Window not started.');
+  } else if (w.phase === 'after') {
+    html = head('Window closed', 'Outside the hours you trade. The tool still reads the chart, but nothing here is aimed at a position you would open now.', 'label-3');
+  } else if (w.phase === 'last-30') {
+    // The end of a session is its own risk. Say so without nagging.
+    html = head(`${w.minutesLeft} minutes left`,
+      'Worth knowing what the clock does to judgement here. A position opened now has to work inside the time remaining, which is a constraint the chart knows nothing about — and the urge to make the day back before it closes is the most expensive one in scalping.',
+      'warn');
+  } else {
+    html = head(esc(q.name), esc(q.note),
+      q.band === 'green' ? 'up' : q.band === 'amber' ? 'warn' : 'danger');
+  }
+
+  if (w.open || w.phase === 'before') {
+    html += `<div class="hr"></div><p class="card-title">The rest of your window</p>`;
+    for (const b of bands) {
+      const from = formatHM(b.startsAtMs, state.window.tz);
+      const to = formatHM(b.endsAtMs, state.window.tz);
+      html += `<div class="plan${b.current ? ' now' : ''}">
+        <div class="plan-time">${from}<br>${to}</div>
+        <div class="plan-stripe g-${b.band}"></div>
+        <div>
+          <div class="plan-name">${esc(b.name)}${b.current ? ' · now' : ''}</div>
+          <div class="plan-note">${esc(b.note)}</div>
+        </div>
+      </div>`;
+    }
+    if (!bands.length) html += '<p style="font-size:13px;color:var(--label-2);margin:0">Nothing left in the window today.</p>';
+  }
+
+  // Which of the two is worth watching right now.
+  const pref = preferredInstrument(now, state.window);
+  if (pref.pair && w.open) {
+    const mismatch = pref.confident && pref.pair !== state.pair;
+    html += `<div class="hr"></div>
+      <div class="unconfirmed" style="${mismatch ? '' : 'color:var(--label-2);background:var(--surface-3)'}">
+        <b>${pref.confident ? `${esc(INSTRUMENTS[pref.pair].label)} is the better of your two right now.` : 'Both are live from here.'}</b>
+        ${esc(pref.reason)}
+        ${mismatch ? `<br><br>You are looking at ${esc(inst().label)}.` : ''}
+      </div>`;
+  }
+
+  // Events still to come inside the window — the ones that will actually reach him.
+  const evs = getUpcomingEvents(now, 12, state.pair, { includeContext: false })
+    .filter((e) => e.ts > now && e.tier <= 2 && insideWindow(e.ts, state.window));
+  if (evs.length) {
+    html += `<div class="hr"></div><p class="card-title">Landing while you are at the screen</p>`;
+    for (const e of evs.slice(0, 4)) {
+      html += `<div class="row"><dt>${esc(e.short || e.name)}</dt>
+        <dd style="color:var(--${e.tier === 1 ? 'danger' : 'warn'})">${formatHM(e.ts, state.window.tz)} · ${formatCountdown(e.msAway)}</dd></div>`;
+    }
+  }
+
+  el.innerHTML = html;
+}
+
 /* ============================================================ conditions */
 
 function renderConditions(a, now) {
-  const q = sessionQuality(now, state.pair);
-  const open = openSessions(now).map((s) => s.label);
+  const q = sessionQuality(now, state.pair, state.window);
   const roll = rolloverWindow(now, state.serverOffset === '' ? null : Number(state.serverOffset));
   const boundary = barBoundaryNote(now);
 
@@ -164,8 +289,7 @@ function renderConditions(a, now) {
 
   let html = `<p class="card-title">Conditions</p>
     <div class="chips">
-      <span class="chip ${q.band === 'green' ? 'green' : q.band === 'red' ? 'red' : 'amber'}">${q.band === 'green' ? 'Prime hours' : q.band === 'amber' ? 'Thinner hours' : 'Poor hours'}</span>
-      ${open.length ? `<span class="chip">${esc(open.join(' + '))} open</span>` : '<span class="chip">All majors closed</span>'}
+      <span class="chip ${q.band === 'green' ? 'green' : (q.band === 'red' || q.band === 'dead') ? 'red' : 'amber'}">${esc(q.name)}</span>
       ${a.ok && a.regime ? `<span class="chip">${esc(a.regime.regime)}</span>` : ''}
       ${a.ok && a.htf && a.htf.agree ? '<span class="chip green">M15 and H1 agree</span>' : '<span class="chip amber">Timeframes disagree</span>'}
     </div>
@@ -200,7 +324,7 @@ function renderBlackout(bl, now) {
     if (next && next.msAway < 75 * 60000) {
       slot.innerHTML = `<div class="alert caution">
         <h3>${esc(next.name)} in <span class="num">${formatCountdown(next.msAway)}</span></h3>
-        <p>Tier ${next.tier}. Plan to be flat by ${formatHM(next.ts - next.blackoutBefore * 60000, 'UTC')} UTC.</p></div>`;
+        <p>Tier ${next.tier}. Lands ${formatHM(next.ts, state.window.tz)} ${zoneLabel()} — plan to be flat by ${formatHM(next.ts - next.blackoutBefore * 60000, state.window.tz)}.</p></div>`;
     } else {
       slot.innerHTML = '';
     }
@@ -213,11 +337,31 @@ function renderBlackout(bl, now) {
     <p style="margin-top:6px">${bl.phase === 'before'
       ? 'Spreads widen and stops get skipped through before the number lands, not after.'
       : 'The spread has not normalised yet. The release candle and the one after it are frequently a false direction.'}</p>
-    <p style="margin-top:8px;color:var(--label-3);font-size:12.5px">Clear at ${formatHM(bl.endsAtMs, 'UTC')} UTC${state.serverOffset !== '' ? ` · ${brokerChartTime(bl.endsAtMs, Number(state.serverOffset)).text} on your chart` : ''}.</p>
+    <p style="margin-top:8px;color:var(--label-3);font-size:12.5px">Lands ${formatHM(bl.event.ts, state.window.tz)} · clear at ${formatHM(bl.endsAtMs, state.window.tz)} ${zoneLabel()}${state.serverOffset !== '' ? ` · ${brokerChartTime(bl.endsAtMs, Number(state.serverOffset)).text} on your chart` : ''}.</p>
   </div>`;
 }
 
 /* =================================================================== news */
+
+function eventRow(e, now) {
+  const cls = e.tier === 1 ? 't1' : e.tier === 2 ? 't2' : e.tier === 3 ? 't3' : 'tc';
+  const past = e.ts < now;
+  const bt = state.serverOffset !== '' ? brokerChartTime(e.ts, Number(state.serverOffset)) : null;
+  return `<div class="ev">
+    <div class="ev-stripe ${cls}"></div>
+    <div>
+      <div class="ev-name">${esc(e.name)}${e.confidence !== 'verified' ? `<span class="flag">${e.approximate ? 'approx' : 'unconfirmed'}</span>` : ''}${e.dateShifted ? '<span class="flag">shifted</span>' : ''}</div>
+      <div class="ev-meta">${esc(e.agency)} · ${e.tier === 'context' ? 'context only' : `tier ${e.tier}`}${e.tier !== 'context' ? ` · flat ${e.blackoutBefore}m before, ${e.blackoutAfter}m after` : ''}</div>
+      <div class="ev-why">${esc(e.why)}</div>
+      ${e.note ? `<details class="more"><summary>Caveat</summary><p style="font-size:12.5px;color:var(--label-2);margin:5px 0 0">${esc(e.note)}</p></details>` : ''}
+    </div>
+    <div class="ev-when">
+      <div class="ev-count" style="color:var(--${past ? 'label-3' : e.tier === 1 ? 'danger' : e.tier === 2 ? 'warn' : 'label'})">${past ? 'past' : formatCountdown(e.msAway)}</div>
+      <div class="ev-clock">${formatHM(e.ts, state.window.tz)} ${esc(zoneLabel())}</div>
+      ${bt ? `<div class="ev-clock">${bt.text} chart</div>` : ''}
+    </div>
+  </div>`;
+}
 
 function renderNews(now) {
   // Seven days rather than two: opened on a Saturday, a 48-hour window shows
@@ -229,31 +373,25 @@ function renderNews(now) {
     <h3>Clocks are out of step this week</h3>
     <p>${esc(dst.message)} ${esc(dst.note)}. Normal service resumes ${esc(dst.to)}.</p></div>` : '';
 
-  if (!rows.length) {
-    $('news-list').innerHTML = '<p class="card-title">Next 7 days</p><p style="color:var(--label-2);font-size:13.5px;margin:0">Nothing scheduled for this instrument in the window.</p>';
-  } else {
-    let html = '<p class="card-title">Next 7 days</p>';
-    for (const e of rows.slice(0, 30)) {
-      const cls = e.tier === 1 ? 't1' : e.tier === 2 ? 't2' : e.tier === 3 ? 't3' : 'tc';
-      const past = e.ts < now;
-      const bt = state.serverOffset !== '' ? brokerChartTime(e.ts, Number(state.serverOffset)) : null;
-      html += `<div class="ev">
-        <div class="ev-stripe ${cls}"></div>
-        <div>
-          <div class="ev-name">${esc(e.name)}${e.confidence !== 'verified' ? `<span class="flag">${e.approximate ? 'approx' : 'unconfirmed'}</span>` : ''}${e.dateShifted ? '<span class="flag">shifted</span>' : ''}</div>
-          <div class="ev-meta">${esc(e.agency)} · ${e.tier === 'context' ? 'context only' : `tier ${e.tier}`}${e.tier !== 'context' ? ` · flat ${e.blackoutBefore}m before, ${e.blackoutAfter}m after` : ''}</div>
-          <div class="ev-why">${esc(e.why)}</div>
-          ${e.note ? `<details class="more"><summary>Caveat</summary><p style="font-size:12.5px;color:var(--label-2);margin:5px 0 0">${esc(e.note)}</p></details>` : ''}
-        </div>
-        <div class="ev-when">
-          <div class="ev-count" style="color:var(--${past ? 'label-3' : e.tier === 1 ? 'danger' : e.tier === 2 ? 'warn' : 'label'})">${past ? 'past' : formatCountdown(e.msAway)}</div>
-          <div class="ev-clock">${formatHM(e.ts, 'UTC')} UTC</div>
-          ${bt ? `<div class="ev-clock">${bt.text} chart</div>` : ''}
-        </div>
-      </div>`;
-    }
-    $('news-list').innerHTML = html;
-  }
+  // Split by whether it will actually reach him. A release three hours after
+  // he has closed the laptop is a different kind of fact from one landing
+  // mid-session, and collapsing them into one list hides that.
+  const inside = rows.filter((e) => insideWindow(e.ts, state.window));
+  const outside = rows.filter((e) => !insideWindow(e.ts, state.window));
+  const zoneName = zoneLabel();
+
+  $('news-inside').innerHTML = inside.length
+    ? `<p class="card-title">While you are trading · next 7 days</p>${inside.slice(0, 26).map((e) => eventRow(e, now)).join('')}`
+    : `<p class="card-title">While you are trading</p><p style="color:var(--label-2);font-size:13.5px;margin:0">Nothing scheduled inside your window for this instrument over the next week.</p>`;
+
+  $('news-outside').innerHTML = outside.length
+    ? `<p class="card-title">After you have stopped</p>
+       <p style="font-size:12.5px;color:var(--label-2);margin:0 0 9px">
+         These land outside ${esc(formatHM(windowState(now, state.window).opensAtMs, state.window.tz))}–${esc(formatHM(windowState(now, state.window).closesAtMs, state.window.tz))} ${esc(zoneName)}.
+         They matter only if you are still holding something, or thinking of opening a position late in your session that would run into one.
+         The FOMC statement is the standing example: 14:00 New York is 19:00 in London, three hours after you have finished.</p>
+       ${outside.slice(0, 14).map((e) => eventRow(e, now)).join('')}`
+    : '';
 
   $('unschedulable').innerHTML = `<p class="card-title">What no calendar can time</p>
     <ul class="reasons against">${UNSCHEDULABLE.map((u) => `<li>${esc(u)}</li>`).join('')}</ul>
@@ -356,7 +494,24 @@ function renderRisk() {
   }
   $('cost-out').innerHTML = cost;
 
-  $('corr-note').innerHTML = `<p class="card-title">You trade both of these</p>
+  // The cost floor does not vary with the hour, and it is the number that
+  // decides how big a move each instrument needs before it is even worth trying.
+  const goldFloor = costFloorBps(Number(state.spread.XAUUSD) || 0.35, 4391);
+  const btcFloor = costFloorBps(Number(state.spread.BTCUSD) || 30, 81000);
+  let floorHtml = '';
+  if (goldFloor && btcFloor) {
+    floorHtml = `<div class="hr"></div>
+      <p class="card-title">Cost floor per round trip</p>
+      <div class="row"><dt>Gold</dt><dd>${goldFloor} bps</dd></div>
+      <div class="row"><dt>Bitcoin</dt><dd style="color:var(--warn)">${btcFloor} bps</dd></div>
+      <p style="font-size:12.5px;color:var(--label-2);margin:9px 0 0">
+        Bitcoin needs roughly ${(btcFloor / goldFloor).toFixed(1)}x the move gold does just to get back to flat,
+        at every hour of your day. It does not change with the session — it is the constant you are
+        trading against. ${state.spread.XAUUSD && state.spread.BTCUSD ? 'Computed from the spreads you entered.'
+        : 'Using indicative spreads until you enter your own on each instrument.'}</p>`;
+  }
+
+  $('corr-note').innerHTML = floorHtml + `<div class="hr"></div><p class="card-title">You trade both of these</p>
     <p style="font-size:13.5px;color:var(--label-2);margin:0">${esc(CORRELATION_NOTE.message)}</p>
     <p style="font-size:12px;color:var(--label-3);margin:9px 0 0">
       ${esc(CORRELATION_NOTE.window)} correlation ${CORRELATION_NOTE.value}, as of ${esc(CORRELATION_NOTE.asOf)}.
@@ -468,9 +623,13 @@ function drawChart(a) {
 /* ============================================================== reasoning */
 
 function renderReasoning(a) {
-  if (!a.ok || !a.reasons || !a.reasons.length) {
-    $('reasoning').innerHTML = '<p class="card-title">What it sees</p><p style="color:var(--label-2);font-size:13.5px;margin:0">Not enough data to describe.</p>';
-    $('whynot').innerHTML = '';
+  if (!a.ok || !a.reasons || !a.reasons.length || !a.weights) {
+    $('reasoning').innerHTML = a.reasons && a.reasons.length
+      ? `<p class="card-title">What it sees</p><ul class="reasons">${a.reasons.map((r) => `<li>${esc(typeof r === 'string' ? r : r.text)}</li>`).join('')}</ul>`
+      : '<p class="card-title">What it sees</p><p style="color:var(--label-2);font-size:13.5px;margin:0">Not enough data to describe.</p>';
+    $('whynot').innerHTML = a.whyNot && a.whyNot.length
+      ? `<p class="card-title">The case against</p><ul class="reasons against">${a.whyNot.map((w) => `<li>${esc(w)}</li>`).join('')}</ul>`
+      : '';
     return;
   }
   $('reasoning').innerHTML = `<p class="card-title">What it sees</p>
@@ -525,12 +684,14 @@ function analyseNow() {
     instrument: inst(),
     spread: currentSpread(),
     blackout: bl,
+    session: sessionQuality(now, state.pair, state.window),
     nowMs: now,
   });
   state.lastAnalysis = a;
 
   renderClock(); renderFeed();
   renderBlackout(bl, now);
+  renderSessionCard(now);
   renderRead(a);
   renderConditions(a, now);
   renderReasoning(a);
@@ -608,6 +769,24 @@ function boot() {
   };
 
   $('refresh').onclick = refresh;
+
+  const pad = (n) => String(n).padStart(2, '0');
+  $('win-start').value = `${pad(state.window.start.h)}:${pad(state.window.start.m)}`;
+  $('win-end').value = `${pad(state.window.end.h)}:${pad(state.window.end.m)}`;
+  $('win-tz').value = state.window.tz;
+  const saveWindow = () => {
+    const [sh, sm] = $('win-start').value.split(':').map(Number);
+    const [eh, em] = $('win-end').value.split(':').map(Number);
+    if (![sh, sm, eh, em].every(Number.isFinite)) return;
+    const tz = $('win-tz').value;
+    state.window = {
+      start: { h: sh, m: sm }, end: { h: eh, m: em }, tz,
+      label: tz.split('/').pop().replace('_', ' '),
+    };
+    store.set('window', state.window);
+    analyseNow();
+  };
+  for (const id of ['win-start', 'win-end', 'win-tz']) $(id).onchange = saveWindow;
 
   $('manual-apply').onclick = () => {
     const now = Date.now();

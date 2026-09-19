@@ -5,6 +5,11 @@ five-minute chart: trend and structure, where the levels are, what the session i
 doing, what the spread is costing, and — the part that matters most — how long until
 the next scheduled release that will blow through a tight stop.
 
+**It is built around one fixed trading window**, the London session by default
+(08:00–16:00 Europe/London). That assumption does real work: it decides which hours
+are worth trading, which releases land while you are at the screen, which happen after
+you have stopped, and which of the two instruments is worth watching right now.
+
 **This is a personal tool, not a client deliverable and not a product.** It is built to
 the same standard as the rest of this repository, and to the same principle: *say when
 not to trust the output.*
@@ -41,14 +46,71 @@ shows a banner during them. Both windows shift news earlier, never later.
 
 ---
 
+## What trading only the London session actually means
+
+Two findings changed how the tool is built, and both contradict the usual advice.
+
+**Gold's London session is not front-loaded.** The folklore says the 08:00 open is
+prime. For gold it is not — gold is not an FX pair, and the liquidity handover that
+matters is the COMEX regular-hours ramp at about **13:20 London**, followed by US data
+at 13:30 and the New York equity open at 14:30. The stretch from roughly **09:00 to
+12:30 London is a structural dead zone**: the range collapses while the spread does
+not. The 10:30 LBMA auction will not rescue it — post the 2015 electronic-auction
+reform it is close to a statistical non-event intraday.
+
+So of an eight-hour window, **about three hours are genuinely worth scalping gold**.
+The tool says so rather than colouring all eight hours in.
+
+In the dead zone it **withholds the read entirely** rather than showing it weakly. A
+direction on the screen gets traded, and a marginal setup that would be fine at 13:45
+loses money at 10:30 purely on cost. It still discloses what it suppressed, so you can
+see what is being set aside.
+
+**Bitcoin is back-loaded, not unviable.** Your window catches roughly 34–36% of
+bitcoin's daily variance — about its fair share of the clock. The sharper truth is
+where that sits: bitcoin's single most volatile hour falls in your **last** hour, the
+first four or five hours of your session are the worst bitcoin hours you could pick,
+and roughly **38% of its daily range comes in the seven hours after you close** — more
+than your whole session produces. If you ever wanted to extend the day, extending the
+bitcoin end by ninety minutes is worth far more than starting earlier.
+
+Hence the instrument steer: **gold before ~13:20 London, both after.** Because the LBMA
+auctions are fixed in London time and bitcoin's peak tracks New York, that split holds
+in both seasons.
+
+### The clock facts that matter
+
+US data lands at **13:30 London** almost all year, because the UK and US shift together.
+During the two misalignment weeks it becomes **12:30 London** — an hour earlier. Both
+windows shift it earlier, never later.
+
+**The FOMC never reaches you.** 14:00 New York is 19:00 London, three hours after you
+close; the press conference is 19:30. The news tab therefore splits into *while you are
+trading* and *after you have stopped*, because those are different kinds of fact.
+
+| Event | London time | Inside your window |
+|---|---|---|
+| NFP, CPI, PCE, retail sales, jobless claims | 13:30 | yes |
+| ADP | 13:15 | yes |
+| S&P flash PMIs | 14:45 | yes |
+| ISM, UoM, Consumer Confidence | 15:00 | yes |
+| LBMA PM auction | 15:00 | yes — but confounded with the US 10:00 ET slot |
+| WM/Reuters fix | 15:57–16:02 | yes — a volatility burst, not a wind-down |
+| **FOMC statement** | **19:00** | **no** |
+| **FOMC press conference** | **19:30** | **no** |
+| **FOMC minutes** | **19:00** | **no** |
+| CFTC COT | 20:30 | no |
+
+---
+
 ## What it shows
 
 | | |
 |---|---|
-| **Read** | Directional lean, confidence, the invalidation price, targets with their R-multiple, and the win rate the setup needs just to break even after the spread. Plus a candle chart with session VWAP, clustered levels and the invalidation line. |
-| **News** | Every scheduled release for the selected instrument over the next seven days, with a countdown, the UTC time, and the time as it will appear on *your* broker's chart. Tier 1 rows produce a hard stand-aside state. |
-| **Size** | Position sizing from account risk, with currency conversion, and the monthly cost of the spread at your trade frequency. |
-| **Setup** | Data source, your broker's contract specs, server clock, and the full list of what the tool cannot see. |
+| **Read** | Where you are in your session and what the rest of it looks like, then the directional lean, confidence, the invalidation price, targets with their R-multiple, and the win rate the setup needs just to break even after the spread. Plus a candle chart with session VWAP, clustered levels and the invalidation line. |
+| **News** | Split into what lands *while you are trading* and what lands *after you have stopped*. Countdown, London time, and the time as it will appear on your broker's chart. Tier 1 rows produce a hard stand-aside state. |
+| **Size** | Position sizing from account risk, with currency conversion and margin, the cost floor of each instrument in basis points, and the monthly cost of the spread at your trade frequency. |
+| **Setup** | Data source, your broker's contract specs, server clock, your trading window, and the full list of what the tool cannot see. |
 
 Every read carries a **case against it**. The engine always argues both sides, and when
 nothing in the visible data opposes a read it says so — because that usually means it is
@@ -84,13 +146,18 @@ it used. If it can produce neither, it returns `no-read` rather than a signal.
 returns stand-aside regardless of how good the technicals look, and discloses what it
 suppressed so you know what you are setting aside.
 
+**The dead zone suppresses rather than down-weights.** In the structurally quiet hours
+the engine returns stand-down and withholds the direction, because a weak read on
+screen is a read that gets taken. A news blackout outranks it — that is the more urgent
+reason to be flat.
+
 ---
 
 ## Running it
 
 ```
 node build.mjs        # inline src/*.js into a single self-contained index.html
-node test/run-all.mjs # 102 assertions across 4 suites
+node test/run-all.mjs # 138 assertions across 5 suites
 ```
 
 `index.html` has no build dependency, no backend and no imports. Open it from anywhere,
@@ -129,7 +196,15 @@ with the safe areas handled.
   one answered, and manual entry needs no network.
 - **It will never tell you to buy or sell.**
 
-## Two things it is loud about
+## One more thing it is loud about
+
+**Bitcoin's cost floor is several times gold's.** At a $30 bitcoin spread and a $0.35
+gold spread, one round trip costs about **3.7 bps on BTCUSD against 0.8 bps on XAUUSD**
+— bitcoin needs roughly four times the move just to get back to flat, at every hour of
+your day. That constant does not vary with the session, and it is probably the single
+most useful number in the tool.
+
+## Two more things it is loud about
 
 **Gold and bitcoin are currently close to the same trade.** Their correlation reached a
 nine-year high during 2026 — around 0.72 on a 30-day basis, against roughly 0.22 for
@@ -166,11 +241,11 @@ src/
   instruments.js    contract specs, all marked confirm-before-use
   risk.js           position sizing, break-even win rate, spread drag
   news-calendar.js  table-driven event data + blackout logic
-  sessions.js       session boundaries and per-instrument quality bands
+  sessions.js       the trading window, per-instrument hour bands, instrument steer
   data-feeds.js     ordered source chain with honest failure reporting
   signal-engine.js  regime detection, factor buckets, the read
   app.js            UI wiring
   index.template.html
 build.mjs           inlines the above into index.html
-test/               102 assertions; run-all.mjs runs the lot
+test/               138 assertions; run-all.mjs runs the lot
 ```
