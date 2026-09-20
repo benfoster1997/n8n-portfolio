@@ -12,13 +12,14 @@ import {
   sizeBothModels, stakeAcrossPointSizes, marginFraction, minStopForMargin, mt5Ticket,
   spreadDrag, allInSpread, breakEvenWinRate,
 } from '../src/risk.js';
+import { marginPerLot, bidChartNote, INSTRUMENTS } from '../src/instruments.js';
 
 let passed = 0, failed = 0;
 const test = (n, fn) => {
   try { fn(); passed++; console.log('  ok   ' + n); }
   catch (e) { failed++; console.log('  FAIL ' + n + '\n       ' + e.message); }
 };
-const near = (a, b, eps = 0.01) => assert.ok(Math.abs(a - b) < eps, `expected ~${b}, got ${a}`);
+const near = (a, b, eps = 0.01, msg) => assert.ok(Math.abs(a - b) < eps, msg || `expected ~${b}, got ${a}`);
 
 const BASE = {
   equity: 10000, riskPercent: 1, stopDistance: 3.00, price: 4391,
@@ -218,6 +219,50 @@ test('no minimum-stake default is asserted, since published minimums vary and mo
   assert.equal(withMin.spreadBet.belowMinimum, true, 'and works when they do');
 });
 
+console.log('\nleverage-derived margin and the bid chart');
+
+test('margin per lot is contract size over leverage, in ounces', () => {
+  // The spec says Calculation: Forex, Margin currency: XAU — so the
+  // "Initial margin: 100" row is 100 OUNCES, the contract size, not 100 dollars.
+  const at20 = marginPerLot(100, 20, 4375);
+  assert.equal(at20.units, 5, '100 oz / 20');
+  assert.equal(at20.amount, 21875);
+  near(at20.asFraction, 0.05, 1e-9, 'which is exactly the 5% FCA tier');
+  // And it reconciles against the notional.
+  near(at20.amount / (100 * 4375), 0.05, 1e-9);
+});
+
+test('margin scales with the price, as the broker computes it', () => {
+  const cheap = marginPerLot(100, 20, 2000);
+  const dear = marginPerLot(100, 20, 5000);
+  assert.equal(cheap.units, dear.units, 'the ounce requirement does not move');
+  assert.ok(dear.amount > cheap.amount, 'but its cash value does');
+  near(dear.amount / cheap.amount, 2.5, 1e-9);
+});
+
+test('marginPerLot refuses rather than guessing', () => {
+  assert.equal(marginPerLot(100, 0, 4375), null);
+  assert.equal(marginPerLot(0, 20, 4375), null);
+  assert.equal(marginPerLot(100, 20, 0), null);
+});
+
+test('a long lines up with a bid chart; a short does not', () => {
+  const buy = bidChartNote('buy', 0.05, 2);
+  assert.equal(buy.aligned, true);
+  assert.ok(/line up|lines up/i.test(buy.text));
+
+  const sell = bidChartNote('sell', 0.05, 2);
+  assert.equal(sell.aligned, false);
+  // The short's stop fires before the chart reaches the drawn level.
+  assert.ok(/short of the level|before/i.test(sell.text));
+  assert.ok(/ASK/.test(sell.text), 'it must name what the level is actually checked against');
+});
+
+test('no bid-chart note without a spread to quantify it', () => {
+  assert.equal(bidChartNote('sell', 0, 2), null);
+  assert.equal(bidChartNote('sell', null, 2), null);
+});
+
 console.log('\ncommission, on a tight-spread account');
 
 test('on a raw account the commission is the larger half of the cost', () => {
@@ -259,6 +304,21 @@ test('break-even uses the all-in cost, so a raw account is not flattered', () =>
   assert.equal(spreadOnly.rate, 50.8);
   assert.equal(allIn.rate, 52);
   assert.ok(allIn.rate > spreadOnly.rate);
+});
+
+test('the confirmed gold specification is recorded as confirmed', () => {
+  const g = INSTRUMENTS.XAUUSD;
+  assert.equal(g.contractSize.value, 100);
+  assert.equal(g.digits.value, 2, 'digits 2, so one point is $0.01');
+  assert.equal(g.dollarMoveValuePerLot.value, 100, 'a $1 move is $100 per lot');
+  assert.equal(g.minLot.value, 0.01);
+  assert.equal(g.stopsLevel.value, 0, 'no broker minimum stop distance');
+  assert.equal(g.chartIsBid, true);
+  assert.equal(g.marginCurrency, 'XAU');
+  for (const k of ['contractSize', 'digits', 'minLot', 'stopsLevel']) {
+    assert.equal(g[k].confirmed, true, `${k} should be marked confirmed, not a default`);
+    assert.notEqual(g[k].confirm, true, `${k} should no longer be awaiting confirmation`);
+  }
 });
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

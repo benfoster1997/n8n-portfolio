@@ -418,7 +418,11 @@ function renderRisk() {
   const ccy = $('acct-ccy').value;
   const gbpusd = Number($('fx-rate').value) || 1;
   const pointSize = Number($('point-size').value) || 0.10;
-  const marginFactor = Number($('margin-pct').value) || 0.05;
+  // Margin here is leverage-derived, not a fixed percentage: the specification
+  // says Calculation: Forex with margin currency XAU, so margin per lot is
+  // contractSize / leverage ounces, converted at the live gold price.
+  const leverage = Number($('leverage').value) || 20;
+  const marginFactor = 1 / leverage;
   const spread = currentSpread() || 0;
   const commission = Number($('commission').value) || 0;
   const price = a && a.ok ? a.price : 0;
@@ -476,6 +480,12 @@ function renderRisk() {
         Stop and target are <b>absolute price levels</b>, which is what the mobile ticket expects —
         not distances. Market price was ${fmt(a.price, digits)} when this was computed;
         if it has moved, the levels still hold but the risk no longer matches.</p>
+      ${(() => {
+        const n = inst().chartIsBid ? bidChartNote(tk.side, spread || inst().typicalSpread?.observed || 0, digits) : null;
+        return n
+          ? `<div class="unconfirmed" style="${n.aligned ? 'color:var(--label-2);background:var(--surface-3)' : ''}">${esc(n.text)}</div>`
+          : '';
+      })()}
       <details class="more"><summary>Where these go in the app</summary>
         <p style="font-size:13px;color:var(--label-2);margin:6px 0 0">
           <b>Quotes</b> &rarr; tap the symbol &rarr; the order ticket. Put the volume in
@@ -506,8 +516,10 @@ function renderRisk() {
 
     /* ---- the margin gate: the constraint that actually binds ---- */
     const m = r.margin;
+    const mpl = marginPerLot(contract, leverage, price);
     $('margin-gate').innerHTML = `
       <p class="card-title">Margin</p>
+      ${mpl ? `<div class="row"><dt>Per 1.00 lot at 1:${leverage}</dt><dd>${mpl.units} oz · ${fmt(mpl.amount, 0)} USD</dd></div>` : ''}
       <div class="row"><dt>Notional</dt><dd>${ccy} ${fmt(m.notional, 0)}</dd></div>
       <div class="row"><dt>Margin required</dt><dd style="color:var(--${m.over ? 'danger' : 'label'})">${ccy} ${fmt(m.amount, 2)}</dd></div>
       <div class="row"><dt>Share of account</dt><dd style="color:var(--${m.over ? 'danger' : 'up'});font-size:19px;font-weight:700">${m.pctOfEquity}%</dd></div>
@@ -967,7 +979,7 @@ function boot() {
   };
 
   for (const id of ['acct-bal', 'risk-pct', 'fx-rate', 'stop-dist', 'acct-ccy',
-    'contract-size', 'min-lot', 'lot-step', 'point-size', 'margin-pct',
+    'contract-size', 'min-lot', 'lot-step', 'point-size', 'leverage',
     'digits', 'stops-level', 'commission']) {
     const el = $(id);
     if (el) { el.oninput = renderRisk; el.onchange = renderRisk; }

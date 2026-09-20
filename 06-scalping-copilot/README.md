@@ -157,7 +157,7 @@ reason to be flat.
 
 ```
 node build.mjs        # inline src/*.js into a single self-contained index.html
-node test/run-all.mjs # 155 assertions across 6 suites
+node test/run-all.mjs # 173 assertions across 6 suites
 ```
 
 `index.html` has no build dependency, no backend and no imports. Open it from anywhere,
@@ -280,6 +280,35 @@ spread worth a fifth of the stop, you need about 60%, not 50%.
 
 ---
 
+## The gold specification, confirmed
+
+Read off the symbol specification on 20 September 2026 and no longer a default:
+
+| | |
+|---|---|
+| Contract size | 100 XAU per lot — a $1.00 move is $100 |
+| Digits | 2, so one point is $0.01 |
+| Minimum volume | 0.01 lots — one ounce, $1 per $1 move |
+| Stops level | 0 — no broker minimum stop distance |
+| Chart mode | by **bid** price |
+| Margin currency | XAU, calculation Forex |
+| Spread | floating; observed $0.05 |
+
+**Margin is leverage-derived, not a fixed percentage.** The specification's
+"Initial margin: 100" looks impossible until you notice the margin currency is XAU —
+it is 100 *ounces*, the contract size, not 100 dollars. Under MT5's Forex calculation
+mode margin per lot is `contractSize ÷ leverage` ounces, converted at the live gold
+price. At 1:20 that is 5 oz, $21,875 a lot at $4,375 gold, which is exactly 5% of the
+$437,500 notional. So the tool asks for account leverage rather than a percentage.
+
+**The chart is drawn from bid prices**, which is not symmetric between directions. A
+long fills at the ask but has its stop and target checked against the bid, so both line
+up with the candles. A short fills at the bid but has its levels checked against the
+**ask** — so its stop fires while the chart is still a spread short of the drawn level,
+and its target needs the chart to travel a spread past it. That is just the spread being
+paid, but on a short it is paid somewhere the chart does not show it, which is why a stop
+can look like it was hit before price got there. The ticket says so, per direction.
+
 ## Contract specs are asked for, never assumed
 
 Contract size, tick value and minimum lot are set by your broker, not by the market, and
@@ -308,5 +337,5 @@ src/
   app.js            UI wiring
   index.template.html
 build.mjs           inlines the above into index.html
-test/               155 assertions; run-all.mjs runs the lot
+test/               173 assertions; run-all.mjs runs the lot
 ```
