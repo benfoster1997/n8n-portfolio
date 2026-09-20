@@ -440,9 +440,16 @@ footer.fine {
           <input class="f num" id="commission" type="number" inputmode="decimal" step="0.01" placeholder="0">
         </div>
         <div class="field">
-          <label class="f" for="live-balance">Balance you would trade live</label>
-          <input class="f num" id="live-balance" type="number" inputmode="decimal" placeholder="optional">
+          <label class="f" for="live-balance">Shadow balance</label>
+          <input class="f num" id="live-balance" type="number" inputmode="decimal" placeholder="what you'd trade live">
         </div>
+      </div>
+      <div class="field">
+        <label class="f" for="size-from">Size from</label>
+        <select class="f" id="size-from">
+          <option value="account">Account balance</option>
+          <option value="shadow">Shadow balance — practise at live scale</option>
+        </select>
       </div>
       <div id="size-out"></div>
     </div>
@@ -477,6 +484,10 @@ footer.fine {
           <label class="f" for="rec-perday">Trades per day</label>
           <input class="f num" id="rec-perday" type="number" inputmode="numeric" step="1" value="5">
         </div>
+      </div>
+      <div class="field">
+        <label class="f" for="rec-planned">Sample you are committing to</label>
+        <input class="f num" id="rec-planned" type="number" inputmode="numeric" step="10" placeholder="decide this before you start">
       </div>
       <div id="edge-out"></div>
     </div>

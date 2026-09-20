@@ -157,7 +157,7 @@ reason to be flat.
 
 ```
 node build.mjs        # inline src/*.js into a single self-contained index.html
-node test/run-all.mjs # 173 assertions across 6 suites
+node test/run-all.mjs # 214 assertions across 7 suites
 ```
 
 `index.html` has no build dependency, no backend and no imports. Open it from anywhere,
@@ -195,6 +195,78 @@ with the safe areas handled.
   fact. The design assumes failure: sources are tried in order, the UI always names which
   one answered, and manual entry needs no network.
 - **It will never tell you to buy or sell.**
+
+## Knowing whether it works
+
+The panel that answers "am I any good at this", and the reason it refuses to
+answer quickly.
+
+**The null is not 50%.** Break-even is whatever costs make it — 50.8% at 1:1 on a
+$0.05 spread with a $3 stop, and 60% if the stop tightens to $1.50 with commission.
+Testing against 50% systematically declares losing systems profitable.
+
+**Sample size scales with the inverse square of the edge.** 60% separates from
+break-even in ~150 trades. 55% needs ~620. 52% — still profitable — needs ~3,900,
+about three years at five trades a day.
+
+**An observed 60% over 30 trades means nothing.** The Wilson interval runs 42–75%,
+which includes the coin flip and reaches down into steadily-losing territory.
+
+**The sample must be committed to before collecting it.** This is the part most
+dashboards get wrong, including this one until it was measured. A tool that re-runs
+the test after every trade and announces a result whenever one appears is not running
+a 5% test: simulated over 6,000 runs of a genuinely edgeless system, continuous
+re-testing declares an edge **20.4% of the time within 500 trades**. Applied once at a
+pre-declared N, the same test comes back at 5.2%. So no verdict is offered until the
+declared sample is reached — before that it reports the interval, which is descriptive
+and honest, and how far there is to go.
+
+**The verdict is three-valued.** Evidence of an edge, evidence against one, and not
+enough trades to say. Conflating the third with the second is how working systems get
+abandoned.
+
+**It tells you the losing run to expect.** At 55% over 500 trades, a seven-loss run has
+a 64% chance of occurring — computed exactly by absorbing-Markov DP, not the
+overlapping-windows approximation. That run is what the arithmetic predicts, not
+evidence the approach has stopped working.
+
+**A sample is necessary and nowhere near sufficient.** Across the two large studies of
+the question, on the order of 1–3% of day traders earn predictably positive net
+returns, and among those who persisted past 300 trading days roughly 97% still lost
+money. Persistence is not the variable that separates them.
+
+## Shadow balance
+
+The demo is funded at a size that will never be traded. Sizing from it builds habits
+calibrated to the wrong number — position size, the shape of the P&L, and what a losing
+run feels like.
+
+So the tool can size from a **declared live balance** instead, leaving the demo account
+untouched. Same chart, same specs, same session; every figure shown is at the scale that
+will actually be traded. At £9.8m a 1% risk on a $3 stop is 434 lots; at a £5,000 shadow
+balance it is 0.22.
+
+Demo results also carry an asymmetric haircut, because demo fills have no slippage and —
+for this symbol specifically — MT5 demo does not simulate partial fills at all, so
+Immediate-or-Cancel behaviour is the one thing it cannot show. Stops are market orders
+triggered into adverse movement and slip; targets are limits that only fill on touch and
+do not. A symmetric correction would understate the damage.
+
+## No countdown, by design
+
+The session shows coarse phase words — "Session open", "Into the final hour", "Final
+stretch" — and deliberately no timer, no progress bar and no colour ramp toward the close.
+
+Salient end-of-period temporal landmarks causally increase financial risk-taking, through
+optimism rather than loss-chasing, which means the effect is reference-independent and
+fires on winning days as much as losing ones (Shah & Li 2025, *Journal of Marketing
+Research*, across ~5m real investment decisions; McKenzie et al. 2016, *JBDM*). An earlier
+version of this tool shipped both a progress bar and a "15 minutes left" counter, which
+made it a participant in the behaviour it exists to guard against.
+
+In the final half hour the engine raises its own bar instead — the confidence multiplier
+drops to 0.6 and the case against names the reason. A behaviour change is something you
+do not have to resist. It is also unconditional on P&L, because the ending effect is.
 
 ## Margin is the constraint, not risk
 
@@ -334,8 +406,9 @@ src/
   sessions.js       the trading window, per-instrument hour bands, instrument steer
   data-feeds.js     ordered source chain with honest failure reporting
   signal-engine.js  regime detection, factor buckets, the read
+  edge-test.js      whether a run of results means anything yet
   app.js            UI wiring
   index.template.html
 build.mjs           inlines the above into index.html
-test/               173 assertions; run-all.mjs runs the lot
+test/               214 assertions; run-all.mjs runs the lot
 ```

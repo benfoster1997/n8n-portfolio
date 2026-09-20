@@ -440,9 +440,16 @@ footer.fine {
           <input class="f num" id="commission" type="number" inputmode="decimal" step="0.01" placeholder="0">
         </div>
         <div class="field">
-          <label class="f" for="live-balance">Balance you would trade live</label>
-          <input class="f num" id="live-balance" type="number" inputmode="decimal" placeholder="optional">
+          <label class="f" for="live-balance">Shadow balance</label>
+          <input class="f num" id="live-balance" type="number" inputmode="decimal" placeholder="what you'd trade live">
         </div>
+      </div>
+      <div class="field">
+        <label class="f" for="size-from">Size from</label>
+        <select class="f" id="size-from">
+          <option value="account">Account balance</option>
+          <option value="shadow">Shadow balance — practise at live scale</option>
+        </select>
       </div>
       <div id="size-out"></div>
     </div>
@@ -477,6 +484,10 @@ footer.fine {
           <label class="f" for="rec-perday">Trades per day</label>
           <input class="f num" id="rec-perday" type="number" inputmode="numeric" step="1" value="5">
         </div>
+      </div>
+      <div class="field">
+        <label class="f" for="rec-planned">Sample you are committing to</label>
+        <input class="f num" id="rec-planned" type="number" inputmode="numeric" step="10" placeholder="decide this before you start">
       </div>
       <div id="edge-out"></div>
     </div>
@@ -4122,6 +4133,22 @@ function analyse({
  *
  * None of this is discouragement. It is the difference between running an
  * experiment and collecting anecdotes.
+ *
+ * ---------------------------------------------------------------------------
+ * THE OPTIONAL-STOPPING PROBLEM, which this module previously had.
+ *
+ * A dashboard that re-runs the test after every trade and announces a result
+ * whenever one appears is not running a 5% test. Simulated over 6,000 runs of
+ * a genuinely EDGELESS system, a dashboard re-testing continuously declares an
+ * edge 20.4% of the time within 500 trades — 26% within 1,000 — because it
+ * gets hundreds of chances to catch a favourable wobble. Applied once at a
+ * pre-declared sample size, the same test comes back at its nominal 5.2%.
+ *
+ * So the sample size has to be committed to BEFORE the data is collected, and
+ * no verdict is offered until it is reached. Until then the tool reports the
+ * interval, which is descriptive and honest, and says how far there is to go.
+ * That is the difference between a test and a slot machine.
+ * ---------------------------------------------------------------------------
  */
 
 /** Standard normal quantile (Acklam's rational approximation, ~1e-9 accurate). */
@@ -4189,15 +4216,22 @@ function tradesNeeded(trueRate, breakEven) {
  * simply not yet informative, and conflating the third with the second is how
  * working systems get abandoned.
  */
-function assessRecord({ trades, wins, rewardRisk = 1, costInRisk = 0 }) {
+function assessRecord({ trades, wins, rewardRisk = 1, costInRisk = 0, plannedSample = 0 }) {
   if (!(trades > 0) || wins < 0 || wins > trades) return null;
   const be = breakEvenRate(rewardRisk, costInRisk);
   if (be === null) return { impossible: true, reason: 'the target does not clear the cost' };
 
   const p = wins / trades;
-  const se = Math.sqrt(Math.max(p * (1 - p), 1e-12) / trades);
-  const lo = Math.max(0, p - 1.96 * se);
-  const hi = Math.min(1, p + 1.96 * se);
+  // WILSON score interval, not Wald. Wald is the textbook p +/- 1.96*sqrt(pq/n)
+  // and it misbehaves exactly where this tool is used most — small samples and
+  // proportions away from 0.5, where it can run past 0 or 1 and understates
+  // width. Wilson is correctly bounded and has far better coverage at n < 100.
+  const zz = 1.959964;
+  const denom = 1 + (zz * zz) / trades;
+  const centre = (p + (zz * zz) / (2 * trades)) / denom;
+  const half = (zz * Math.sqrt((p * (1 - p)) / trades + (zz * zz) / (4 * trades * trades))) / denom;
+  const lo = Math.max(0, centre - half);
+  const hi = Math.min(1, centre + half);
 
   // Expectancy in R, and its standard error — the honest version of "is this
   // working", since win rate alone says nothing without the payoff.
@@ -4206,6 +4240,24 @@ function assessRecord({ trades, wins, rewardRisk = 1, costInRisk = 0 }) {
   const evSe = Math.sqrt(Math.max(varPer, 0) / trades);
 
   let verdict, text;
+
+  // The sample size must be committed to in advance. Before it is reached the
+  // tool describes, and refuses to conclude.
+  if (plannedSample > 0 && trades < plannedSample) {
+    const pctDone = Math.round((trades / plannedSample) * 100);
+    return {
+      trades, wins, observedRate: +p.toFixed(4),
+      breakEven: +be.toFixed(4),
+      ci: [+lo.toFixed(4), +hi.toFixed(4)],
+      expectancyR: +ev.toFixed(4),
+      expectancySe: +evSe.toFixed(4),
+      expectancyClearOfZero: false,
+      plannedSample, remaining: plannedSample - trades, pctDone,
+      verdict: 'collecting',
+      text: `${trades} of the ${plannedSample} trades you committed to. Running at ${(p * 100).toFixed(0)}%, with the true rate somewhere in ${(lo * 100).toFixed(0)}-${(hi * 100).toFixed(0)}%. No verdict until the sample is complete — checking after every trade and stopping on a good run turns a 5% test into a 20% one, which is how a system with no edge gets declared a winner.`,
+    };
+  }
+
   if (lo > be) {
     verdict = 'edge';
     text = `Across ${trades} trades this is above break-even with the interval clear of it. That is evidence of an edge, not proof of one — keep the sample growing.`;
@@ -4239,14 +4291,84 @@ function assessRecord({ trades, wins, rewardRisk = 1, costInRisk = 0 }) {
 function expectedStreak(winRate, trades) {
   if (!(winRate > 0) || !(winRate < 1) || !(trades > 0)) return null;
   const q = 1 - winRate;
-  const probAtLeast = (k) =>
-    Math.min(1, 1 - (1 - (q ** k) * winRate) ** Math.max(0, trades - k + 1));
+
+  /**
+   * EXACT probability of at least one losing run of length >= k in n trades,
+   * by dynamic programming over run-length states rather than the usual
+   * (1 - (1 - q^k * p)^(n-k+1)) approximation, which treats overlapping
+   * windows as independent and is noticeably wrong for larger k.
+   *
+   * state[j] = probability of being in "j consecutive losses so far, never
+   * having reached k". Absorption at j == k.
+   */
+  const probAtLeast = (k) => {
+    if (k > trades) return 0;
+    let state = new Array(k).fill(0);
+    state[0] = 1;
+    let absorbed = 0;
+    for (let t = 0; t < trades; t++) {
+      const next = new Array(k).fill(0);
+      for (let j = 0; j < k; j++) {
+        if (state[j] === 0) continue;
+        next[0] += state[j] * winRate;            // a win resets the run
+        if (j + 1 >= k) absorbed += state[j] * q; // the run reaches k
+        else next[j + 1] += state[j] * q;
+      }
+      state = next;
+    }
+    return absorbed;
+  };
 
   const rows = [];
-  for (let k = 3; k <= 15; k++) rows.push({ length: k, probability: +probAtLeast(k).toFixed(3) });
-  // The longest run that is more likely than not — the one to actually brace for.
+  for (let k = 3; k <= 15; k++) rows.push({ length: k, probability: +probAtLeast(k).toFixed(4) });
   const likely = rows.filter((r) => r.probability >= 0.5).map((r) => r.length).pop() || 0;
   return { rows, likelyWorst: likely, trades, winRate };
+}
+
+/**
+ * How many retail day traders actually clear the bar, for scale.
+ *
+ * A statistically adequate sample is necessary and nowhere near sufficient.
+ * The two large studies of the question agree closely: across the full
+ * population of Taiwanese day traders (Barber, Lee, Liu & Odean) and Brazilian
+ * futures day traders (Chague, De-Losso & Giovannetti), on the order of 1-3%
+ * earn predictably positive net returns, and among Brazilians who persisted
+ * past 300 trading days, roughly 97% still lost money.
+ *
+ * Persistence is not the variable that separates the two groups, which is
+ * worth knowing before committing a year to collecting a sample.
+ */
+const BASE_RATES = {
+  profitableShare: '1-3%',
+  persistedAndStillLost: '~97% past 300 days',
+  sources: 'Barber, Lee, Liu & Odean (Taiwan); Chague, De-Losso & Giovannetti (Brazil)',
+  confidence: 'likely',
+  note: 'Primary PDFs were unreachable from the build environment; figures are consistent across search extracts rather than read at source.',
+};
+
+/**
+ * Demo results are biased upward, and by a knowable amount.
+ *
+ * Demo servers fill against the quote stream with no counterparty: no
+ * slippage, no queue, and — specifically for this symbol — MT5 demo does not
+ * simulate PARTIAL FILLS at all, so Immediate-or-Cancel behaviour is the one
+ * thing a demo account cannot show you.
+ *
+ * The correction is deliberately asymmetric. A stop is a market order
+ * triggered into adverse movement and slips; a target is a limit that only
+ * fills on touch and does not. Applying a symmetric haircut would understate
+ * the damage.
+ */
+function demoHaircut({ grossR, trades, slippageInR = 0.05, winRate = 0.5 }) {
+  if (!(trades > 0) || grossR === undefined || grossR === null) return null;
+  const losingTrades = trades * (1 - winRate);
+  const penalty = (losingTrades * slippageInR) / trades;
+  return {
+    grossR: +grossR.toFixed(4),
+    adjustedR: +(grossR - penalty).toFixed(4),
+    penaltyPerTrade: +penalty.toFixed(4),
+    text: `Demo fills carry no slippage and your symbol's Immediate-or-Cancel policy is not simulated at all, so partial fills — the one thing IOC exists to handle — cannot appear here. Stops slip and targets do not, so a realistic haircut is asymmetric: about ${slippageInR}R off every losing exit, which at this win rate is ${penalty.toFixed(3)}R per trade across the record.`,
+  };
 }
 
 /** Calendar time for a sample, at a given trade frequency. */
@@ -4706,7 +4828,16 @@ function currentSpread() {
 function renderRisk() {
   const a = state.lastAnalysis;
   const i = inst();
-  const bal = Number($('acct-bal').value) || 0;
+  // SHADOW BALANCE. The demo is funded at a size that will never be traded, so
+  // sizing from it builds habits calibrated to the wrong number — position
+  // size, the shape of the P&L, and what a losing run feels like. Sizing from
+  // a declared live figure instead keeps the demo account untouched while
+  // making everything the tool shows transfer.
+  const accountBal = Number($('acct-bal').value) || 0;
+  const shadowBal = Number($('live-balance').value) || 0;
+  const sizeFrom = $('size-from').value;
+  const usingShadow = sizeFrom === 'shadow' && shadowBal > 0;
+  const bal = usingShadow ? shadowBal : accountBal;
   const pct = Number($('risk-pct').value) || 0;
   const ccy = $('acct-ccy').value;
   const gbpusd = Number($('fx-rate').value) || 1;
@@ -4872,10 +5003,16 @@ function renderRisk() {
   }
 
   /* ---- is this practice teaching anything transferable? ---- */
-  const liveBal = Number($('live-balance').value) || 0;
-  const realism = practiceRealism(bal, liveBal);
-  const realismHtml = realism && !realism.ok
-    ? `<div class="unconfirmed">${esc(realism.text)}</div>` : '';
+  const liveBal = shadowBal;
+  const realism = usingShadow ? null : practiceRealism(accountBal, liveBal);
+  const realismHtml = usingShadow
+    ? `<div class="unconfirmed" style="color:var(--label-2);background:var(--surface-3)">
+        Sizing from your shadow balance of ${ccy} ${fmt(shadowBal, 0)}, not the
+        ${ccy} ${fmt(accountBal, 0)} in the account. The demo stays as it is; every figure here is at
+        the scale you will actually trade, so the habits transfer.</div>`
+    : realism && !realism.ok
+      ? `<div class="unconfirmed">${esc(realism.text)}${shadowBal > 0 ? ' You have a shadow balance set — switch "Size from" to use it.' : ''}</div>`
+      : '';
 
   /* ---- cost of scalping ---- */
   const allIn = allInSpread(spread, commission, contract);
@@ -5001,7 +5138,7 @@ function renderRisk() {
       was unreachable. Corroborating evidence reaches roughly mid-2025, so treat it as a prompt to
       verify rather than as current fact.</p>`;
 
-  renderEdge(allIn || spread, contract);
+  renderEdge(allIn || spread, contract, usingShadow);
 
   $('corr-note').innerHTML = floorHtml + `<p class="card-title">You trade both of these</p>
     <p style="font-size:13.5px;color:var(--label-2);margin:0">${esc(CORRELATION_NOTE.message)}</p>
@@ -5017,7 +5154,7 @@ function renderRisk() {
  * The honest answer to "am I any good at this", which is usually "not enough
  * trades to say" for far longer than anyone expects.
  */
-function renderEdge(costPrice, contract) {
+function renderEdge(costPrice, contract, isDemoScale = false) {
   const trades = Number($('rec-trades').value) || 0;
   const wins = Number($('rec-wins').value) || 0;
   const rr = Number($('rec-rr').value) || 1;
@@ -5038,13 +5175,16 @@ function renderEdge(costPrice, contract) {
     return;
   }
 
-  const r = assessRecord({ trades, wins, rewardRisk: rr, costInRisk });
+  const planned = Number($('rec-planned').value) || 0;
+  const r = assessRecord({ trades, wins, rewardRisk: rr, costInRisk, plannedSample: planned });
   if (!r || r.impossible) {
     $('edge-out').innerHTML = `<div class="hr"></div><div class="unconfirmed">${esc(r ? r.reason : 'Winners cannot exceed trades.')}</div>`;
     return;
   }
 
-  const tone = r.verdict === 'edge' ? 'up' : r.verdict === 'negative' ? 'danger' : 'warn';
+  const tone = r.verdict === 'edge' ? 'up'
+    : r.verdict === 'negative' ? 'danger'
+      : r.verdict === 'collecting' ? 'accent' : 'warn';
   const st = expectedStreak(Math.max(0.05, Math.min(0.95, r.observedRate)), Math.max(trades, 300));
 
   $('edge-out').innerHTML = `<div class="hr"></div>
@@ -5053,9 +5193,24 @@ function renderEdge(costPrice, contract) {
     <div class="row"><dt>True rate is somewhere in</dt><dd>${(r.ci[0] * 100).toFixed(0)}–${(r.ci[1] * 100).toFixed(0)}%</dd></div>
     <div class="row"><dt>Expectancy</dt><dd style="color:var(--${r.expectancyR > 0 ? 'up' : 'down'})">${r.expectancyR > 0 ? '+' : ''}${r.expectancyR.toFixed(3)}R ± ${(1.96 * r.expectancySe).toFixed(3)}</dd></div>
     <div class="gate${r.verdict === 'edge' ? ' ok' : ''}" style="${r.verdict === 'inconclusive' ? 'background:var(--warn-dim);border-color:rgba(255,214,10,.35)' : ''}">
-      <h4 style="color:var(--${tone})">${r.verdict === 'edge' ? 'Evidence of an edge' : r.verdict === 'negative' ? 'Evidence against it' : 'Not enough trades to say'}</h4>
+      <h4 style="color:var(--${tone})">${
+        r.verdict === 'edge' ? 'Evidence of an edge'
+          : r.verdict === 'negative' ? 'Evidence against it'
+            : r.verdict === 'collecting' ? `Collecting — ${r.pctDone}% of the way`
+              : 'Not enough trades to say'}</h4>
       <p>${esc(r.text)}</p>
     </div>
+    ${isDemoScale ? `<details class="more"><summary>These are demo results</summary>
+      <p style="font-size:12.5px;color:var(--label-2);margin:6px 0 0">${esc(demoHaircut({ grossR: r.expectancyR, trades, winRate: r.observedRate }).text)}</p>
+    </details>` : ''}
+    <details class="more"><summary>A sample is necessary, not sufficient</summary>
+      <p style="font-size:12.5px;color:var(--label-2);margin:6px 0 0">
+        Across the two large studies of the question, on the order of ${esc(BASE_RATES.profitableShare)} of day traders
+        earn predictably positive net returns, and among those who persisted past 300 trading days
+        roughly 97% still lost money. Persistence is not what separates the two groups. Worth knowing
+        before committing a year to collecting a sample.
+        <br><br><span style="color:var(--label-3)">${esc(BASE_RATES.sources)}. ${esc(BASE_RATES.note)}</span></p>
+    </details>
     ${st ? `<p style="font-size:12.5px;color:var(--label-2);margin:11px 0 0">
       At this rate, a losing run of <b>${st.likelyWorst}</b> is more likely than not within 300 trades, and
       ${((st.rows.find((x) => x.length === st.likelyWorst + 2) || {}).probability * 100 || 0).toFixed(0)}% of samples see ${st.likelyWorst + 2} in a row. Expect it. A run like that is what
@@ -5352,7 +5507,7 @@ function boot() {
   for (const id of ['acct-bal', 'risk-pct', 'fx-rate', 'stop-dist', 'acct-ccy',
     'contract-size', 'min-lot', 'lot-step', 'point-size', 'leverage',
     'digits', 'stops-level', 'commission', 'live-balance', 'max-volume', 'fill-mode',
-    'rec-trades', 'rec-wins', 'rec-rr', 'rec-perday']) {
+    'rec-trades', 'rec-wins', 'rec-rr', 'rec-perday', 'rec-planned', 'size-from']) {
     const el = $(id);
     if (el) { el.oninput = renderRisk; el.onchange = renderRisk; }
   }

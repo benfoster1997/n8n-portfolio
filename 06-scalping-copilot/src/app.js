@@ -443,7 +443,16 @@ function currentSpread() {
 function renderRisk() {
   const a = state.lastAnalysis;
   const i = inst();
-  const bal = Number($('acct-bal').value) || 0;
+  // SHADOW BALANCE. The demo is funded at a size that will never be traded, so
+  // sizing from it builds habits calibrated to the wrong number — position
+  // size, the shape of the P&L, and what a losing run feels like. Sizing from
+  // a declared live figure instead keeps the demo account untouched while
+  // making everything the tool shows transfer.
+  const accountBal = Number($('acct-bal').value) || 0;
+  const shadowBal = Number($('live-balance').value) || 0;
+  const sizeFrom = $('size-from').value;
+  const usingShadow = sizeFrom === 'shadow' && shadowBal > 0;
+  const bal = usingShadow ? shadowBal : accountBal;
   const pct = Number($('risk-pct').value) || 0;
   const ccy = $('acct-ccy').value;
   const gbpusd = Number($('fx-rate').value) || 1;
@@ -609,10 +618,16 @@ function renderRisk() {
   }
 
   /* ---- is this practice teaching anything transferable? ---- */
-  const liveBal = Number($('live-balance').value) || 0;
-  const realism = practiceRealism(bal, liveBal);
-  const realismHtml = realism && !realism.ok
-    ? `<div class="unconfirmed">${esc(realism.text)}</div>` : '';
+  const liveBal = shadowBal;
+  const realism = usingShadow ? null : practiceRealism(accountBal, liveBal);
+  const realismHtml = usingShadow
+    ? `<div class="unconfirmed" style="color:var(--label-2);background:var(--surface-3)">
+        Sizing from your shadow balance of ${ccy} ${fmt(shadowBal, 0)}, not the
+        ${ccy} ${fmt(accountBal, 0)} in the account. The demo stays as it is; every figure here is at
+        the scale you will actually trade, so the habits transfer.</div>`
+    : realism && !realism.ok
+      ? `<div class="unconfirmed">${esc(realism.text)}${shadowBal > 0 ? ' You have a shadow balance set — switch "Size from" to use it.' : ''}</div>`
+      : '';
 
   /* ---- cost of scalping ---- */
   const allIn = allInSpread(spread, commission, contract);
@@ -738,7 +753,7 @@ function renderRisk() {
       was unreachable. Corroborating evidence reaches roughly mid-2025, so treat it as a prompt to
       verify rather than as current fact.</p>`;
 
-  renderEdge(allIn || spread, contract);
+  renderEdge(allIn || spread, contract, usingShadow);
 
   $('corr-note').innerHTML = floorHtml + `<p class="card-title">You trade both of these</p>
     <p style="font-size:13.5px;color:var(--label-2);margin:0">${esc(CORRELATION_NOTE.message)}</p>
@@ -754,7 +769,7 @@ function renderRisk() {
  * The honest answer to "am I any good at this", which is usually "not enough
  * trades to say" for far longer than anyone expects.
  */
-function renderEdge(costPrice, contract) {
+function renderEdge(costPrice, contract, isDemoScale = false) {
   const trades = Number($('rec-trades').value) || 0;
   const wins = Number($('rec-wins').value) || 0;
   const rr = Number($('rec-rr').value) || 1;
@@ -775,13 +790,16 @@ function renderEdge(costPrice, contract) {
     return;
   }
 
-  const r = assessRecord({ trades, wins, rewardRisk: rr, costInRisk });
+  const planned = Number($('rec-planned').value) || 0;
+  const r = assessRecord({ trades, wins, rewardRisk: rr, costInRisk, plannedSample: planned });
   if (!r || r.impossible) {
     $('edge-out').innerHTML = `<div class="hr"></div><div class="unconfirmed">${esc(r ? r.reason : 'Winners cannot exceed trades.')}</div>`;
     return;
   }
 
-  const tone = r.verdict === 'edge' ? 'up' : r.verdict === 'negative' ? 'danger' : 'warn';
+  const tone = r.verdict === 'edge' ? 'up'
+    : r.verdict === 'negative' ? 'danger'
+      : r.verdict === 'collecting' ? 'accent' : 'warn';
   const st = expectedStreak(Math.max(0.05, Math.min(0.95, r.observedRate)), Math.max(trades, 300));
 
   $('edge-out').innerHTML = `<div class="hr"></div>
@@ -790,9 +808,24 @@ function renderEdge(costPrice, contract) {
     <div class="row"><dt>True rate is somewhere in</dt><dd>${(r.ci[0] * 100).toFixed(0)}–${(r.ci[1] * 100).toFixed(0)}%</dd></div>
     <div class="row"><dt>Expectancy</dt><dd style="color:var(--${r.expectancyR > 0 ? 'up' : 'down'})">${r.expectancyR > 0 ? '+' : ''}${r.expectancyR.toFixed(3)}R ± ${(1.96 * r.expectancySe).toFixed(3)}</dd></div>
     <div class="gate${r.verdict === 'edge' ? ' ok' : ''}" style="${r.verdict === 'inconclusive' ? 'background:var(--warn-dim);border-color:rgba(255,214,10,.35)' : ''}">
-      <h4 style="color:var(--${tone})">${r.verdict === 'edge' ? 'Evidence of an edge' : r.verdict === 'negative' ? 'Evidence against it' : 'Not enough trades to say'}</h4>
+      <h4 style="color:var(--${tone})">${
+        r.verdict === 'edge' ? 'Evidence of an edge'
+          : r.verdict === 'negative' ? 'Evidence against it'
+            : r.verdict === 'collecting' ? `Collecting — ${r.pctDone}% of the way`
+              : 'Not enough trades to say'}</h4>
       <p>${esc(r.text)}</p>
     </div>
+    ${isDemoScale ? `<details class="more"><summary>These are demo results</summary>
+      <p style="font-size:12.5px;color:var(--label-2);margin:6px 0 0">${esc(demoHaircut({ grossR: r.expectancyR, trades, winRate: r.observedRate }).text)}</p>
+    </details>` : ''}
+    <details class="more"><summary>A sample is necessary, not sufficient</summary>
+      <p style="font-size:12.5px;color:var(--label-2);margin:6px 0 0">
+        Across the two large studies of the question, on the order of ${esc(BASE_RATES.profitableShare)} of day traders
+        earn predictably positive net returns, and among those who persisted past 300 trading days
+        roughly 97% still lost money. Persistence is not what separates the two groups. Worth knowing
+        before committing a year to collecting a sample.
+        <br><br><span style="color:var(--label-3)">${esc(BASE_RATES.sources)}. ${esc(BASE_RATES.note)}</span></p>
+    </details>
     ${st ? `<p style="font-size:12.5px;color:var(--label-2);margin:11px 0 0">
       At this rate, a losing run of <b>${st.likelyWorst}</b> is more likely than not within 300 trades, and
       ${((st.rows.find((x) => x.length === st.likelyWorst + 2) || {}).probability * 100 || 0).toFixed(0)}% of samples see ${st.likelyWorst + 2} in a row. Expect it. A run like that is what
@@ -1089,7 +1122,7 @@ function boot() {
   for (const id of ['acct-bal', 'risk-pct', 'fx-rate', 'stop-dist', 'acct-ccy',
     'contract-size', 'min-lot', 'lot-step', 'point-size', 'leverage',
     'digits', 'stops-level', 'commission', 'live-balance', 'max-volume', 'fill-mode',
-    'rec-trades', 'rec-wins', 'rec-rr', 'rec-perday']) {
+    'rec-trades', 'rec-wins', 'rec-rr', 'rec-perday', 'rec-planned', 'size-from']) {
     const el = $(id);
     if (el) { el.oninput = renderRisk; el.onchange = renderRisk; }
   }
