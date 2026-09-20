@@ -105,16 +105,43 @@ export function breakEvenWinRate(target, stop, spread = 0) {
 }
 
 /**
- * What the spread costs over a session of scalping — the number nobody
- * calculates before they start.
+ * What a session of scalping costs — the number nobody works out beforehand.
+ *
+ * Commission is included because leaving it out is not a small omission. A raw
+ * or ECN account buys a very tight spread and charges separately, and at those
+ * spreads the commission is usually the LARGER half of the cost: on gold at a
+ * $0.05 spread, a $7 per lot round turn is roughly 58% of the total. A cost
+ * model that counts only the spread would understate the real drag by more
+ * than half and make the account look far cheaper to trade than it is.
  */
-export function spreadDrag({ spread, valuePerUnitMovePerLot, lots, tradesPerDay, daysPerMonth = 21 }) {
-  const perTrade = spread * valuePerUnitMovePerLot * lots;
+export function spreadDrag({
+  spread, valuePerUnitMovePerLot, lots, tradesPerDay,
+  commissionPerLotRoundTurn = 0, daysPerMonth = 21,
+}) {
+  const spreadCost = spread * valuePerUnitMovePerLot * lots;
+  const commission = commissionPerLotRoundTurn * lots;
+  const perTrade = spreadCost + commission;
   return {
     perTrade: +perTrade.toFixed(2),
+    spreadPart: +spreadCost.toFixed(2),
+    commissionPart: +commission.toFixed(2),
+    commissionShare: perTrade > 0 ? +((commission / perTrade) * 100).toFixed(0) : 0,
     perDay: +(perTrade * tradesPerDay).toFixed(2),
     perMonth: +(perTrade * tradesPerDay * daysPerMonth).toFixed(2),
   };
+}
+
+/**
+ * Commission expressed as the spread it is equivalent to, so the two costs can
+ * be compared and added on one scale.
+ *
+ * A tight spread with commission and a wide spread without can cost the same;
+ * this is what makes them comparable, and it is the number that belongs in the
+ * break-even calculation rather than the raw spread.
+ */
+export function allInSpread(spread, commissionPerLotRoundTurn, valuePerUnitMovePerLot) {
+  if (!(valuePerUnitMovePerLot > 0)) return null;
+  return +(spread + commissionPerLotRoundTurn / valuePerUnitMovePerLot).toFixed(4);
 }
 
 /** Distance in price units from entry to a stop expressed in ATR. */

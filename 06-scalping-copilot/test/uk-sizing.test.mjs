@@ -10,6 +10,7 @@
 import assert from 'node:assert/strict';
 import {
   sizeBothModels, stakeAcrossPointSizes, marginFraction, minStopForMargin, mt5Ticket,
+  spreadDrag, allInSpread, breakEvenWinRate,
 } from '../src/risk.js';
 
 let passed = 0, failed = 0;
@@ -215,6 +216,49 @@ test('no minimum-stake default is asserted, since published minimums vary and mo
   assert.equal(r.spreadBet.belowMinimum, false, 'the check is off unless the user supplies their own');
   const withMin = sizeBothModels({ ...BASE, pointSize: 0.01, minStake: 5 });
   assert.equal(withMin.spreadBet.belowMinimum, true, 'and works when they do');
+});
+
+console.log('\ncommission, on a tight-spread account');
+
+test('on a raw account the commission is the larger half of the cost', () => {
+  // A real observed gold spread of $0.05 with a typical $7/lot round turn.
+  const d = spreadDrag({
+    spread: 0.05, valuePerUnitMovePerLot: 100, lots: 0.45,
+    tradesPerDay: 15, commissionPerLotRoundTurn: 7.00,
+  });
+  near(d.spreadPart, 2.25);
+  near(d.commissionPart, 3.15);
+  assert.equal(d.commissionShare, 58);
+  assert.ok(d.commissionPart > d.spreadPart,
+    'counting only the spread would understate the cost by more than half');
+});
+
+test('commission share is independent of position size', () => {
+  const small = spreadDrag({ spread: 0.05, valuePerUnitMovePerLot: 100, lots: 0.10, tradesPerDay: 15, commissionPerLotRoundTurn: 7 });
+  const big = spreadDrag({ spread: 0.05, valuePerUnitMovePerLot: 100, lots: 2.00, tradesPerDay: 15, commissionPerLotRoundTurn: 7 });
+  assert.equal(small.commissionShare, big.commissionShare);
+});
+
+test('allInSpread puts commission on the same scale as the spread', () => {
+  // $7 per lot over 100 oz is $0.07 per ounce.
+  assert.equal(allInSpread(0.05, 7.00, 100), 0.12);
+  assert.equal(allInSpread(0.35, 0, 100), 0.35, 'no commission leaves it unchanged');
+  assert.equal(allInSpread(0.05, 7.00, 0), null, 'refuses without a contract size');
+});
+
+test('a tight spread with commission can cost more than a wide one without', () => {
+  const raw = allInSpread(0.05, 7.00, 100);      // 0.12
+  const standard = allInSpread(0.10, 0, 100);    // 0.10
+  assert.ok(raw > standard,
+    'the headline spread is not the comparison that matters');
+});
+
+test('break-even uses the all-in cost, so a raw account is not flattered', () => {
+  const spreadOnly = breakEvenWinRate(3.00, 3.00, 0.05);
+  const allIn = breakEvenWinRate(3.00, 3.00, allInSpread(0.05, 7.00, 100));
+  assert.equal(spreadOnly.rate, 50.8);
+  assert.equal(allIn.rate, 52);
+  assert.ok(allIn.rate > spreadOnly.rate);
 });
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

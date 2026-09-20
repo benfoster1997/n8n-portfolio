@@ -420,6 +420,7 @@ function renderRisk() {
   const pointSize = Number($('point-size').value) || 0.10;
   const marginFactor = Number($('margin-pct').value) || 0.05;
   const spread = currentSpread() || 0;
+  const commission = Number($('commission').value) || 0;
   const price = a && a.ok ? a.price : 0;
 
   let stop = Number($('stop-dist').value);
@@ -434,7 +435,7 @@ function renderRisk() {
   const r = sizeBothModels({
     equity: bal, riskPercent: pct, stopDistance: stop, price,
     pointSize, contractSize: contract, marginFactor, fxRate: fx,
-    accountCurrency: ccy, spread,
+    accountCurrency: ccy, spread, commissionPerLotRoundTurn: commission,
     lotStep: Number($('lot-step').value) || spec(i, 'lotStep'),
     minLot: Number($('min-lot').value) || spec(i, 'minLot'),
   });
@@ -551,20 +552,33 @@ function renderRisk() {
   }
 
   /* ---- cost of scalping ---- */
+  const allIn = allInSpread(spread, commission, contract);
   let cost = '<p class="card-title">What scalping costs you</p>';
   if (r.ok && r.cfd.lots > 0 && spread > 0) {
-    const d = spreadDrag({ spread, valuePerUnitMovePerLot: contract, lots: r.cfd.lots, tradesPerDay: 15 });
+    const d = spreadDrag({
+      spread, valuePerUnitMovePerLot: contract, lots: r.cfd.lots,
+      tradesPerDay: 15, commissionPerLotRoundTurn: commission,
+    });
     cost += `<div class="row"><dt>Per trade</dt><dd>${ccy} ${fmt(d.perTrade / fx, 2)}</dd></div>
+      ${commission > 0 ? `<div class="row"><dt style="padding-left:12px;color:var(--label-3)">of which spread</dt><dd style="color:var(--label-3)">${ccy} ${fmt(d.spreadPart / fx, 2)}</dd></div>
+      <div class="row"><dt style="padding-left:12px;color:var(--label-3)">of which commission</dt><dd style="color:var(--warn)">${ccy} ${fmt(d.commissionPart / fx, 2)} · ${d.commissionShare}%</dd></div>` : ''}
       <div class="row"><dt>15 trades a day</dt><dd>${ccy} ${fmt(d.perDay / fx, 2)}</dd></div>
       <div class="row"><dt>Over a month</dt><dd style="color:var(--warn);font-size:17px;font-weight:700">${ccy} ${fmt(d.perMonth / fx, 2)}</dd></div>
+      ${commission > 0 ? `<div class="row"><dt>All-in, as a spread</dt><dd>${fmt(allIn)} per oz</dd></div>` : ''}
       <p style="font-size:12.5px;color:var(--label-2);margin:11px 0 0">
-        That is the spread alone, before a single losing trade. It is paid whether you are right or
-        wrong, and it is why a scalping edge has to be larger than it first looks.</p>`;
+        Paid whether you are right or wrong, before a single losing trade.
+        ${commission > 0 && d.commissionShare >= 40
+          ? `Note that commission is <b>${d.commissionShare}%</b> of it — on a tight-spread account the commission is usually the larger half, and a cost model that counted only the spread would understate this by about that much.`
+          : spread > 0 && spread < 0.10 && commission === 0
+            ? 'A spread this tight almost always means a raw or ECN account that charges commission separately. If yours does, enter it above — otherwise this figure is missing the larger half of your costs.'
+            : 'It is why a scalping edge has to be larger than it first looks.'}</p>`;
   } else {
     cost += '<p style="color:var(--label-2);font-size:13.5px;margin:0">Enter your live spread and a stop distance to see the monthly toll.</p>';
   }
+  // Break-even must use the ALL-IN cost, not the raw spread, or a raw account
+  // looks cheaper to trade than it is.
   const be = stop > 0 && a && a.ok && a.targets && a.targets.length
-    ? breakEvenWinRate(Math.abs(a.targets[0].price - a.price), stop, spread) : null;
+    ? breakEvenWinRate(Math.abs(a.targets[0].price - a.price), stop, allIn || spread) : null;
   if (be && !be.impossible) {
     cost += `<div class="hr"></div>
       <div class="row"><dt>Gross reward:risk</dt><dd>${be.grossR}R</dd></div>
@@ -954,7 +968,7 @@ function boot() {
 
   for (const id of ['acct-bal', 'risk-pct', 'fx-rate', 'stop-dist', 'acct-ccy',
     'contract-size', 'min-lot', 'lot-step', 'point-size', 'margin-pct',
-    'digits', 'stops-level']) {
+    'digits', 'stops-level', 'commission']) {
     const el = $(id);
     if (el) { el.oninput = renderRisk; el.onchange = renderRisk; }
   }
