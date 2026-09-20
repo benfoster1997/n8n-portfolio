@@ -561,6 +561,71 @@ function renderRisk() {
         ? 'Computed from the spreads you entered.' : 'Using indicative spreads until you enter your own on each instrument.'}</p>
       <div class="hr"></div>`;
   }
+  /* ---- what the account rules actually are, and what to check ---- */
+  // Every authoritative source was unreachable from the build environment, so
+  // this is search-snippet evidence quoting the Handbook rather than a page
+  // anyone opened. It is date-stamped rather than asserted as current, and it
+  // never tells the user what their own account is — only what to go and look at.
+  $('account-note').innerHTML = `
+    <p class="card-title">Account rules worth knowing</p>
+    <div class="row"><dt>Major FX, some sovereign debt</dt><dd>3.33% · 30:1</dd></div>
+    <div class="row"><dt>Gold, major indices, minor FX</dt><dd style="color:var(--label)">5% · 20:1</dd></div>
+    <div class="row"><dt>Other commodities, minor indices</dt><dd>10% · 10:1</dd></div>
+    <div class="row"><dt>Shares and anything else listed</dt><dd>20% · 5:1</dd></div>
+    <p style="font-size:12.5px;color:var(--label-2);margin:11px 0 0">
+      Gold is carved out of the commodity tier, so it gets 20:1 rather than 10:1. These apply to
+      spread bets and rolling spot forex as well as CFDs where they are MiFID instruments — spread
+      betting is not a route to more leverage at a UK firm.</p>
+
+    <div class="hr"></div>
+    <p class="card-title">The close-out rule</p>
+    <p style="font-size:13px;color:var(--label-2);margin:0">
+      A firm must close your positions once <b>net equity</b> — deposited margin plus unrealised
+      profit and loss — falls below <b>50% of the margin required to maintain them</b>. Three things
+      about that are easy to get wrong: it is measured per <i>account</i> across everything open, not
+      per position; the benchmark is maintenance margin, not what it took to open; and the obligation
+      is to close "as soon as market conditions allow", which is a trigger rather than a guaranteed
+      fill. A gap can carry straight through it.</p>
+    <p style="font-size:12.5px;color:var(--label-3);margin:9px 0 0">
+      This is the other reason the margin figure above matters. At 73% of the account in margin there
+      is very little room between a normal adverse move and that trigger.</p>
+
+    ${state.pair === 'BTCUSD' ? `
+    <div class="hr"></div>
+    <p class="card-title">On the bitcoin leg</p>
+    <p style="font-size:13px;color:var(--label-2);margin:0">
+      Since 6 January 2021, FCA rules have barred firms acting in or from the UK from selling crypto
+      derivatives — CFDs, futures, options and spread bets on bitcoin — to <b>retail</b> clients. The
+      one relaxation came on <b>8 October 2025</b> and is narrow: crypto ETNs listed on a UK Recognised
+      Investment Exchange may now be sold to retail, and those are not FSCS-protected. It does not
+      cover margin trading of BTCUSD.</p>
+    <p style="font-size:13px;color:var(--label-2);margin:9px 0 0">
+      So a BTCUSD position held from the UK is generally not with an FCA firm on a retail basis. It is
+      usually a non-UK entity of the same broker, a broker outside the UK perimeter, or an account
+      where you have been classified as an elective professional. <b>Worth checking which</b> — the
+      entity name and regulator on your statement, not the brand on the app. The prohibition is
+      addressed to firms, not to you.</p>
+    <p style="font-size:12.5px;color:var(--label-3);margin:9px 0 0">
+      It matters because the protections differ. On a non-UK entity you are outside the FCA leverage
+      caps, client-money rules, FSCS cover (£85,000 per person per firm for investment business) and
+      the Financial Ombudsman, and negative balance protection becomes whatever your contract says
+      rather than a rule. Elective professional status at a UK firm is a different case and less
+      clear-cut — it removes the leverage caps and the NBP <i>requirement</i>, but an individual
+      acting outside their trade or business can still be an eligible complainant, and firms
+      sometimes provide negative balance protection contractually anyway. Read the agreement rather
+      than assuming either way.</p>` : ''}
+
+    <div class="hr"></div>
+    <p style="font-size:12px;color:var(--label-3);margin:0">
+      On tax: the treatment of spread bets and CFDs differs, and it depends on your own circumstances
+      and on whether HMRC considers a trade is being carried on. That is genuinely not something this
+      tool should assert, so it does not. HMRC's guidance and an accountant are the right sources.
+    </p>
+    <p style="font-size:12px;color:var(--label-3);margin:9px 0 0">
+      Checked against Handbook extracts on 20 September 2026 — not read from the FCA's own site, which
+      was unreachable. Corroborating evidence reaches roughly mid-2025, so treat it as a prompt to
+      verify rather than as current fact.</p>`;
+
   $('corr-note').innerHTML = floorHtml + `<p class="card-title">You trade both of these</p>
     <p style="font-size:13.5px;color:var(--label-2);margin:0">${esc(CORRELATION_NOTE.message)}</p>
     <p style="font-size:12px;color:var(--label-3);margin:9px 0 0">

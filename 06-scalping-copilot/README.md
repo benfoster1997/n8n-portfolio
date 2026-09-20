@@ -157,7 +157,7 @@ reason to be flat.
 
 ```
 node build.mjs        # inline src/*.js into a single self-contained index.html
-node test/run-all.mjs # 138 assertions across 5 suites
+node test/run-all.mjs # 155 assertions across 6 suites
 ```
 
 `index.html` has no build dependency, no backend and no imports. Open it from anywhere,
@@ -195,6 +195,54 @@ with the safe areas handled.
   fact. The design assumes failure: sources are tried in order, the UI always names which
   one answered, and manual entry needs no network.
 - **It will never tell you to buy or sell.**
+
+## Margin is the constraint, not risk
+
+The thing a risk-percentage calculator cannot see.
+
+Margin as a share of equity is **`m × r ÷ s`** — the margin factor, times your risk
+percentage, divided by the stop expressed as a *fraction of price*. Account size
+cancels out. So does the price level. Only the tightness of the stop matters.
+
+Under the FCA's 20:1 cap on gold (5% margin), at 1% risk:
+
+| Stop | As % of price | Margin needed |
+|---|---|---|
+| $2.20 | 0.05% | **100% of the account** |
+| $3.00 | 0.068% | **73%** |
+| $4.39 | 0.10% | 50% |
+| $8.78 | 0.20% | 25% |
+| $14.93 | 0.34% | 15% |
+
+A perfectly sensible 1%-risk trade with a scalp-width stop can therefore consume
+three quarters of the account in margin, leave you unable to hold anything else, and
+sit near the level where a small adverse move starts forcing closures.
+
+And it gets **worse as gold rises**. A $3.00 stop was 0.15% of price at $2,000 gold and
+used about a third of an account; at $4,391 the same $3.00 is 0.068% and uses 73%. Every
+dollar-denominated rule of thumb inherited from cheaper gold understates this, in the
+dangerous direction.
+
+The tool shows this as a gate with the arithmetic, not a footnote.
+
+## Both account models, from one risk number
+
+It cannot know whether you are on a spread bet or a CFD, so it sizes both and shows
+them side by side:
+
+- **Spread bet** — staked per point. No FX translation on the P&L: the stake is in
+  sterling, so the P&L is born in sterling and never converted. (You are still exposed
+  to gold *as priced in USD*, which is a different thing.)
+- **CFD** — in lots, with the GBP/USD conversion.
+
+They reconcile to the penny before rounding — there is a test asserting it. On screen
+they differ only by however much each was rounded **down**, which is deliberate:
+rounding £3.333 up to £3.50 turns 1% risk into 1.05% silently, on every trade.
+
+**Point size on gold is firm-specific.** $0.01, $0.10 and $1.00 are all in live use, and
+the stake number changes by 10× or 100× between them while your exposure and margin do
+not. So it is a required input rather than an assumption, and all three are shown at
+once — if the stake you are about to type matches none of them, the setting is wrong.
 
 ## One more thing it is loud about
 
@@ -239,7 +287,8 @@ src/
   timezone.js       DST-safe conversion; fuzzed over 3 years, both zones, hourly
   indicators.js     dependency-free TA, seeded to match MT5/TradingView
   instruments.js    contract specs, all marked confirm-before-use
-  risk.js           position sizing, break-even win rate, spread drag
+  risk.js           sizing under both UK account models, the margin gate,
+                    break-even win rate, spread drag
   news-calendar.js  table-driven event data + blackout logic
   sessions.js       the trading window, per-instrument hour bands, instrument steer
   data-feeds.js     ordered source chain with honest failure reporting
@@ -247,5 +296,5 @@ src/
   app.js            UI wiring
   index.template.html
 build.mjs           inlines the above into index.html
-test/               138 assertions; run-all.mjs runs the lot
+test/               155 assertions; run-all.mjs runs the lot
 ```
