@@ -27,6 +27,7 @@ const MODULES = [
   'sessions.js',
   'data-feeds.js',
   'signal-engine.js',
+  'edge-test.js',
   'app.js',
 ];
 

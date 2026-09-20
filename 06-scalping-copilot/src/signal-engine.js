@@ -451,6 +451,12 @@ export function analyse({
   // Every abstaining bucket is information the engine does not have.
   if (abstainedWeight > 0) confidence *= (1 - abstainedWeight);
 
+  // The final stretch of a fixed session raises the bar rather than printing a
+  // warning next to an unchanged read. A deadline measurably increases
+  // risk-taking regardless of whether the day is up or down, so the correct
+  // response is a behaviour change the user does not have to resist.
+  if (session && session.lastStretch) confidence *= 0.6;
+
   if (regime.regime === 'mixed') confidence *= 0.55;
   if (regime.regime === 'compressed') confidence *= 0.6;
   if (buckets.volatility.score < 0) confidence *= 0.7;
@@ -568,6 +574,7 @@ export function analyse({
   for (const [name, b] of abstaining) {
     whyNot.push(`No ${name} input this bar: ${b.reasons[0]}. The read is being made on less than the full picture.`);
   }
+  if (session && session.lastStretch) whyNot.push('This is the final stretch of your session, where the bar has been raised deliberately — a trade opened now has to work inside the time left, and the approach of a close increases risk-taking on winning days as much as losing ones.');
   if (confidence < 0.35) whyNot.push('Bucket agreement is weak. Treat this as an observation about the chart, not a setup.');
   if (bias !== 'neutral' && whyNot.length === 0) {
     whyNot.push('Nothing in the visible data argues against this read — which usually means the engine is missing something it cannot see, not that the trade is safe.');

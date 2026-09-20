@@ -72,28 +72,62 @@ function renderClock() {
   renderSessionStrip(now);
 }
 
-/** A thin progress bar for how much of the window is gone. */
+/**
+ * Where you are in the session — as a COARSE PHASE, deliberately not a countdown.
+ *
+ * This used to be a progress bar and a "15 minutes left" counter, and that was
+ * a mistake worth documenting rather than quietly deleting.
+ *
+ * Salient end-of-period temporal landmarks causally INCREASE financial
+ * risk-taking, via optimism rather than loss-chasing — which means the effect
+ * is reference-independent and fires on winning days too, not just when
+ * someone is down and trying to get back (Shah & Li 2025, Journal of Marketing
+ * Research, across five million real investment decisions; McKenzie et al.
+ * 2016, Journal of Behavioral Decision Making).
+ *
+ * A ticking clock toward 16:00 is precisely that landmark. Rendering it made
+ * the tool an active participant in the behaviour it is supposed to help
+ * against. So: coarse words, no numeric countdown, no progress bar, and no
+ * colour ramping toward the close. Where the last hour needs handling, the
+ * tool changes its own behaviour rather than telling the user to be careful.
+ */
 function renderSessionStrip(now) {
   const w = windowState(now, state.window);
   const el = $('sess-strip');
-  if (w.phase === 'weekend') {
-    el.innerHTML = '<span style="color:var(--label-3)">Weekend — markets closed or thin</span>';
-    return;
+  const say = (text, tone = 'label-3') =>
+    `<span style="color:var(--${tone})">${text}</span>`;
+
+  switch (w.phase) {
+    case 'weekend':
+      el.innerHTML = say('Weekend — markets closed or thin');
+      break;
+    case 'before':
+      el.innerHTML = say('Before the open');
+      break;
+    case 'after':
+      el.innerHTML = say('Your window has closed');
+      break;
+    case 'opening':
+      el.innerHTML = say('Session open');
+      break;
+    case 'closing':
+      el.innerHTML = say('Into the final hour');
+      break;
+    case 'last-30':
+      el.innerHTML = say('Final stretch', 'warn');
+      break;
+    default:
+      el.innerHTML = say('Session open');
   }
-  if (w.phase === 'before') {
-    el.innerHTML = `<span style="color:var(--label-3)">Opens in ${formatDuration(w.opensAtMs - now)}</span>`;
-    return;
-  }
-  if (w.phase === 'after') {
-    el.innerHTML = '<span style="color:var(--label-3)">Your window has closed for today</span>';
-    return;
-  }
-  const col = w.phase === 'last-30' ? 'warn' : 'accent';
-  el.innerHTML = `
-    <span style="color:var(--label-3)">${formatDuration(w.closesAtMs - now)} left</span>
-    <span class="sess-bar"><span class="sess-fill" style="width:${(w.fractionElapsed * 100).toFixed(1)}%;background:var(--${col})"></span></span>`;
 }
 
+/* =============================================================== session */
+
+/**
+ * The first card on the screen, because for someone who trades one fixed
+ * window a day the most useful thing is not a snapshot of one bar — it is what
+ * the rest of the window looks like.
+ */
 function renderFeed() {
   const dot = $('feed-dot'), txt = $('feed-text');
   if (state.sample) {
@@ -198,11 +232,6 @@ function renderRead(a) {
 
 /* =============================================================== session */
 
-/**
- * The first card on the screen, because for someone who trades one fixed
- * window a day the most useful thing is not a snapshot of one bar — it is what
- * the rest of the window looks like.
- */
 function renderSessionCard(now) {
   const w = windowState(now, state.window);
   const q = sessionQuality(now, state.pair, state.window);
@@ -221,14 +250,15 @@ function renderSessionCard(now) {
     html = head('Weekend', esc(q.note), 'label-3');
   } else if (w.phase === 'before') {
     const next = bands[0];
-    html = head(`Opens in ${formatDuration(w.opensAtMs - now)}`,
-      next ? `First up: <b>${esc(next.name)}</b>. ${esc(next.note)}` : 'Window not started.');
+    html = head('Before the open',
+      next ? `First up when it starts: <b>${esc(next.name)}</b>. ${esc(next.note)}` : 'Window not started.');
   } else if (w.phase === 'after') {
     html = head('Window closed', 'Outside the hours you trade. The tool still reads the chart, but nothing here is aimed at a position you would open now.', 'label-3');
   } else if (w.phase === 'last-30') {
-    // The end of a session is its own risk. Say so without nagging.
-    html = head(`${w.minutesLeft} minutes left`,
-      'Worth knowing what the clock does to judgement here. A position opened now has to work inside the time remaining, which is a constraint the chart knows nothing about — and the urge to make the day back before it closes is the most expensive one in scalping.',
+    // Deliberately NOT a countdown. The confidence bar is raised instead, and
+    // the reason is stated once as arithmetic rather than as advice.
+    html = head('Final stretch',
+      'The threshold for a read has been raised for the rest of the session. A position opened now has to work inside the time left, which is a constraint the chart knows nothing about — and the approach of a deadline measurably increases risk-taking, on good days as much as bad ones.',
       'warn');
   } else {
     html = head(esc(q.name), esc(q.note),
@@ -708,12 +738,66 @@ function renderRisk() {
       was unreachable. Corroborating evidence reaches roughly mid-2025, so treat it as a prompt to
       verify rather than as current fact.</p>`;
 
+  renderEdge(allIn || spread, contract);
+
   $('corr-note').innerHTML = floorHtml + `<p class="card-title">You trade both of these</p>
     <p style="font-size:13.5px;color:var(--label-2);margin:0">${esc(CORRELATION_NOTE.message)}</p>
     <p style="font-size:12px;color:var(--label-3);margin:9px 0 0">
       ${esc(CORRELATION_NOTE.window)} correlation ${CORRELATION_NOTE.value}, as of ${esc(CORRELATION_NOTE.asOf)}.
       Correlations move — this one swung hard during 2026. Treat it as a live assumption to re-check,
       not a constant.</p>`;
+}
+
+/* ============================================== is it working yet? ====== */
+
+/**
+ * The honest answer to "am I any good at this", which is usually "not enough
+ * trades to say" for far longer than anyone expects.
+ */
+function renderEdge(costPrice, contract) {
+  const trades = Number($('rec-trades').value) || 0;
+  const wins = Number($('rec-wins').value) || 0;
+  const rr = Number($('rec-rr').value) || 1;
+  const perDay = Number($('rec-perday').value) || 5;
+  const a = state.lastAnalysis;
+  const stop = Number($('stop-dist').value) || (a && a.ok && a.stopDistance) || 0;
+  const costInRisk = stop > 0 && costPrice > 0 ? costPrice / stop : 0;
+
+  if (!trades) {
+    const be = breakEvenRate(rr, costInRisk);
+    const need = be ? tradesNeeded(be + 0.05, be) : null;
+    const t = need ? timeToSample(need, perDay) : null;
+    $('edge-out').innerHTML = `<div class="hr"></div>
+      <p style="font-size:13px;color:var(--label-2);margin:0">
+        Log your trades here and this will tell you whether the result means anything yet.
+        ${be ? `At ${rr}:1 with your current costs, break-even is <b>${(be * 100).toFixed(1)}%</b> — not 50%.` : ''}
+        ${t ? ` Proving a five-point edge over that would take roughly <b>${need} trades</b>, about ${t.months} months at ${perDay} a day.` : ''}</p>`;
+    return;
+  }
+
+  const r = assessRecord({ trades, wins, rewardRisk: rr, costInRisk });
+  if (!r || r.impossible) {
+    $('edge-out').innerHTML = `<div class="hr"></div><div class="unconfirmed">${esc(r ? r.reason : 'Winners cannot exceed trades.')}</div>`;
+    return;
+  }
+
+  const tone = r.verdict === 'edge' ? 'up' : r.verdict === 'negative' ? 'danger' : 'warn';
+  const st = expectedStreak(Math.max(0.05, Math.min(0.95, r.observedRate)), Math.max(trades, 300));
+
+  $('edge-out').innerHTML = `<div class="hr"></div>
+    <div class="row"><dt>Observed</dt><dd>${(r.observedRate * 100).toFixed(1)}%</dd></div>
+    <div class="row"><dt>Break-even after costs</dt><dd>${(r.breakEven * 100).toFixed(1)}%</dd></div>
+    <div class="row"><dt>True rate is somewhere in</dt><dd>${(r.ci[0] * 100).toFixed(0)}–${(r.ci[1] * 100).toFixed(0)}%</dd></div>
+    <div class="row"><dt>Expectancy</dt><dd style="color:var(--${r.expectancyR > 0 ? 'up' : 'down'})">${r.expectancyR > 0 ? '+' : ''}${r.expectancyR.toFixed(3)}R ± ${(1.96 * r.expectancySe).toFixed(3)}</dd></div>
+    <div class="gate${r.verdict === 'edge' ? ' ok' : ''}" style="${r.verdict === 'inconclusive' ? 'background:var(--warn-dim);border-color:rgba(255,214,10,.35)' : ''}">
+      <h4 style="color:var(--${tone})">${r.verdict === 'edge' ? 'Evidence of an edge' : r.verdict === 'negative' ? 'Evidence against it' : 'Not enough trades to say'}</h4>
+      <p>${esc(r.text)}</p>
+    </div>
+    ${st ? `<p style="font-size:12.5px;color:var(--label-2);margin:11px 0 0">
+      At this rate, a losing run of <b>${st.likelyWorst}</b> is more likely than not within 300 trades, and
+      ${((st.rows.find((x) => x.length === st.likelyWorst + 2) || {}).probability * 100 || 0).toFixed(0)}% of samples see ${st.likelyWorst + 2} in a row. Expect it. A run like that is what
+      the arithmetic predicts, not a sign the approach has stopped working — and abandoning a system
+      mid-run is how the sample never gets large enough to answer the question.</p>` : ''}`;
 }
 
 /* ================================================================== chart */
@@ -876,7 +960,10 @@ function analyseNow() {
     instrument: inst(),
     spread: currentSpread(),
     blackout: bl,
-    session: sessionQuality(now, state.pair, state.window),
+    session: {
+      ...sessionQuality(now, state.pair, state.window),
+      lastStretch: windowState(now, state.window).phase === 'last-30',
+    },
     nowMs: now,
   });
   state.lastAnalysis = a;
@@ -1001,7 +1088,8 @@ function boot() {
 
   for (const id of ['acct-bal', 'risk-pct', 'fx-rate', 'stop-dist', 'acct-ccy',
     'contract-size', 'min-lot', 'lot-step', 'point-size', 'leverage',
-    'digits', 'stops-level', 'commission', 'live-balance', 'max-volume', 'fill-mode']) {
+    'digits', 'stops-level', 'commission', 'live-balance', 'max-volume', 'fill-mode',
+    'rec-trades', 'rec-wins', 'rec-rr', 'rec-perday']) {
     const el = $(id);
     if (el) { el.oninput = renderRisk; el.onchange = renderRisk; }
   }

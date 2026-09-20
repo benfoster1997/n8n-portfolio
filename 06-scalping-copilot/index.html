@@ -308,8 +308,6 @@ nav.tabs .badge {
   display: flex; align-items: center; gap: 8px;
   margin-top: 8px; font-size: 11.5px;
 }
-.sess-bar { flex: 1; height: 4px; border-radius: 2px; background: var(--surface-3); overflow: hidden; }
-.sess-fill { height: 100%; border-radius: 2px; background: var(--accent); transition: width .5s ease; }
 
 .plan { display: grid; grid-template-columns: 54px 4px 1fr; gap: 10px; align-items: start; padding: 9px 0; }
 .plan + .plan { border-top: .5px solid var(--hairline); }
@@ -457,6 +455,31 @@ footer.fine {
     </details>
     <div class="card" id="cost-out"></div>
     <div class="card" id="account-note"></div>
+
+    <div class="card">
+      <p class="card-title">Is it working yet?</p>
+      <div class="grid2">
+        <div class="field">
+          <label class="f" for="rec-trades">Trades taken</label>
+          <input class="f num" id="rec-trades" type="number" inputmode="numeric" step="1" placeholder="0">
+        </div>
+        <div class="field">
+          <label class="f" for="rec-wins">Of which winners</label>
+          <input class="f num" id="rec-wins" type="number" inputmode="numeric" step="1" placeholder="0">
+        </div>
+      </div>
+      <div class="grid2">
+        <div class="field">
+          <label class="f" for="rec-rr">Average reward:risk</label>
+          <input class="f num" id="rec-rr" type="number" inputmode="decimal" step="0.1" value="1">
+        </div>
+        <div class="field">
+          <label class="f" for="rec-perday">Trades per day</label>
+          <input class="f num" id="rec-perday" type="number" inputmode="numeric" step="1" value="5">
+        </div>
+      </div>
+      <div id="edge-out"></div>
+    </div>
   </section>
 
   <!-- =========================== SETUP ============================ -->
@@ -3848,6 +3871,12 @@ function analyse({
   // Every abstaining bucket is information the engine does not have.
   if (abstainedWeight > 0) confidence *= (1 - abstainedWeight);
 
+  // The final stretch of a fixed session raises the bar rather than printing a
+  // warning next to an unchanged read. A deadline measurably increases
+  // risk-taking regardless of whether the day is up or down, so the correct
+  // response is a behaviour change the user does not have to resist.
+  if (session && session.lastStretch) confidence *= 0.6;
+
   if (regime.regime === 'mixed') confidence *= 0.55;
   if (regime.regime === 'compressed') confidence *= 0.6;
   if (buckets.volatility.score < 0) confidence *= 0.7;
@@ -3965,6 +3994,7 @@ function analyse({
   for (const [name, b] of abstaining) {
     whyNot.push(`No ${name} input this bar: ${b.reasons[0]}. The read is being made on less than the full picture.`);
   }
+  if (session && session.lastStretch) whyNot.push('This is the final stretch of your session, where the bar has been raised deliberately — a trade opened now has to work inside the time left, and the approach of a close increases risk-taking on winning days as much as losing ones.');
   if (confidence < 0.35) whyNot.push('Bucket agreement is weak. Treat this as an observation about the chart, not a setup.');
   if (bias !== 'neutral' && whyNot.length === 0) {
     whyNot.push('Nothing in the visible data argues against this read — which usually means the engine is missing something it cannot see, not that the trade is safe.');
@@ -4075,6 +4105,161 @@ function analyse({
   };
 }
 
+/* ======================= edge-test.js ======================= */
+/**
+ * edge-test.js — whether a run of results means anything yet.
+ *
+ * This is the module that answers "when should I go live", and the answer is
+ * almost always "later than you think", for a reason that is arithmetic rather
+ * than caution.
+ *
+ * A scalper taking roughly fixed-R trades is running a Bernoulli sequence.
+ * Distinguishing a real edge from a lucky streak is a hypothesis test, and the
+ * sample size it needs scales with the INVERSE SQUARE of the effect you are
+ * trying to detect. A 60% win rate at 1:1 separates from break-even in about
+ * 180 trades. A 52% win rate — which is still profitable — needs over ten
+ * thousand. Nobody's first hundred trades tell them anything.
+ *
+ * None of this is discouragement. It is the difference between running an
+ * experiment and collecting anecdotes.
+ */
+
+/** Standard normal quantile (Acklam's rational approximation, ~1e-9 accurate). */
+function invNorm(p) {
+  const a = [-3.969683028665376e+01, 2.209460984245205e+02, -2.759285104469687e+02,
+    1.383577518672690e+02, -3.066479806614716e+01, 2.506628277459239e+00];
+  const b = [-5.447609879822406e+01, 1.615858368580409e+02, -1.556989798598866e+02,
+    6.680131188771972e+01, -1.328068155288572e+01];
+  const c = [-7.784894002430293e-03, -3.223964580411365e-01, -2.400758277161838e+00,
+    -2.549732539343734e+00, 4.374664141464968e+00, 2.938163982698783e+00];
+  const d = [7.784695709041462e-03, 3.224671290700398e-01, 2.445134137142996e+00,
+    3.754408661907416e+00];
+  const pl = 0.02425;
+  let q, r;
+  if (p < pl) {
+    q = Math.sqrt(-2 * Math.log(p));
+    return (((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5])
+      / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1);
+  }
+  if (p <= 1 - pl) {
+    q = p - 0.5; r = q * q;
+    return (((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5]) * q
+      / (((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1);
+  }
+  q = Math.sqrt(-2 * Math.log(1 - p));
+  return -(((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5])
+    / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1);
+}
+
+const Z_ALPHA = invNorm(0.95);   // one-sided, 5%
+const Z_POWER = invNorm(0.80);   // 80% power
+
+/**
+ * Break-even win rate, net of cost, expressed as a probability.
+ * The null hypothesis is NOT 50% — it is whatever the costs make it.
+ */
+function breakEvenRate(rewardRisk, costInRisk = 0) {
+  if (!(rewardRisk > 0)) return null;
+  const win = rewardRisk - costInRisk;
+  const loss = 1 + costInRisk;
+  if (win <= 0) return null;
+  return loss / (win + loss);
+}
+
+/**
+ * Trades needed to distinguish a true rate from break-even.
+ *
+ * The inverse-square scaling is the whole story: halving the edge you are
+ * trying to detect quadruples the sample you need to see it.
+ */
+function tradesNeeded(trueRate, breakEven) {
+  if (!(trueRate > breakEven) || !(breakEven > 0) || !(breakEven < 1)) return null;
+  const num = Z_ALPHA * Math.sqrt(breakEven * (1 - breakEven))
+    + Z_POWER * Math.sqrt(trueRate * (1 - trueRate));
+  return Math.ceil((num * num) / ((trueRate - breakEven) ** 2));
+}
+
+/**
+ * What an observed record actually supports.
+ *
+ * The confidence interval is the point. Sixty percent over thirty trades sounds
+ * like an edge and is statistically indistinguishable from a coin — the
+ * interval runs from about 42% to 78%. The verdict here is deliberately
+ * three-valued: a result can be evidence of an edge, evidence AGAINST one, or
+ * simply not yet informative, and conflating the third with the second is how
+ * working systems get abandoned.
+ */
+function assessRecord({ trades, wins, rewardRisk = 1, costInRisk = 0 }) {
+  if (!(trades > 0) || wins < 0 || wins > trades) return null;
+  const be = breakEvenRate(rewardRisk, costInRisk);
+  if (be === null) return { impossible: true, reason: 'the target does not clear the cost' };
+
+  const p = wins / trades;
+  const se = Math.sqrt(Math.max(p * (1 - p), 1e-12) / trades);
+  const lo = Math.max(0, p - 1.96 * se);
+  const hi = Math.min(1, p + 1.96 * se);
+
+  // Expectancy in R, and its standard error — the honest version of "is this
+  // working", since win rate alone says nothing without the payoff.
+  const ev = p * (rewardRisk - costInRisk) - (1 - p) * (1 + costInRisk);
+  const varPer = p * (rewardRisk - costInRisk) ** 2 + (1 - p) * (1 + costInRisk) ** 2 - ev ** 2;
+  const evSe = Math.sqrt(Math.max(varPer, 0) / trades);
+
+  let verdict, text;
+  if (lo > be) {
+    verdict = 'edge';
+    text = `Across ${trades} trades this is above break-even with the interval clear of it. That is evidence of an edge, not proof of one — keep the sample growing.`;
+  } else if (hi < be) {
+    verdict = 'negative';
+    text = `Across ${trades} trades the whole interval sits below the ${(be * 100).toFixed(1)}% you need. This is evidence the approach is not working as traded, which is worth more than another month of hoping.`;
+  } else {
+    const need = tradesNeeded(Math.max(p, be + 0.01), be);
+    verdict = 'inconclusive';
+    text = `${(p * 100).toFixed(0)}% over ${trades} trades is consistent with anything from ${(lo * 100).toFixed(0)}% to ${(hi * 100).toFixed(0)}%, and break-even is ${(be * 100).toFixed(1)}%. It is not yet distinguishable from luck in either direction.${need ? ` At this observed rate it would take roughly ${need} trades to separate them.` : ''}`;
+  }
+
+  return {
+    trades, wins, observedRate: +p.toFixed(4),
+    breakEven: +be.toFixed(4),
+    ci: [+lo.toFixed(4), +hi.toFixed(4)],
+    expectancyR: +ev.toFixed(4),
+    expectancySe: +evSe.toFixed(4),
+    expectancyClearOfZero: ev - 1.96 * evSe > 0,
+    verdict, text,
+  };
+}
+
+/**
+ * The losing run to expect — so it is not mistaken for the system breaking.
+ *
+ * At a 55% win rate a seven-loss run is near-certain within 300 trades. A
+ * trader who has not been told that will conclude, correctly by their own
+ * evidence and wrongly in fact, that something has stopped working.
+ */
+function expectedStreak(winRate, trades) {
+  if (!(winRate > 0) || !(winRate < 1) || !(trades > 0)) return null;
+  const q = 1 - winRate;
+  const probAtLeast = (k) =>
+    Math.min(1, 1 - (1 - (q ** k) * winRate) ** Math.max(0, trades - k + 1));
+
+  const rows = [];
+  for (let k = 3; k <= 15; k++) rows.push({ length: k, probability: +probAtLeast(k).toFixed(3) });
+  // The longest run that is more likely than not — the one to actually brace for.
+  const likely = rows.filter((r) => r.probability >= 0.5).map((r) => r.length).pop() || 0;
+  return { rows, likelyWorst: likely, trades, winRate };
+}
+
+/** Calendar time for a sample, at a given trade frequency. */
+function timeToSample(trades, tradesPerDay, daysPerWeek = 5) {
+  if (!(trades > 0) || !(tradesPerDay > 0)) return null;
+  const days = trades / tradesPerDay;
+  return {
+    days: Math.ceil(days),
+    weeks: +(days / daysPerWeek).toFixed(1),
+    months: +(days / (daysPerWeek * 4.33)).toFixed(1),
+  };
+}
+
 /* ======================= app.js ======================= */
 /* ===========================================================================
    app.js — wiring. Everything it renders comes from the modules above.
@@ -4150,28 +4335,62 @@ function renderClock() {
   renderSessionStrip(now);
 }
 
-/** A thin progress bar for how much of the window is gone. */
+/**
+ * Where you are in the session — as a COARSE PHASE, deliberately not a countdown.
+ *
+ * This used to be a progress bar and a "15 minutes left" counter, and that was
+ * a mistake worth documenting rather than quietly deleting.
+ *
+ * Salient end-of-period temporal landmarks causally INCREASE financial
+ * risk-taking, via optimism rather than loss-chasing — which means the effect
+ * is reference-independent and fires on winning days too, not just when
+ * someone is down and trying to get back (Shah & Li 2025, Journal of Marketing
+ * Research, across five million real investment decisions; McKenzie et al.
+ * 2016, Journal of Behavioral Decision Making).
+ *
+ * A ticking clock toward 16:00 is precisely that landmark. Rendering it made
+ * the tool an active participant in the behaviour it is supposed to help
+ * against. So: coarse words, no numeric countdown, no progress bar, and no
+ * colour ramping toward the close. Where the last hour needs handling, the
+ * tool changes its own behaviour rather than telling the user to be careful.
+ */
 function renderSessionStrip(now) {
   const w = windowState(now, state.window);
   const el = $('sess-strip');
-  if (w.phase === 'weekend') {
-    el.innerHTML = '<span style="color:var(--label-3)">Weekend — markets closed or thin</span>';
-    return;
+  const say = (text, tone = 'label-3') =>
+    `<span style="color:var(--${tone})">${text}</span>`;
+
+  switch (w.phase) {
+    case 'weekend':
+      el.innerHTML = say('Weekend — markets closed or thin');
+      break;
+    case 'before':
+      el.innerHTML = say('Before the open');
+      break;
+    case 'after':
+      el.innerHTML = say('Your window has closed');
+      break;
+    case 'opening':
+      el.innerHTML = say('Session open');
+      break;
+    case 'closing':
+      el.innerHTML = say('Into the final hour');
+      break;
+    case 'last-30':
+      el.innerHTML = say('Final stretch', 'warn');
+      break;
+    default:
+      el.innerHTML = say('Session open');
   }
-  if (w.phase === 'before') {
-    el.innerHTML = `<span style="color:var(--label-3)">Opens in ${formatDuration(w.opensAtMs - now)}</span>`;
-    return;
-  }
-  if (w.phase === 'after') {
-    el.innerHTML = '<span style="color:var(--label-3)">Your window has closed for today</span>';
-    return;
-  }
-  const col = w.phase === 'last-30' ? 'warn' : 'accent';
-  el.innerHTML = `
-    <span style="color:var(--label-3)">${formatDuration(w.closesAtMs - now)} left</span>
-    <span class="sess-bar"><span class="sess-fill" style="width:${(w.fractionElapsed * 100).toFixed(1)}%;background:var(--${col})"></span></span>`;
 }
 
+/* =============================================================== session */
+
+/**
+ * The first card on the screen, because for someone who trades one fixed
+ * window a day the most useful thing is not a snapshot of one bar — it is what
+ * the rest of the window looks like.
+ */
 function renderFeed() {
   const dot = $('feed-dot'), txt = $('feed-text');
   if (state.sample) {
@@ -4276,11 +4495,6 @@ function renderRead(a) {
 
 /* =============================================================== session */
 
-/**
- * The first card on the screen, because for someone who trades one fixed
- * window a day the most useful thing is not a snapshot of one bar — it is what
- * the rest of the window looks like.
- */
 function renderSessionCard(now) {
   const w = windowState(now, state.window);
   const q = sessionQuality(now, state.pair, state.window);
@@ -4299,14 +4513,15 @@ function renderSessionCard(now) {
     html = head('Weekend', esc(q.note), 'label-3');
   } else if (w.phase === 'before') {
     const next = bands[0];
-    html = head(`Opens in ${formatDuration(w.opensAtMs - now)}`,
-      next ? `First up: <b>${esc(next.name)}</b>. ${esc(next.note)}` : 'Window not started.');
+    html = head('Before the open',
+      next ? `First up when it starts: <b>${esc(next.name)}</b>. ${esc(next.note)}` : 'Window not started.');
   } else if (w.phase === 'after') {
     html = head('Window closed', 'Outside the hours you trade. The tool still reads the chart, but nothing here is aimed at a position you would open now.', 'label-3');
   } else if (w.phase === 'last-30') {
-    // The end of a session is its own risk. Say so without nagging.
-    html = head(`${w.minutesLeft} minutes left`,
-      'Worth knowing what the clock does to judgement here. A position opened now has to work inside the time remaining, which is a constraint the chart knows nothing about — and the urge to make the day back before it closes is the most expensive one in scalping.',
+    // Deliberately NOT a countdown. The confidence bar is raised instead, and
+    // the reason is stated once as arithmetic rather than as advice.
+    html = head('Final stretch',
+      'The threshold for a read has been raised for the rest of the session. A position opened now has to work inside the time left, which is a constraint the chart knows nothing about — and the approach of a deadline measurably increases risk-taking, on good days as much as bad ones.',
       'warn');
   } else {
     html = head(esc(q.name), esc(q.note),
@@ -4786,12 +5001,66 @@ function renderRisk() {
       was unreachable. Corroborating evidence reaches roughly mid-2025, so treat it as a prompt to
       verify rather than as current fact.</p>`;
 
+  renderEdge(allIn || spread, contract);
+
   $('corr-note').innerHTML = floorHtml + `<p class="card-title">You trade both of these</p>
     <p style="font-size:13.5px;color:var(--label-2);margin:0">${esc(CORRELATION_NOTE.message)}</p>
     <p style="font-size:12px;color:var(--label-3);margin:9px 0 0">
       ${esc(CORRELATION_NOTE.window)} correlation ${CORRELATION_NOTE.value}, as of ${esc(CORRELATION_NOTE.asOf)}.
       Correlations move — this one swung hard during 2026. Treat it as a live assumption to re-check,
       not a constant.</p>`;
+}
+
+/* ============================================== is it working yet? ====== */
+
+/**
+ * The honest answer to "am I any good at this", which is usually "not enough
+ * trades to say" for far longer than anyone expects.
+ */
+function renderEdge(costPrice, contract) {
+  const trades = Number($('rec-trades').value) || 0;
+  const wins = Number($('rec-wins').value) || 0;
+  const rr = Number($('rec-rr').value) || 1;
+  const perDay = Number($('rec-perday').value) || 5;
+  const a = state.lastAnalysis;
+  const stop = Number($('stop-dist').value) || (a && a.ok && a.stopDistance) || 0;
+  const costInRisk = stop > 0 && costPrice > 0 ? costPrice / stop : 0;
+
+  if (!trades) {
+    const be = breakEvenRate(rr, costInRisk);
+    const need = be ? tradesNeeded(be + 0.05, be) : null;
+    const t = need ? timeToSample(need, perDay) : null;
+    $('edge-out').innerHTML = `<div class="hr"></div>
+      <p style="font-size:13px;color:var(--label-2);margin:0">
+        Log your trades here and this will tell you whether the result means anything yet.
+        ${be ? `At ${rr}:1 with your current costs, break-even is <b>${(be * 100).toFixed(1)}%</b> — not 50%.` : ''}
+        ${t ? ` Proving a five-point edge over that would take roughly <b>${need} trades</b>, about ${t.months} months at ${perDay} a day.` : ''}</p>`;
+    return;
+  }
+
+  const r = assessRecord({ trades, wins, rewardRisk: rr, costInRisk });
+  if (!r || r.impossible) {
+    $('edge-out').innerHTML = `<div class="hr"></div><div class="unconfirmed">${esc(r ? r.reason : 'Winners cannot exceed trades.')}</div>`;
+    return;
+  }
+
+  const tone = r.verdict === 'edge' ? 'up' : r.verdict === 'negative' ? 'danger' : 'warn';
+  const st = expectedStreak(Math.max(0.05, Math.min(0.95, r.observedRate)), Math.max(trades, 300));
+
+  $('edge-out').innerHTML = `<div class="hr"></div>
+    <div class="row"><dt>Observed</dt><dd>${(r.observedRate * 100).toFixed(1)}%</dd></div>
+    <div class="row"><dt>Break-even after costs</dt><dd>${(r.breakEven * 100).toFixed(1)}%</dd></div>
+    <div class="row"><dt>True rate is somewhere in</dt><dd>${(r.ci[0] * 100).toFixed(0)}–${(r.ci[1] * 100).toFixed(0)}%</dd></div>
+    <div class="row"><dt>Expectancy</dt><dd style="color:var(--${r.expectancyR > 0 ? 'up' : 'down'})">${r.expectancyR > 0 ? '+' : ''}${r.expectancyR.toFixed(3)}R ± ${(1.96 * r.expectancySe).toFixed(3)}</dd></div>
+    <div class="gate${r.verdict === 'edge' ? ' ok' : ''}" style="${r.verdict === 'inconclusive' ? 'background:var(--warn-dim);border-color:rgba(255,214,10,.35)' : ''}">
+      <h4 style="color:var(--${tone})">${r.verdict === 'edge' ? 'Evidence of an edge' : r.verdict === 'negative' ? 'Evidence against it' : 'Not enough trades to say'}</h4>
+      <p>${esc(r.text)}</p>
+    </div>
+    ${st ? `<p style="font-size:12.5px;color:var(--label-2);margin:11px 0 0">
+      At this rate, a losing run of <b>${st.likelyWorst}</b> is more likely than not within 300 trades, and
+      ${((st.rows.find((x) => x.length === st.likelyWorst + 2) || {}).probability * 100 || 0).toFixed(0)}% of samples see ${st.likelyWorst + 2} in a row. Expect it. A run like that is what
+      the arithmetic predicts, not a sign the approach has stopped working — and abandoning a system
+      mid-run is how the sample never gets large enough to answer the question.</p>` : ''}`;
 }
 
 /* ================================================================== chart */
@@ -4954,7 +5223,10 @@ function analyseNow() {
     instrument: inst(),
     spread: currentSpread(),
     blackout: bl,
-    session: sessionQuality(now, state.pair, state.window),
+    session: {
+      ...sessionQuality(now, state.pair, state.window),
+      lastStretch: windowState(now, state.window).phase === 'last-30',
+    },
     nowMs: now,
   });
   state.lastAnalysis = a;
@@ -5079,7 +5351,8 @@ function boot() {
 
   for (const id of ['acct-bal', 'risk-pct', 'fx-rate', 'stop-dist', 'acct-ccy',
     'contract-size', 'min-lot', 'lot-step', 'point-size', 'leverage',
-    'digits', 'stops-level', 'commission', 'live-balance', 'max-volume', 'fill-mode']) {
+    'digits', 'stops-level', 'commission', 'live-balance', 'max-volume', 'fill-mode',
+    'rec-trades', 'rec-wins', 'rec-rr', 'rec-perday']) {
     const el = $(id);
     if (el) { el.oninput = renderRisk; el.onchange = renderRisk; }
   }

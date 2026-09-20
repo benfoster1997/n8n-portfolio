@@ -308,8 +308,6 @@ nav.tabs .badge {
   display: flex; align-items: center; gap: 8px;
   margin-top: 8px; font-size: 11.5px;
 }
-.sess-bar { flex: 1; height: 4px; border-radius: 2px; background: var(--surface-3); overflow: hidden; }
-.sess-fill { height: 100%; border-radius: 2px; background: var(--accent); transition: width .5s ease; }
 
 .plan { display: grid; grid-template-columns: 54px 4px 1fr; gap: 10px; align-items: start; padding: 9px 0; }
 .plan + .plan { border-top: .5px solid var(--hairline); }
@@ -457,6 +455,31 @@ footer.fine {
     </details>
     <div class="card" id="cost-out"></div>
     <div class="card" id="account-note"></div>
+
+    <div class="card">
+      <p class="card-title">Is it working yet?</p>
+      <div class="grid2">
+        <div class="field">
+          <label class="f" for="rec-trades">Trades taken</label>
+          <input class="f num" id="rec-trades" type="number" inputmode="numeric" step="1" placeholder="0">
+        </div>
+        <div class="field">
+          <label class="f" for="rec-wins">Of which winners</label>
+          <input class="f num" id="rec-wins" type="number" inputmode="numeric" step="1" placeholder="0">
+        </div>
+      </div>
+      <div class="grid2">
+        <div class="field">
+          <label class="f" for="rec-rr">Average reward:risk</label>
+          <input class="f num" id="rec-rr" type="number" inputmode="decimal" step="0.1" value="1">
+        </div>
+        <div class="field">
+          <label class="f" for="rec-perday">Trades per day</label>
+          <input class="f num" id="rec-perday" type="number" inputmode="numeric" step="1" value="5">
+        </div>
+      </div>
+      <div id="edge-out"></div>
+    </div>
   </section>
 
   <!-- =========================== SETUP ============================ -->
