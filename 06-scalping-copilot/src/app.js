@@ -415,68 +415,116 @@ function renderRisk() {
   const i = inst();
   const bal = Number($('acct-bal').value) || 0;
   const pct = Number($('risk-pct').value) || 0;
-  const fx = Number($('fx-rate').value) || 1;
   const ccy = $('acct-ccy').value;
+  const gbpusd = Number($('fx-rate').value) || 1;
+  const pointSize = Number($('point-size').value) || 0.10;
+  const marginFactor = Number($('margin-pct').value) || 0.05;
   const spread = currentSpread() || 0;
+  const price = a && a.ok ? a.price : 0;
+
   let stop = Number($('stop-dist').value);
   if (!(stop > 0) && a && a.ok && a.stopDistance) {
     stop = +a.stopDistance.toFixed(dp());
     $('stop-dist').placeholder = String(stop);
   }
 
-  const contract = Number($('contract-size').value) || spec(i, 'dollarMoveValuePerLot');
-  const r = positionSize({
-    accountBalance: bal, riskPercent: pct, stopDistance: stop,
-    valuePerUnitMovePerLot: contract, spread,
-    minLot: Number($('min-lot').value) || spec(i, 'minLot'),
+  const contract = Number($('contract-size').value) || spec(i, 'contractSize');
+  const fx = ccy === 'USD' ? 1 : gbpusd;
+
+  const r = sizeBothModels({
+    equity: bal, riskPercent: pct, stopDistance: stop, price,
+    pointSize, contractSize: contract, marginFactor, fxRate: fx,
+    accountCurrency: ccy, spread,
     lotStep: Number($('lot-step').value) || spec(i, 'lotStep'),
-    accountCurrency: ccy, quoteCurrency: 'USD', fxRate: ccy === 'USD' ? 1 : fx,
+    minLot: Number($('min-lot').value) || spec(i, 'minLot'),
   });
 
-  let html = '<div class="hr"></div>';
-  if (r.blocked.length) {
-    html += `<div class="unconfirmed">${r.blocked.map(esc).join('<br>')}</div>`;
-  }
-  if (r.lots !== null && r.lots > 0) {
-    html += `<div class="row"><dt>Lot size</dt><dd style="font-size:22px;font-weight:700">${r.lots.toFixed(2)}</dd></div>
-      <div class="row"><dt>Risk if stopped</dt><dd>${ccy} ${fmt(r.actualRisk, 2)}</dd></div>
-      <div class="row"><dt>Stop incl. spread</dt><dd>${fmt(r.effectiveStop)}</dd></div>
-      <div class="row"><dt>Spread cost at this size</dt><dd style="color:var(--warn)">${ccy} ${fmt(r.spreadCostAtSize, 2)}</dd></div>`;
-  }
-  $('size-out').innerHTML = html;   // replaced again below once margin is known
+  /* ---- the two models, side by side ---- */
+  if (!r.ok) {
+    $('size-out').innerHTML = `<div class="unconfirmed">${r.blocked.map(esc).join('<br>')}</div>`;
+    $('margin-gate').innerHTML = '';
+    $('point-check').innerHTML = '';
+  } else {
+    $('size-out').innerHTML = `
+      <div class="dual">
+        <div>
+          <div class="lab">Spread bet</div>
+          <div class="big">${ccy === 'GBP' ? '£' : ''}${r.spreadBet.stake.toFixed(2)}</div>
+          <div class="sub">per point · ${r.spreadBet.stopPoints} pt stop</div>
+        </div>
+        <div>
+          <div class="lab">CFD</div>
+          <div class="big">${r.cfd.lots.toFixed(2)}</div>
+          <div class="sub">lots · ${contract} per lot</div>
+        </div>
+      </div>
+      ${r.spreadBet.belowMinimum ? `<div class="unconfirmed">${esc(r.spreadBet.note)}</div>` : ''}
+      ${r.cfd.belowMinimum ? `<div class="unconfirmed">${esc(r.cfd.note)}</div>` : ''}
+      <div class="hr"></div>
+      <div class="row"><dt>Risk budget</dt><dd>${ccy} ${fmt(r.riskBudget, 2)}</dd></div>
+      <div class="row"><dt>Actual risk</dt><dd>${ccy} ${fmt(r.spreadBet.actualRisk, 2)} / ${fmt(r.cfd.actualRisk, 2)}</dd></div>
+      <div class="row"><dt>Stop incl. spread</dt><dd>${fmt(r.effectiveStop)} · ${r.stopFractionOfPrice}% of price</dd></div>
+      <details class="more"><summary>Do these two agree?</summary>
+        <p style="font-size:12.5px;color:var(--label-2);margin:6px 0 0">
+          ${r.bridge.reconciles
+            ? `Yes — they reconcile exactly before rounding (${ccy} ${r.bridge.stakeFromLots}/pt is the same position as ${r.bridge.lotsFromStake} lots). They differ on screen only because each is rounded DOWN to its own increment, which keeps you under the risk budget rather than over it.`
+            : 'They do not reconcile, which means one of the inputs is wrong — most likely the point size or the contract size.'}</p>
+      </details>`;
 
-  // The toll nobody works out before they start.
-  // Margin: the constraint the risk formula knows nothing about.
-  if (r.lots > 0) {
-    const lev = Number($('leverage').value) || 100;
-    const m = marginRequired({
-      price: a && a.ok ? a.price : 0, lots: r.lots,
-      contractSize: spec(i, 'contractSize'), leverage: lev,
-      accountBalance: bal, fxRate: ccy === 'USD' ? 1 : fx,
-    });
-    if (m) {
-      html += `<div class="hr"></div>
-        <div class="row"><dt>Notional</dt><dd>${ccy} ${fmt(m.notional, 0)}</dd></div>
-        <div class="row"><dt>Margin at ${lev}:1</dt><dd style="color:var(--${m.tight ? 'warn' : 'label'})">${ccy} ${fmt(m.margin, 2)} · ${m.pctOfAccount}%</dd></div>
-        <div class="row"><dt>Free after</dt><dd>${ccy} ${fmt(m.freeAfter, 2)}</dd></div>`;
-      if (m.tight) {
-        html += `<div class="unconfirmed">This position is sized correctly for risk but takes
-          ${m.pctOfAccount}% of your margin. Risk sizing has no idea what margin costs, so a
-          "safe" 1% trade can still leave you unable to hold anything else.</div>`;
-      }
-      $('size-out').innerHTML = html;
-    }
+    /* ---- the margin gate: the constraint that actually binds ---- */
+    const m = r.margin;
+    $('margin-gate').innerHTML = `
+      <p class="card-title">Margin</p>
+      <div class="row"><dt>Notional</dt><dd>${ccy} ${fmt(m.notional, 0)}</dd></div>
+      <div class="row"><dt>Margin required</dt><dd style="color:var(--${m.over ? 'danger' : 'label'})">${ccy} ${fmt(m.amount, 2)}</dd></div>
+      <div class="row"><dt>Share of account</dt><dd style="color:var(--${m.over ? 'danger' : 'up'});font-size:19px;font-weight:700">${m.pctOfEquity}%</dd></div>
+      <div class="gate${m.over ? '' : ' ok'}">
+        <h4>${m.over ? 'Margin, not risk, is your limit here' : 'Comfortable on margin'}</h4>
+        <p>${m.over
+          ? esc(m.verdict)
+          : `This leaves ${(100 - m.pctOfEquity).toFixed(0)}% of the account free. Margin only becomes the binding constraint when the stop gets tight relative to price.`}</p>
+      </div>
+      <details class="more"><summary>Why a tighter stop costs more margin, not less</summary>
+        <p style="font-size:12.5px;color:var(--label-2);margin:6px 0 0">
+          Margin as a share of the account is <span class="num">m × r ÷ s</span> — the margin factor,
+          times your risk %, divided by the stop expressed as a <i>fraction of price</i>. Account size
+          cancels out, and so does the price level. Tightening the stop while holding risk constant
+          means a bigger position, and a bigger position needs more margin.
+          <br><br>
+          This is why inherited dollar rules mislead. A $3.00 stop was 0.15% of price when gold was
+          $2,000 and used about a third of an account. At ${fmt(price)} the same $3.00 is
+          ${r.stopFractionOfPrice}% and uses ${m.pctOfEquity}%. The requirement tightens every time
+          gold rises.</p>
+      </details>`;
+
+    /* ---- point size: firm-specific, and a 10x trap if wrong ---- */
+    const rows = stakeAcrossPointSizes(bal, pct, r.effectiveStop);
+    $('point-check').innerHTML = `
+      <p class="card-title">Check your point size</p>
+      <p style="font-size:13px;color:var(--label-2);margin:0 0 11px">
+        A "point" on gold is not standard — firms use $0.01, $0.10 and $1.00, and the stake changes
+        by 10x or 100x between them. Your exposure does not. If the stake you are about to type does
+        not match one of these, the point size is set wrong.</p>
+      ${rows.map((x) => `<div class="row" style="${x.pointSize === pointSize ? 'opacity:1' : 'opacity:.5'}">
+        <dt>$${x.pointSize.toFixed(2)} points${x.pointSize === pointSize ? ' · yours' : ''}</dt>
+        <dd>${ccy} ${x.stake.toFixed(2)}/pt over ${x.stopPoints} pts</dd></div>`).join('')}
+      <div class="hr"></div>
+      <div class="row"><dt>Exposure per $1 gold move</dt><dd>${ccy} ${rows.length ? rows[0].perDollarMove.toFixed(2) : '—'}</dd></div>
+      <p style="font-size:12px;color:var(--label-3);margin:9px 0 0">
+        Identical under all three, which is the point. Check yours in the platform's market
+        information sheet, or open a minimum ticket and see what it says a 1.0 move is worth.</p>`;
   }
 
+  /* ---- cost of scalping ---- */
   let cost = '<p class="card-title">What scalping costs you</p>';
-  if (r.lots > 0 && spread > 0) {
-    const d = spreadDrag({ spread, valuePerUnitMovePerLot: contract, lots: r.lots, tradesPerDay: 15 });
-    cost += `<div class="row"><dt>Per trade</dt><dd>${ccy} ${fmt(d.perTrade, 2)}</dd></div>
-      <div class="row"><dt>15 trades a day</dt><dd>${ccy} ${fmt(d.perDay, 2)}</dd></div>
-      <div class="row"><dt>Over a month</dt><dd style="color:var(--warn);font-size:17px;font-weight:700">${ccy} ${fmt(d.perMonth, 2)}</dd></div>
+  if (r.ok && r.cfd.lots > 0 && spread > 0) {
+    const d = spreadDrag({ spread, valuePerUnitMovePerLot: contract, lots: r.cfd.lots, tradesPerDay: 15 });
+    cost += `<div class="row"><dt>Per trade</dt><dd>${ccy} ${fmt(d.perTrade / fx, 2)}</dd></div>
+      <div class="row"><dt>15 trades a day</dt><dd>${ccy} ${fmt(d.perDay / fx, 2)}</dd></div>
+      <div class="row"><dt>Over a month</dt><dd style="color:var(--warn);font-size:17px;font-weight:700">${ccy} ${fmt(d.perMonth / fx, 2)}</dd></div>
       <p style="font-size:12.5px;color:var(--label-2);margin:11px 0 0">
-        That is the spread alone, before a single losing trade. It is paid whether you are right or wrong,
-        and it is why a scalping edge has to be larger than it first looks.</p>`;
+        That is the spread alone, before a single losing trade. It is paid whether you are right or
+        wrong, and it is why a scalping edge has to be larger than it first looks.</p>`;
   } else {
     cost += '<p style="color:var(--label-2);font-size:13.5px;margin:0">Enter your live spread and a stop distance to see the monthly toll.</p>';
   }
@@ -489,39 +537,36 @@ function renderRisk() {
       <div class="row"><dt>Break-even win rate</dt><dd style="color:var(--${be.rate > 55 ? 'warn' : 'label'})">${be.rate}%</dd></div>
       <div class="row"><dt>If the spread were free</dt><dd style="color:var(--label-3)">${be.costlessRate}%</dd></div>
       <p style="font-size:12.5px;color:var(--label-2);margin:9px 0 0">
-        The gap between those two numbers is what the spread costs you in win rate.
+        The gap between those two is what the spread costs you in win rate.
         You need <b>${be.rate}%</b>, not ${be.costlessRate}%.</p>`;
   }
+  cost += `<div class="hr"></div>
+    <p style="font-size:12.5px;color:var(--label-3);margin:0">
+      Overnight financing is left out of this deliberately, not silently: it is charged at the daily
+      cut, around 22:00 London, and you are flat by 16:00. If you ever hold past the cut, this
+      understates the cost.</p>`;
   $('cost-out').innerHTML = cost;
 
-  // The cost floor does not vary with the hour, and it is the number that
-  // decides how big a move each instrument needs before it is even worth trying.
+  /* ---- cost floor and correlation ---- */
   const goldFloor = costFloorBps(Number(state.spread.XAUUSD) || 0.35, 4391);
   const btcFloor = costFloorBps(Number(state.spread.BTCUSD) || 30, 81000);
   let floorHtml = '';
   if (goldFloor && btcFloor) {
-    floorHtml = `<div class="hr"></div>
-      <p class="card-title">Cost floor per round trip</p>
+    floorHtml = `<p class="card-title">Cost floor per round trip</p>
       <div class="row"><dt>Gold</dt><dd>${goldFloor} bps</dd></div>
       <div class="row"><dt>Bitcoin</dt><dd style="color:var(--warn)">${btcFloor} bps</dd></div>
       <p style="font-size:12.5px;color:var(--label-2);margin:9px 0 0">
-        Bitcoin needs roughly ${(btcFloor / goldFloor).toFixed(1)}x the move gold does just to get back to flat,
-        at every hour of your day. It does not change with the session — it is the constant you are
-        trading against. ${state.spread.XAUUSD && state.spread.BTCUSD ? 'Computed from the spreads you entered.'
-        : 'Using indicative spreads until you enter your own on each instrument.'}</p>`;
+        Bitcoin needs roughly ${(btcFloor / goldFloor).toFixed(1)}x the move gold does just to get back
+        to flat, at every hour of your day. ${state.spread.XAUUSD && state.spread.BTCUSD
+        ? 'Computed from the spreads you entered.' : 'Using indicative spreads until you enter your own on each instrument.'}</p>
+      <div class="hr"></div>`;
   }
-
-  $('corr-note').innerHTML = floorHtml + `<div class="hr"></div><p class="card-title">You trade both of these</p>
+  $('corr-note').innerHTML = floorHtml + `<p class="card-title">You trade both of these</p>
     <p style="font-size:13.5px;color:var(--label-2);margin:0">${esc(CORRELATION_NOTE.message)}</p>
     <p style="font-size:12px;color:var(--label-3);margin:9px 0 0">
       ${esc(CORRELATION_NOTE.window)} correlation ${CORRELATION_NOTE.value}, as of ${esc(CORRELATION_NOTE.asOf)}.
-      Correlations move — this one swung hard during 2026. Treat it as a live assumption to re-check, not a constant.</p>
-    ${state.pair === 'BTCUSD' ? `<div class="hr"></div>
-      <p style="font-size:12.5px;color:var(--label-2);margin:0">
-        <b>Worth knowing which entity this symbol sits on.</b> The FCA bans crypto CFDs for retail
-        clients, so if you hold a BTCUSD position it is not on an FCA-regulated retail account —
-        which usually means different leverage, and often no negative balance protection, from the
-        account your gold sits on. Two symbols, possibly two sets of rules.</p>` : ''}`;
+      Correlations move — this one swung hard during 2026. Treat it as a live assumption to re-check,
+      not a constant.</p>`;
 }
 
 /* ================================================================== chart */
@@ -806,8 +851,10 @@ function boot() {
     selectTab('read'); analyseNow();
   };
 
-  for (const id of ['acct-bal', 'risk-pct', 'fx-rate', 'stop-dist', 'acct-ccy', 'contract-size', 'min-lot', 'lot-step', 'leverage']) {
-    $(id).oninput = renderRisk;
+  for (const id of ['acct-bal', 'risk-pct', 'fx-rate', 'stop-dist', 'acct-ccy',
+    'contract-size', 'min-lot', 'lot-step', 'point-size', 'margin-pct']) {
+    const el = $(id);
+    if (el) { el.oninput = renderRisk; el.onchange = renderRisk; }
   }
   $('live-spread').oninput = () => {
     state.spread[state.pair] = $('live-spread').value;
