@@ -11,6 +11,7 @@ import assert from 'node:assert/strict';
 import {
   sizeBothModels, stakeAcrossPointSizes, marginFraction, minStopForMargin, mt5Ticket,
   spreadDrag, allInSpread, breakEvenWinRate, marginPosture, practiceRealism,
+  orderSplit, fillRisk,
 } from '../src/risk.js';
 import { marginPerLot, bidChartNote, INSTRUMENTS } from '../src/instruments.js';
 
@@ -384,6 +385,71 @@ test('a demo far BELOW the real account is flagged too', () => {
 test('it stays silent until the user says what they would actually trade', () => {
   assert.equal(practiceRealism(9816107.46, 0), null);
   assert.equal(practiceRealism(9816107.46, null), null);
+});
+
+console.log('\nconstraints that only appear at size');
+
+const DEMO = { ...BASE, equity: 9816107.46, marginFactor: 1 / 500 };
+
+test('a correctly sized position can still be too big for one ticket', () => {
+  const r = sizeBothModels(DEMO);
+  assert.ok(r.cfd.lots > 400, `expected a large position, got ${r.cfd.lots}`);
+  const sp = orderSplit(r.cfd.lots, 100);
+  assert.equal(sp.needsSplit, true);
+  assert.equal(sp.orders, 5);
+  assert.equal(sp.perOrder, 100);
+  assert.ok(sp.remainder > 0 && sp.remainder < 100);
+  // Sensible on risk, comfortable on margin, and still unplaceable as one order.
+  assert.equal(r.margin.over, false);
+});
+
+test('splitting is not charged twice in spread, and the note says so', () => {
+  const sp = orderSplit(431.26, 100);
+  assert.ok(/does not cost more in spread/i.test(sp.text));
+  assert.ok(/later ones/i.test(sp.text), 'the real cost is execution, not spread');
+});
+
+test('an exact multiple needs no remainder order', () => {
+  const sp = orderSplit(300, 100);
+  assert.equal(sp.orders, 3);
+  assert.equal(sp.remainder, null);
+});
+
+test('a small position never triggers a split', () => {
+  assert.equal(orderSplit(0.45, 100).needsSplit, false);
+  assert.equal(orderSplit(100, 100).needsSplit, false, 'exactly at the cap is one order');
+});
+
+test('an unknown cap is reported as unknown, not as "fine"', () => {
+  const sp = orderSplit(431.26, 0);
+  assert.equal(sp.unknown, true);
+  assert.equal(sp.needsSplit, false);
+});
+
+test('Immediate-or-Cancel at size warns about a partial fill', () => {
+  const fr = fillRisk({ lots: 431.26, contractSize: 100, fillMode: 'ioc' });
+  assert.equal(fr.large, true);
+  assert.equal(fr.units, 43126);
+  assert.ok(/partial fill/i.test(fr.text));
+  assert.ok(/smaller than the one you sized/i.test(fr.text),
+    'the risk calculation breaks downward, and that should be said');
+});
+
+test('a small position gets no fill warning', () => {
+  const fr = fillRisk({ lots: 0.45, contractSize: 100, fillMode: 'ioc' });
+  assert.equal(fr.large, false);
+  assert.equal(fr.text, undefined);
+});
+
+test('margin still reads "no brake" at the demo balance and 1:500', () => {
+  const r = sizeBothModels(DEMO);
+  const p = marginPosture({
+    marginPct: r.margin.pctOfEquity / 100, leverage: 500,
+    equity: DEMO.equity, marginPerLotAccount: (100 / 500) * DEMO.price / DEMO.fxRate,
+    wantedLots: r.cfd.lots,
+  });
+  assert.equal(p.state, 'no-brake',
+    'a big balance does not change the fact that leverage has removed the limit');
 });
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

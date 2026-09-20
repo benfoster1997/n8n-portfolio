@@ -476,6 +476,15 @@ function renderRisk() {
           : ''}
       </div>
       ${tk.warning ? `<div class="unconfirmed" style="color:var(--danger);background:var(--danger-dim)">${esc(tk.warning)}</div>` : ''}
+      ${(() => {
+        const sp = orderSplit(tk.volume, Number($('max-volume').value) || 0);
+        return sp && sp.needsSplit
+          ? `<div class="unconfirmed" style="color:var(--warn);background:var(--warn-dim)">${esc(sp.text)}</div>` : '';
+      })()}
+      ${(() => {
+        const fr = fillRisk({ lots: tk.volume, contractSize: contract, fillMode: $('fill-mode').value });
+        return fr && fr.large ? `<div class="unconfirmed">${esc(fr.text)}</div>` : '';
+      })()}
       <p style="font-size:12.5px;color:var(--label-2);margin:12px 0 0">
         Stop and target are <b>absolute price levels</b>, which is what the mobile ticket expects —
         not distances. Market price was ${fmt(a.price, digits)} when this was computed;
@@ -992,7 +1001,7 @@ function boot() {
 
   for (const id of ['acct-bal', 'risk-pct', 'fx-rate', 'stop-dist', 'acct-ccy',
     'contract-size', 'min-lot', 'lot-step', 'point-size', 'leverage',
-    'digits', 'stops-level', 'commission', 'live-balance']) {
+    'digits', 'stops-level', 'commission', 'live-balance', 'max-volume', 'fill-mode']) {
     const el = $(id);
     if (el) { el.oninput = renderRisk; el.onchange = renderRisk; }
   }

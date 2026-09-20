@@ -463,3 +463,64 @@ export function practiceRealism(balance, intendedLiveBalance) {
       : `This balance is well below what you would actually trade, so the positions will be too small to behave like the real thing.`,
   };
 }
+
+/**
+ * Whether the position can actually be placed as one order.
+ *
+ * A constraint that does not exist on a small account and becomes the binding
+ * one on a large one. Brokers cap volume PER ORDER — commonly around 100 lots
+ * on metals — so a correctly-sized position can be perfectly sensible on risk,
+ * comfortable on margin, and still impossible to enter in a single ticket.
+ *
+ * Splitting does not multiply the spread: it is charged on volume, so N orders
+ * of M lots cost the same as one order of N*M. What it does change is
+ * execution. Each ticket is a separate fill, and the later ones fill against
+ * whatever the book looks like by the time they land — which on a five-minute
+ * scalp can be a different price from the one the decision was made at.
+ */
+export function orderSplit(lots, maxVolumePerOrder) {
+  if (!(lots > 0)) return null;
+  if (!(maxVolumePerOrder > 0)) {
+    return { needsSplit: false, unknown: true, orders: 1 };
+  }
+  if (lots <= maxVolumePerOrder) return { needsSplit: false, unknown: false, orders: 1 };
+
+  const full = Math.floor(lots / maxVolumePerOrder);
+  const remainder = +(lots - full * maxVolumePerOrder).toFixed(2);
+  const orders = full + (remainder > 0 ? 1 : 0);
+  return {
+    needsSplit: true,
+    unknown: false,
+    orders,
+    perOrder: maxVolumePerOrder,
+    remainder: remainder > 0 ? remainder : null,
+    text: `This will not go through as one ticket. Your broker caps an order at ${maxVolumePerOrder} lots, so it is ${full} order${full === 1 ? '' : 's'} of ${maxVolumePerOrder}${remainder > 0 ? ` plus one of ${remainder}` : ''} — ${orders} fills. The spread is charged on volume so splitting does not cost more in spread, but each fill lands separately and the later ones get whatever price exists by then.`,
+  };
+}
+
+/**
+ * Immediate-or-Cancel, at size.
+ *
+ * IOC fills whatever liquidity is there and cancels the rest, rather than
+ * waiting. On a small order that is invisible. On a large one it means the
+ * likely outcome is a PARTIAL fill at an average price worse than the screen —
+ * so the position that actually exists may be smaller than the one that was
+ * sized, which quietly breaks the risk calculation in the direction of holding
+ * less than intended rather than more.
+ *
+ * `ouncesPerLot * lots` is the real measure here: 400 lots of gold is 40,000
+ * ounces, and that is a different order of request from 0.45 lots.
+ */
+export function fillRisk({ lots, contractSize, fillMode, largeThresholdUnits = 5000 }) {
+  if (!(lots > 0) || !(contractSize > 0)) return null;
+  const units = lots * contractSize;
+  const large = units >= largeThresholdUnits;
+  if (!large) return { large: false, units };
+  return {
+    large: true,
+    units,
+    text: fillMode === 'ioc'
+      ? `This is ${units.toLocaleString()} ounces. Your symbol fills Immediate-or-Cancel, which takes whatever liquidity is there and cancels the rest — so at this size a partial fill is the likely outcome, at an average price worse than the one on screen. The position you end up with may be smaller than the one you sized.`
+      : `This is ${units.toLocaleString()} ounces. At this size the fill is unlikely to come at a single price, and the average will be worse than the screen.`,
+  };
+}
