@@ -523,12 +523,18 @@ function renderRisk() {
       <div class="row"><dt>Notional</dt><dd>${ccy} ${fmt(m.notional, 0)}</dd></div>
       <div class="row"><dt>Margin required</dt><dd style="color:var(--${m.over ? 'danger' : 'label'})">${ccy} ${fmt(m.amount, 2)}</dd></div>
       <div class="row"><dt>Share of account</dt><dd style="color:var(--${m.over ? 'danger' : 'up'});font-size:19px;font-weight:700">${m.pctOfEquity}%</dd></div>
-      <div class="gate${m.over ? '' : ' ok'}">
-        <h4>${m.over ? 'Margin, not risk, is your limit here' : 'Comfortable on margin'}</h4>
-        <p>${m.over
-          ? esc(m.verdict)
-          : `This leaves ${(100 - m.pctOfEquity).toFixed(0)}% of the account free. Margin only becomes the binding constraint when the stop gets tight relative to price.`}</p>
-      </div>
+      ${(() => {
+        const posture = marginPosture({
+          marginPct: m.pctOfEquity / 100, leverage, equity: bal,
+          marginPerLotAccount: mpl ? mpl.amount / fx : null, wantedLots: r.cfd.lots,
+        });
+        if (!posture) return '';
+        const cls = posture.state === 'comfortable' ? ' ok' : '';
+        return `<div class="gate${cls}">
+          <h4>${esc(posture.headline)}</h4>
+          <p>${posture.state === 'binding' ? esc(m.verdict) : esc(posture.text)}</p>
+        </div>`;
+      })()}
       <details class="more"><summary>Why a tighter stop costs more margin, not less</summary>
         <p style="font-size:12.5px;color:var(--label-2);margin:6px 0 0">
           Margin as a share of the account is <span class="num">m × r ÷ s</span> — the margin factor,
@@ -562,6 +568,12 @@ function renderRisk() {
         Cross-check: ${ccy} ${r.bridge.stakeFromLots}/pt is the same position as ${r.bridge.lotsFromStake} lots.
         The two agree exactly before rounding.</p>` : ''}`;
   }
+
+  /* ---- is this practice teaching anything transferable? ---- */
+  const liveBal = Number($('live-balance').value) || 0;
+  const realism = practiceRealism(bal, liveBal);
+  const realismHtml = realism && !realism.ok
+    ? `<div class="unconfirmed">${esc(realism.text)}</div>` : '';
 
   /* ---- cost of scalping ---- */
   const allIn = allInSpread(spread, commission, contract);
@@ -606,7 +618,7 @@ function renderRisk() {
       Overnight financing is left out of this deliberately, not silently: it is charged at the daily
       cut, around 22:00 London, and you are flat by 16:00. If you ever hold past the cut, this
       understates the cost.</p>`;
-  $('cost-out').innerHTML = cost;
+  $('cost-out').innerHTML = cost + realismHtml;
 
   /* ---- cost floor and correlation ---- */
   const goldFloor = costFloorBps(Number(state.spread.XAUUSD) || 0.35, 4391);
@@ -980,7 +992,7 @@ function boot() {
 
   for (const id of ['acct-bal', 'risk-pct', 'fx-rate', 'stop-dist', 'acct-ccy',
     'contract-size', 'min-lot', 'lot-step', 'point-size', 'leverage',
-    'digits', 'stops-level', 'commission']) {
+    'digits', 'stops-level', 'commission', 'live-balance']) {
     const el = $(id);
     if (el) { el.oninput = renderRisk; el.onchange = renderRisk; }
   }

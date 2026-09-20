@@ -10,7 +10,7 @@
 import assert from 'node:assert/strict';
 import {
   sizeBothModels, stakeAcrossPointSizes, marginFraction, minStopForMargin, mt5Ticket,
-  spreadDrag, allInSpread, breakEvenWinRate,
+  spreadDrag, allInSpread, breakEvenWinRate, marginPosture, practiceRealism,
 } from '../src/risk.js';
 import { marginPerLot, bidChartNote, INSTRUMENTS } from '../src/instruments.js';
 
@@ -319,6 +319,71 @@ test('the confirmed gold specification is recorded as confirmed', () => {
     assert.equal(g[k].confirmed, true, `${k} should be marked confirmed, not a default`);
     assert.notEqual(g[k].confirm, true, `${k} should no longer be awaiting confirmation`);
   }
+});
+
+console.log('\nwhat margin is actually doing');
+
+test('at regulated leverage, margin is a genuine brake', () => {
+  const p = marginPosture({
+    marginPct: 0.73, leverage: 20, equity: 10000,
+    marginPerLotAccount: 16325, wantedLots: 0.45,
+  });
+  assert.equal(p.state, 'binding');
+  assert.ok(p.maxLots < 1, 'a £10k account cannot hold even one lot at 1:20');
+});
+
+test('at 1:500 it is NOT a brake, and the tool says so rather than saying "comfortable"', () => {
+  const p = marginPosture({
+    marginPct: 0.029, leverage: 500, equity: 10000,
+    marginPerLotAccount: 653, wantedLots: 0.45,
+  });
+  assert.equal(p.state, 'no-brake');
+  assert.notEqual(p.headline, 'Comfortable on margin',
+    'a low margin figure at high leverage is true but gives the wrong impression');
+  assert.ok(/not protecting|absence of a limit/i.test(p.headline + p.text));
+  assert.ok(p.headroom > 30, 'the account could hold ~34x the intended position');
+});
+
+test('low margin at LOW leverage is genuinely comfortable', () => {
+  const p = marginPosture({
+    marginPct: 0.24, leverage: 20, equity: 10000,
+    marginPerLotAccount: 16325, wantedLots: 0.15,
+  });
+  assert.equal(p.state, 'comfortable',
+    'the warning is about leverage removing a limit, not about a small number');
+});
+
+test('the binding case wins even at high leverage', () => {
+  const p = marginPosture({
+    marginPct: 0.8, leverage: 500, equity: 10000,
+    marginPerLotAccount: 653, wantedLots: 12,
+  });
+  assert.equal(p.state, 'binding');
+});
+
+console.log('\npractice that transfers');
+
+test('a demo funded far above the real account is flagged', () => {
+  const r = practiceRealism(9816107.46, 10000);
+  assert.equal(r.ok, false);
+  assert.ok(r.ratio > 900);
+  assert.ok(/habits transfer|calibrated to the wrong number/i.test(r.text));
+});
+
+test('a demo matched to the real account passes', () => {
+  assert.equal(practiceRealism(10000, 10000).ok, true);
+  assert.equal(practiceRealism(12000, 10000).ok, true);
+});
+
+test('a demo far BELOW the real account is flagged too', () => {
+  const r = practiceRealism(500, 10000);
+  assert.equal(r.ok, false);
+  assert.ok(/below/i.test(r.text));
+});
+
+test('it stays silent until the user says what they would actually trade', () => {
+  assert.equal(practiceRealism(9816107.46, 0), null);
+  assert.equal(practiceRealism(9816107.46, null), null);
 });
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

@@ -417,12 +417,12 @@ footer.fine {
         <div class="field">
           <label class="f" for="leverage">Account leverage</label>
           <select class="f" id="leverage">
-            <option value="20" selected>1:20 — FCA tier for gold</option>
+            <option value="20">1:20 — FCA tier for gold</option>
             <option value="30">1:30</option>
             <option value="50">1:50</option>
             <option value="100">1:100</option>
             <option value="200">1:200</option>
-            <option value="500">1:500</option>
+            <option value="500" selected>1:500</option>
           </select>
         </div>
       </div>
@@ -436,9 +436,15 @@ footer.fine {
           <input class="f num" id="live-spread" type="number" inputmode="decimal" step="0.01">
         </div>
       </div>
-      <div class="field">
-        <label class="f" for="commission">Commission per lot, round turn</label>
-        <input class="f num" id="commission" type="number" inputmode="decimal" step="0.01" placeholder="0">
+      <div class="grid2">
+        <div class="field">
+          <label class="f" for="commission">Commission per lot, round turn</label>
+          <input class="f num" id="commission" type="number" inputmode="decimal" step="0.01" placeholder="0">
+        </div>
+        <div class="field">
+          <label class="f" for="live-balance">Balance you would trade live</label>
+          <input class="f num" id="live-balance" type="number" inputmode="decimal" placeholder="optional">
+        </div>
       </div>
       <div id="size-out"></div>
     </div>
@@ -2134,6 +2140,74 @@ function mt5Ticket({ side, entry, invalidation, target, lots, digits = 2, stopsL
     warning: tooTight
       ? `This stop is ${dist.toFixed(digits)} from price, inside your broker's minimum stop distance of ${stopsLevel}. MT5 will reject the order — widen the stop or wait for a better entry.`
       : null,
+  };
+}
+
+/**
+ * What margin is actually doing for you, which depends entirely on leverage.
+ *
+ * At a regulated 1:20 on gold, margin is a genuine brake: a £10,000 account
+ * physically cannot hold more than about 0.6 lots, so over-sizing is stopped
+ * by the platform before it can hurt. At 1:500 the same account can hold 15
+ * lots. If a 1%-risk position is 0.45, nothing whatsoever stands between the
+ * trader and thirty times that.
+ *
+ * So a tool that just prints "2.9% of account — comfortable" at high leverage
+ * is telling the truth and giving the wrong impression. High leverage does not
+ * make a position safe; it removes the only external limit on its size. That
+ * is worth saying in as many words, which is what this function is for.
+ */
+function marginPosture({ marginPct, leverage, equity, marginPerLotAccount, wantedLots }) {
+  if (marginPct === null || marginPct === undefined) return null;
+  const maxLots = marginPerLotAccount > 0 ? equity / marginPerLotAccount : null;
+  const headroom = maxLots && wantedLots > 0 ? maxLots / wantedLots : null;
+
+  if (marginPct > 0.5) {
+    return {
+      state: 'binding',
+      headline: 'Margin, not risk, is your limit here',
+      maxLots, headroom,
+      text: 'The position is sized correctly for risk but takes most of the account in margin. You will not be able to hold anything alongside it, and there is little room between a normal adverse move and a forced close-out.',
+    };
+  }
+
+  if (leverage >= 100 && headroom && headroom > 8) {
+    return {
+      state: 'no-brake',
+      headline: 'Margin is not protecting you at this leverage',
+      maxLots, headroom,
+      text: `At 1:${leverage} this position uses ${(marginPct * 100).toFixed(1)}% of the account, and the platform would let you hold about ${maxLots.toFixed(1)} lots — roughly ${Math.round(headroom)} times what your risk setting actually calls for. That is not headroom, it is the absence of a limit. On a regulated account the margin requirement stops over-sizing before it can hurt; here nothing does, so the only thing standing between you and a position thirty times too big is the number you decided on.`,
+    };
+  }
+
+  return {
+    state: 'comfortable',
+    headline: 'Comfortable on margin',
+    maxLots, headroom,
+    text: `This leaves ${((1 - marginPct) * 100).toFixed(0)}% of the account free. Margin becomes the binding constraint only when the stop is tight relative to price and leverage is low.`,
+  };
+}
+
+/**
+ * Whether a practice balance is teaching anything transferable.
+ *
+ * A demo funded far above what will actually be traded is worse than no
+ * practice, because every habit it builds is calibrated to the wrong number:
+ * position size, the look of the P&L, and — the part that matters most for a
+ * scalper — what a losing run feels like. A £9.8m demo at 1% risk sizes 438
+ * lots where a £10k account sizes 0.45. Nothing about the first prepares you
+ * for the second.
+ */
+function practiceRealism(balance, intendedLiveBalance) {
+  if (!(balance > 0) || !(intendedLiveBalance > 0)) return null;
+  const ratio = balance / intendedLiveBalance;
+  if (ratio < 3 && ratio > 0.33) return { ok: true, ratio: +ratio.toFixed(1) };
+  return {
+    ok: false,
+    ratio: +ratio.toFixed(1),
+    text: ratio > 1
+      ? `This balance is about ${Math.round(ratio)}x what you say you would actually trade. Position sizes, the P&L figures and what a losing run feels like will all be calibrated to the wrong number, so none of the habits transfer. Most brokers let you set a demo deposit — matching it to the real figure is the single change that makes practice worth doing.`
+      : `This balance is well below what you would actually trade, so the positions will be too small to behave like the real thing.`,
   };
 }
 
@@ -4452,12 +4526,18 @@ function renderRisk() {
       <div class="row"><dt>Notional</dt><dd>${ccy} ${fmt(m.notional, 0)}</dd></div>
       <div class="row"><dt>Margin required</dt><dd style="color:var(--${m.over ? 'danger' : 'label'})">${ccy} ${fmt(m.amount, 2)}</dd></div>
       <div class="row"><dt>Share of account</dt><dd style="color:var(--${m.over ? 'danger' : 'up'});font-size:19px;font-weight:700">${m.pctOfEquity}%</dd></div>
-      <div class="gate${m.over ? '' : ' ok'}">
-        <h4>${m.over ? 'Margin, not risk, is your limit here' : 'Comfortable on margin'}</h4>
-        <p>${m.over
-          ? esc(m.verdict)
-          : `This leaves ${(100 - m.pctOfEquity).toFixed(0)}% of the account free. Margin only becomes the binding constraint when the stop gets tight relative to price.`}</p>
-      </div>
+      ${(() => {
+        const posture = marginPosture({
+          marginPct: m.pctOfEquity / 100, leverage, equity: bal,
+          marginPerLotAccount: mpl ? mpl.amount / fx : null, wantedLots: r.cfd.lots,
+        });
+        if (!posture) return '';
+        const cls = posture.state === 'comfortable' ? ' ok' : '';
+        return `<div class="gate${cls}">
+          <h4>${esc(posture.headline)}</h4>
+          <p>${posture.state === 'binding' ? esc(m.verdict) : esc(posture.text)}</p>
+        </div>`;
+      })()}
       <details class="more"><summary>Why a tighter stop costs more margin, not less</summary>
         <p style="font-size:12.5px;color:var(--label-2);margin:6px 0 0">
           Margin as a share of the account is <span class="num">m × r ÷ s</span> — the margin factor,
@@ -4491,6 +4571,12 @@ function renderRisk() {
         Cross-check: ${ccy} ${r.bridge.stakeFromLots}/pt is the same position as ${r.bridge.lotsFromStake} lots.
         The two agree exactly before rounding.</p>` : ''}`;
   }
+
+  /* ---- is this practice teaching anything transferable? ---- */
+  const liveBal = Number($('live-balance').value) || 0;
+  const realism = practiceRealism(bal, liveBal);
+  const realismHtml = realism && !realism.ok
+    ? `<div class="unconfirmed">${esc(realism.text)}</div>` : '';
 
   /* ---- cost of scalping ---- */
   const allIn = allInSpread(spread, commission, contract);
@@ -4535,7 +4621,7 @@ function renderRisk() {
       Overnight financing is left out of this deliberately, not silently: it is charged at the daily
       cut, around 22:00 London, and you are flat by 16:00. If you ever hold past the cut, this
       understates the cost.</p>`;
-  $('cost-out').innerHTML = cost;
+  $('cost-out').innerHTML = cost + realismHtml;
 
   /* ---- cost floor and correlation ---- */
   const goldFloor = costFloorBps(Number(state.spread.XAUUSD) || 0.35, 4391);
@@ -4909,7 +4995,7 @@ function boot() {
 
   for (const id of ['acct-bal', 'risk-pct', 'fx-rate', 'stop-dist', 'acct-ccy',
     'contract-size', 'min-lot', 'lot-step', 'point-size', 'leverage',
-    'digits', 'stops-level', 'commission']) {
+    'digits', 'stops-level', 'commission', 'live-balance']) {
     const el = $(id);
     if (el) { el.oninput = renderRisk; el.onchange = renderRisk; }
   }

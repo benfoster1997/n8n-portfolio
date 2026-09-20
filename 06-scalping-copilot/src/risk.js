@@ -395,3 +395,71 @@ export function mt5Ticket({ side, entry, invalidation, target, lots, digits = 2,
       : null,
   };
 }
+
+/**
+ * What margin is actually doing for you, which depends entirely on leverage.
+ *
+ * At a regulated 1:20 on gold, margin is a genuine brake: a £10,000 account
+ * physically cannot hold more than about 0.6 lots, so over-sizing is stopped
+ * by the platform before it can hurt. At 1:500 the same account can hold 15
+ * lots. If a 1%-risk position is 0.45, nothing whatsoever stands between the
+ * trader and thirty times that.
+ *
+ * So a tool that just prints "2.9% of account — comfortable" at high leverage
+ * is telling the truth and giving the wrong impression. High leverage does not
+ * make a position safe; it removes the only external limit on its size. That
+ * is worth saying in as many words, which is what this function is for.
+ */
+export function marginPosture({ marginPct, leverage, equity, marginPerLotAccount, wantedLots }) {
+  if (marginPct === null || marginPct === undefined) return null;
+  const maxLots = marginPerLotAccount > 0 ? equity / marginPerLotAccount : null;
+  const headroom = maxLots && wantedLots > 0 ? maxLots / wantedLots : null;
+
+  if (marginPct > 0.5) {
+    return {
+      state: 'binding',
+      headline: 'Margin, not risk, is your limit here',
+      maxLots, headroom,
+      text: 'The position is sized correctly for risk but takes most of the account in margin. You will not be able to hold anything alongside it, and there is little room between a normal adverse move and a forced close-out.',
+    };
+  }
+
+  if (leverage >= 100 && headroom && headroom > 8) {
+    return {
+      state: 'no-brake',
+      headline: 'Margin is not protecting you at this leverage',
+      maxLots, headroom,
+      text: `At 1:${leverage} this position uses ${(marginPct * 100).toFixed(1)}% of the account, and the platform would let you hold about ${maxLots.toFixed(1)} lots — roughly ${Math.round(headroom)} times what your risk setting actually calls for. That is not headroom, it is the absence of a limit. On a regulated account the margin requirement stops over-sizing before it can hurt; here nothing does, so the only thing standing between you and a position thirty times too big is the number you decided on.`,
+    };
+  }
+
+  return {
+    state: 'comfortable',
+    headline: 'Comfortable on margin',
+    maxLots, headroom,
+    text: `This leaves ${((1 - marginPct) * 100).toFixed(0)}% of the account free. Margin becomes the binding constraint only when the stop is tight relative to price and leverage is low.`,
+  };
+}
+
+/**
+ * Whether a practice balance is teaching anything transferable.
+ *
+ * A demo funded far above what will actually be traded is worse than no
+ * practice, because every habit it builds is calibrated to the wrong number:
+ * position size, the look of the P&L, and — the part that matters most for a
+ * scalper — what a losing run feels like. A £9.8m demo at 1% risk sizes 438
+ * lots where a £10k account sizes 0.45. Nothing about the first prepares you
+ * for the second.
+ */
+export function practiceRealism(balance, intendedLiveBalance) {
+  if (!(balance > 0) || !(intendedLiveBalance > 0)) return null;
+  const ratio = balance / intendedLiveBalance;
+  if (ratio < 3 && ratio > 0.33) return { ok: true, ratio: +ratio.toFixed(1) };
+  return {
+    ok: false,
+    ratio: +ratio.toFixed(1),
+    text: ratio > 1
+      ? `This balance is about ${Math.round(ratio)}x what you say you would actually trade. Position sizes, the P&L figures and what a losing run feels like will all be calibrated to the wrong number, so none of the habits transfer. Most brokers let you set a demo deposit — matching it to the real figure is the single change that makes practice worth doing.`
+      : `This balance is well below what you would actually trade, so the positions will be too small to behave like the real thing.`,
+  };
+}
