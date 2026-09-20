@@ -439,6 +439,55 @@ function renderRisk() {
     minLot: Number($('min-lot').value) || spec(i, 'minLot'),
   });
 
+  /* ---- the ticket: exactly what goes into the MT5 order form ---- */
+  const digits = Number($('digits').value) || dp();
+  const stopsLevel = Number($('stops-level').value) || 0;
+  const side = a && a.ok && a.bias === 'long' ? 'buy' : a && a.ok && a.bias === 'short' ? 'sell' : null;
+  const tk = (side && a.invalidation)
+    ? mt5Ticket({
+        side, entry: a.price, invalidation: a.invalidation,
+        target: a.targets && a.targets.length ? a.targets[0].price : null,
+        lots: r.ok ? r.cfd.lots : 0, digits, stopsLevel,
+      })
+    : null;
+
+  if (!tk) {
+    const why = !a || !a.ok ? 'No read yet.'
+      : a.state === 'stand-aside' ? `Standing aside for ${esc(a.headline.replace(/^Stand aside — /, ''))}.`
+      : a.state === 'stand-down' ? `${esc(a.headline)} — the read is being withheld.`
+      : a.bias === 'neutral' ? 'No directional read, so there is no ticket to fill.'
+      : 'Not enough to build a ticket.';
+    $('ticket').innerHTML = `<p class="card-title">Type this into MT5</p>
+      <p style="font-size:13.5px;color:var(--label-2);margin:0">${why}</p>`;
+  } else {
+    $('ticket').innerHTML = `
+      <p class="card-title">Type this into MT5</p>
+      <span class="ticket-side ${tk.side}">${tk.side.toUpperCase()} ${esc(inst().display)}</span>
+      <div class="ticket">
+        <div class="tk"><div class="tk-lab"><b>Volume</b>lots</div><div class="tk-val">${tk.volume.toFixed(2)}</div></div>
+        <div class="tk"><div class="tk-lab"><b>Stop loss</b>price level</div><div class="tk-val down">${fmt(tk.stopLoss, digits)}</div></div>
+        ${tk.takeProfit !== null
+          ? `<div class="tk"><div class="tk-lab"><b>Take profit</b>price level</div><div class="tk-val up">${fmt(tk.takeProfit, digits)}</div></div>`
+          : ''}
+      </div>
+      ${tk.warning ? `<div class="unconfirmed" style="color:var(--danger);background:var(--danger-dim)">${esc(tk.warning)}</div>` : ''}
+      <p style="font-size:12.5px;color:var(--label-2);margin:12px 0 0">
+        Stop and target are <b>absolute price levels</b>, which is what the mobile ticket expects —
+        not distances. Market price was ${fmt(a.price, digits)} when this was computed;
+        if it has moved, the levels still hold but the risk no longer matches.</p>
+      <details class="more"><summary>Where these go in the app</summary>
+        <p style="font-size:13px;color:var(--label-2);margin:6px 0 0">
+          <b>Quotes</b> &rarr; tap the symbol &rarr; the order ticket. Put the volume in
+          <b>Volume</b>, then the two levels in <b>Stop Loss</b> and <b>Take Profit</b>, then
+          ${tk.side === 'buy' ? 'the blue <b>BUY</b> button on the right' : 'the blue <b>SELL</b> button on the left'}.
+          <br><br>
+          On many brokers the stop and target fields are greyed out under Market Execution until the
+          position exists — if so, place it, then long-press the row on the <b>Trade</b> tab and use
+          <b>Modify Position</b> to set them. Worth knowing before a news window rather than during one:
+          the same Trade tab closes everything in a couple of taps.</p>
+      </details>`;
+  }
+
   /* ---- the two models, side by side ---- */
   if (!r.ok) {
     $('size-out').innerHTML = `<div class="unconfirmed">${r.blocked.map(esc).join('<br>')}</div>`;
@@ -446,30 +495,13 @@ function renderRisk() {
     $('point-check').innerHTML = '';
   } else {
     $('size-out').innerHTML = `
-      <div class="dual">
-        <div>
-          <div class="lab">Spread bet</div>
-          <div class="big">${ccy === 'GBP' ? '£' : ''}${r.spreadBet.stake.toFixed(2)}</div>
-          <div class="sub">per point · ${r.spreadBet.stopPoints} pt stop</div>
-        </div>
-        <div>
-          <div class="lab">CFD</div>
-          <div class="big">${r.cfd.lots.toFixed(2)}</div>
-          <div class="sub">lots · ${contract} per lot</div>
-        </div>
-      </div>
-      ${r.spreadBet.belowMinimum ? `<div class="unconfirmed">${esc(r.spreadBet.note)}</div>` : ''}
+      <div class="row"><dt>Volume</dt><dd style="font-size:22px;font-weight:700">${r.cfd.lots.toFixed(2)} lots</dd></div>
+      <div class="row"><dt>Contract size</dt><dd>${contract} per lot</dd></div>
       ${r.cfd.belowMinimum ? `<div class="unconfirmed">${esc(r.cfd.note)}</div>` : ''}
       <div class="hr"></div>
       <div class="row"><dt>Risk budget</dt><dd>${ccy} ${fmt(r.riskBudget, 2)}</dd></div>
-      <div class="row"><dt>Actual risk</dt><dd>${ccy} ${fmt(r.spreadBet.actualRisk, 2)} / ${fmt(r.cfd.actualRisk, 2)}</dd></div>
-      <div class="row"><dt>Stop incl. spread</dt><dd>${fmt(r.effectiveStop)} · ${r.stopFractionOfPrice}% of price</dd></div>
-      <details class="more"><summary>Do these two agree?</summary>
-        <p style="font-size:12.5px;color:var(--label-2);margin:6px 0 0">
-          ${r.bridge.reconciles
-            ? `Yes — they reconcile exactly before rounding (${ccy} ${r.bridge.stakeFromLots}/pt is the same position as ${r.bridge.lotsFromStake} lots). They differ on screen only because each is rounded DOWN to its own increment, which keeps you under the risk budget rather than over it.`
-            : 'They do not reconcile, which means one of the inputs is wrong — most likely the point size or the contract size.'}</p>
-      </details>`;
+      <div class="row"><dt>Actual risk</dt><dd>${ccy} ${fmt(r.cfd.actualRisk, 2)}</dd></div>
+      <div class="row"><dt>Stop incl. spread</dt><dd>${fmt(r.effectiveStop)} · ${r.stopFractionOfPrice}% of price</dd></div>`;
 
     /* ---- the margin gate: the constraint that actually binds ---- */
     const m = r.margin;
@@ -500,19 +532,22 @@ function renderRisk() {
     /* ---- point size: firm-specific, and a 10x trap if wrong ---- */
     const rows = stakeAcrossPointSizes(bal, pct, r.effectiveStop);
     $('point-check').innerHTML = `
-      <p class="card-title">Check your point size</p>
-      <p style="font-size:13px;color:var(--label-2);margin:0 0 11px">
-        A "point" on gold is not standard — firms use $0.01, $0.10 and $1.00, and the stake changes
-        by 10x or 100x between them. Your exposure does not. If the stake you are about to type does
-        not match one of these, the point size is set wrong.</p>
-      ${rows.map((x) => `<div class="row" style="${x.pointSize === pointSize ? 'opacity:1' : 'opacity:.5'}">
-        <dt>$${x.pointSize.toFixed(2)} points${x.pointSize === pointSize ? ' · yours' : ''}</dt>
+      <p style="font-size:13px;color:var(--label-2);margin:11px 0">
+        You type lots into MT5 whichever kind of account this is, so this is only a cross-check —
+        useful if your statement or another platform shows the position per point.</p>
+      ${rows.map((x) => `<div class="row" style="${x.pointSize === pointSize ? 'opacity:1' : 'opacity:.45'}">
+        <dt>$${x.pointSize.toFixed(2)} per point${x.pointSize === pointSize ? ' · selected' : ''}</dt>
         <dd>${ccy} ${x.stake.toFixed(2)}/pt over ${x.stopPoints} pts</dd></div>`).join('')}
       <div class="hr"></div>
-      <div class="row"><dt>Exposure per $1 gold move</dt><dd>${ccy} ${rows.length ? rows[0].perDollarMove.toFixed(2) : '—'}</dd></div>
-      <p style="font-size:12px;color:var(--label-3);margin:9px 0 0">
-        Identical under all three, which is the point. Check yours in the platform's market
-        information sheet, or open a minimum ticket and see what it says a 1.0 move is worth.</p>`;
+      <div class="row"><dt>Exposure per $1 move</dt><dd>${ccy} ${rows.length ? rows[0].perDollarMove.toFixed(2) : '—'}</dd></div>
+      <p style="font-size:12.5px;color:var(--label-2);margin:11px 0 0">
+        Identical under all three, which is the point — the conventions differ in how the stake is
+        written down, not in what you are exposed to. There is no standard: $0.01, $0.10 and $1.00
+        are all in live use at UK firms, including at the largest ones, so there is no safe default
+        to assume. If you want this column to be right, take the value from your own contract details.</p>
+      ${r.bridge.reconciles ? `<p style="font-size:12px;color:var(--label-3);margin:9px 0 0">
+        Cross-check: ${ccy} ${r.bridge.stakeFromLots}/pt is the same position as ${r.bridge.lotsFromStake} lots.
+        The two agree exactly before rounding.</p>` : ''}`;
   }
 
   /* ---- cost of scalping ---- */
@@ -844,9 +879,10 @@ function setPair(p) {
   $('pair-XAUUSD').setAttribute('aria-selected', String(p === 'XAUUSD'));
   $('pair-BTCUSD').setAttribute('aria-selected', String(p === 'BTCUSD'));
   const i = inst();
-  $('contract-size').placeholder = String(spec(i, 'dollarMoveValuePerLot'));
+  $('contract-size').placeholder = String(spec(i, 'contractSize'));
   $('min-lot').placeholder = String(spec(i, 'minLot'));
   $('lot-step').placeholder = String(spec(i, 'lotStep'));
+  $('digits').placeholder = String(spec(i, 'digits'));
   $('live-spread').value = state.spread[p] ?? '';
   state.bars = sampleBars(p); state.sample = true;
   analyseNow();
@@ -917,7 +953,8 @@ function boot() {
   };
 
   for (const id of ['acct-bal', 'risk-pct', 'fx-rate', 'stop-dist', 'acct-ccy',
-    'contract-size', 'min-lot', 'lot-step', 'point-size', 'margin-pct']) {
+    'contract-size', 'min-lot', 'lot-step', 'point-size', 'margin-pct',
+    'digits', 'stops-level']) {
     const el = $(id);
     if (el) { el.oninput = renderRisk; el.onchange = renderRisk; }
   }

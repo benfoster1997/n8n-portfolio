@@ -201,8 +201,13 @@ with the safe areas handled.
 The thing a risk-percentage calculator cannot see.
 
 Margin as a share of equity is **`m × r ÷ s`** — the margin factor, times your risk
-percentage, divided by the stop expressed as a *fraction of price*. Account size
-cancels out. So does the price level. Only the tightness of the stop matters.
+percentage, divided by the stop expressed as a *fraction of price*. Account size cancels
+out: a £5k and a £100k account face the same percentage.
+
+The price level does **not** cancel, and this is the part worth being precise about.
+Substituting `s = D/P` gives **`M/E = m × r × P ÷ D`**, which scales *linearly* with
+price for a fixed dollar stop. It is price-invariant only if you hold the stop as a
+constant fraction of price — which is not how anyone actually thinks about a stop.
 
 Under the FCA's 20:1 cap on gold (5% margin), at 1% risk:
 
@@ -218,31 +223,38 @@ A perfectly sensible 1%-risk trade with a scalp-width stop can therefore consume
 three quarters of the account in margin, leave you unable to hold anything else, and
 sit near the level where a small adverse move starts forcing closures.
 
-And it gets **worse as gold rises**. A $3.00 stop was 0.15% of price at $2,000 gold and
-used about a third of an account; at $4,391 the same $3.00 is 0.068% and uses 73%. Every
-dollar-denominated rule of thumb inherited from cheaper gold understates this, in the
-dangerous direction.
+So the same $3.00 stop costs **33% of the account at $2,000 gold, 73% at $4,391 and 83%
+at $5,000**. Every dollar-denominated rule of thumb inherited from cheaper gold
+understates this, and it understates it in the dangerous direction.
 
 The tool shows this as a gate with the arithmetic, not a footnote.
 
-## Both account models, from one risk number
+## It outputs an order ticket, not a recommendation
 
-It cannot know whether you are on a spread bet or a CFD, so it sizes both and shows
-them side by side:
+MT5 on iPhone runs no custom indicators and saves no chart templates, so the tool cannot
+live inside it. The real workflow is: read the chart in MT5, compute here, type the
+result back into MT5. That app-switch is the constraint the output has to survive — few
+numbers, large, and in exactly the form the ticket expects.
 
-- **Spread bet** — staked per point. No FX translation on the P&L: the stake is in
-  sterling, so the P&L is born in sterling and never converted. (You are still exposed
-  to gold *as priced in USD*, which is a different thing.)
-- **CFD** — in lots, with the GBP/USD conversion.
+So the Size tab leads with three numbers:
 
-They reconcile to the penny before rounding — there is a test asserting it. On screen
-they differ only by however much each was rounded **down**, which is deliberate:
-rounding £3.333 up to £3.50 turns 1% risk into 1.05% silently, on every trade.
+- **Volume**, in lots — because the MT5 ticket takes lots whether the account is a
+  spread bet or a CFD.
+- **Stop loss** and **take profit**, as **absolute price levels** — because that is what
+  the mobile ticket expects. Handing over a distance would mean converting it in your
+  head on the other side of an app switch, which is where mistakes happen.
 
-**Point size on gold is firm-specific.** $0.01, $0.10 and $1.00 are all in live use, and
-the stake number changes by 10× or 100× between them while your exposure and margin do
-not. So it is a required input rather than an assumption, and all three are shown at
-once — if the stake you are about to type matches none of them, the setting is wrong.
+It also checks the stop against your broker's **stops level** before you get there, so
+the ticket does not bounce with an "invalid stops" error at the moment of entry.
+
+The spread-bet stake per point is still computed, but demoted to a cross-check, since it
+is not what you type. It reconciles with the lot figure to the penny before rounding —
+there is a test asserting it. Everything rounds **down**: rounding £3.333 up to £3.50
+turns 1% risk into 1.05% silently, on every trade.
+
+**Point size on gold is firm-specific** — $0.01, $0.10 and $1.00 are all in live use at
+UK firms, including the largest ones. There is no safe default, so the tool does not
+claim one, and shows all three at once.
 
 ## One more thing it is loud about
 

@@ -233,6 +233,20 @@ button.btn:active { opacity: .75; }
 .gate.ok h4 { color: var(--up); }
 .gate p { margin: 0; font-size: 13px; color: var(--label-2); }
 
+.ticket { margin-top: 12px; }
+.ticket-side {
+  display: inline-block; font-size: 12px; font-weight: 800; letter-spacing: .08em;
+  padding: 4px 11px; border-radius: 7px; margin-bottom: 12px;
+}
+.ticket-side.buy  { background: var(--up-dim); color: var(--up); }
+.ticket-side.sell { background: var(--down-dim); color: var(--down); }
+.tk { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 11px 0; }
+.tk + .tk { border-top: .5px solid var(--hairline); }
+.tk-lab { font-size: 13px; color: var(--label-2); }
+.tk-lab b { display: block; font-size: 10.5px; font-weight: 700; letter-spacing: .05em;
+  text-transform: uppercase; color: var(--label-3); margin-bottom: 2px; }
+.tk-val { font-family: var(--mono); font-size: 26px; font-weight: 700; letter-spacing: -.035em; }
+
 .dual { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
 .dual > div { background: var(--surface-3); border-radius: var(--r-md); padding: 12px; }
 .dual .lab { font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--label-3); }
@@ -365,6 +379,7 @@ footer.fine {
   <!-- ============================ RISK ============================ -->
   <section id="tab-risk" hidden>
     <h2 class="sec">Size &amp; cost</h2>
+    <div class="card" id="ticket"></div>
     <div class="card" id="corr-note"></div>
     <div class="card">
       <p class="card-title">Position size</p>
@@ -424,7 +439,12 @@ footer.fine {
       <div id="size-out"></div>
     </div>
     <div class="card" id="margin-gate"></div>
-    <div class="card" id="point-check"></div>
+    <details class="card" id="point-check-wrap" style="padding:15px 16px">
+      <summary style="font-size:11px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--label-3);cursor:pointer;list-style:none;min-height:32px;display:flex;align-items:center">
+        Spread bet cross-check &nbsp;<span style="color:var(--accent);text-transform:none;letter-spacing:0;font-weight:600">open</span>
+      </summary>
+      <div id="point-check"></div>
+    </details>
     <div class="card" id="cost-out"></div>
     <div class="card" id="account-note"></div>
   </section>
@@ -485,13 +505,33 @@ footer.fine {
           <input class="f num" id="lot-step" type="number" inputmode="decimal" step="0.01">
         </div>
       </div>
+      <div class="grid2">
+        <div class="field">
+          <label class="f" for="digits">Digits</label>
+          <input class="f num" id="digits" type="number" inputmode="numeric" step="1">
+        </div>
+        <div class="field">
+          <label class="f" for="stops-level">Stops level</label>
+          <input class="f num" id="stops-level" type="number" inputmode="decimal" step="0.01" placeholder="0">
+        </div>
+      </div>
       <div class="unconfirmed" id="spec-warn"></div>
       <details class="more">
-        <summary>Where to find these on the iPhone app</summary>
+        <summary>Where to find these on your phone</summary>
         <p style="font-size:13px;color:var(--label-2);margin:6px 0 0">
-          MetaTrader 5 &rarr; <b>Quotes</b> &rarr; press and hold the symbol &rarr; <b>Specification</b>.
-          Read off Contract size, Digits, Tick value and Volume min / step. Read the server clock from
-          the time shown at the top of the Quotes list.
+          MetaTrader 5 &rarr; <b>Quotes</b> &rarr; tap the symbol &rarr; open its
+          <b>Specification</b> / details view. Read off <b>Contract size</b>, <b>Digits</b>,
+          <b>Tick value</b>, <b>Volume min</b>, <b>Volume step</b> and <b>Stops level</b>.
+        </p>
+        <p style="font-size:13px;color:var(--label-2);margin:9px 0 0">
+          These are the numbers everything else is computed from, and they are set by your broker
+          rather than by the market — the same instrument can have a different contract size on a
+          different account type at the same firm. If you cannot find the screen, your broker's
+          contract-specifications page on the web carries the same figures.
+        </p>
+        <p style="font-size:12.5px;color:var(--label-3);margin:9px 0 0">
+          Once they are in, this tool does not need to know whether the account is a spread bet or a
+          CFD. The ticket takes lots either way.
         </p>
       </details>
     </div>

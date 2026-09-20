@@ -165,14 +165,20 @@ export function marginRequired({ price, lots, contractSize, leverage, accountBal
  * where m is the margin factor (0.05 under the FCA's 20:1 cap on gold), r the
  * risk fraction, and s the stop expressed as a FRACTION OF PRICE.
  *
- * The striking property is what is absent: account size and the absolute price
- * both cancel. Margin depends only on how tight the stop is relative to price.
+ * Account size cancels — this is a fraction of equity, so a £5k and a £100k
+ * account face the same percentage. Say that precisely, though: it is
+ * invariant to the PRICE LEVEL only when the stop is held as a fraction of
+ * price. It is emphatically NOT invariant when the stop is a fixed number of
+ * dollars, which is how a trader actually thinks. Substituting s = D/P gives
  *
- * And that is why this is the constraint that actually bites a scalper. A
- * $3.00 stop was 0.15% of price when gold was $2,000 and is 0.068% at $4,391 —
- * so the same nominal stop that once used a third of the account now uses
- * three quarters of it. The requirement tightens every time gold rises, which
- * is exactly the direction dollar rules of thumb fail in.
+ *     M/E = m * r * P / D
+ *
+ * which scales LINEARLY with price. The same $3.00 stop costs 33% of the
+ * account at $2,000 gold, 73% at $4,391 and 83% at $5,000.
+ *
+ * That is the whole reason this matters, and the reason inherited dollar rules
+ * of thumb fail in the dangerous direction: they were written when gold was
+ * cheap, and the margin they imply grows every time gold rises.
  */
 export function marginFraction(marginFactor, riskFraction, stopFractionOfPrice) {
   if (!(stopFractionOfPrice > 0) || !(marginFactor > 0) || !(riskFraction > 0)) return null;
@@ -205,13 +211,16 @@ export function sizeBothModels({
   riskPercent,
   stopDistance,          // price units (dollars per ounce for gold)
   price,
-  pointSize = 0.10,      // spread bet: USD of price per "point". FIRM-SPECIFIC.
+  pointSize = 0.10,      // spread bet: USD of price per "point". FIRM-SPECIFIC —
+                         // $0.01, $0.10 and $1.00 are all in live use and there
+                         // is no "usual" one. Read it off your own contract.
   contractSize = 100,    // CFD: units per 1.00 lot
   marginFactor = 0.05,   // 0.05 = the FCA's 20:1 cap on gold
   fxRate = 1,            // quote currency per 1 unit of account currency
   accountCurrency = 'GBP',
-  stakeStep = 0.10,
-  minStake = 0.50,
+  stakeStep = 0.10,      // firm-specific: some quote to 1p, which changes the answer
+  minStake = 0,          // no default — published minimums vary by instrument
+                         // and change without notice. 0 disables the check.
   lotStep = 0.01,
   minLot = 0.01,
   spread = 0,
@@ -237,7 +246,7 @@ export function sizeBothModels({
   const stopPoints = effStop / pointSize;
   const stakeRaw = riskAccount / stopPoints;
   const stake = Math.floor(stakeRaw / stakeStep) * stakeStep;
-  const stakeOk = stake >= minStake;
+  const stakeOk = minStake <= 0 || stake >= minStake;
 
   /* ---- CFD: sized in lots, P&L in the quote currency ---- */
   const riskQuote = riskAccount * fxRate;
@@ -319,4 +328,43 @@ export function stakeAcrossPointSizes(equity, riskPercent, stopDistance) {
     stake: +(risk / (stopDistance / p)).toFixed(2),
     perDollarMove: +((risk / (stopDistance / p)) / p).toFixed(2),
   }));
+}
+
+/**
+ * The three numbers that go into the MetaTrader order ticket.
+ *
+ * This is the tool's real output. MT5 on iPhone runs no custom indicators and
+ * saves no templates, so the tool cannot live inside it — the workflow is
+ * necessarily read the chart in MT5, compute here, then type the result back
+ * into MT5's ticket. That app-switch is the constraint the output has to
+ * survive, which means few numbers, large, and in exactly the form the ticket
+ * expects.
+ *
+ * The form matters: mobile MT5 takes Stop Loss and Take Profit as ABSOLUTE
+ * PRICE LEVELS, not as distances in points. Handing over a distance would be
+ * handing over a number that has to be mentally converted on the other side of
+ * an app switch, which is where mistakes happen.
+ */
+export function mt5Ticket({ side, entry, invalidation, target, lots, digits = 2, stopsLevel = 0 }) {
+  if (!side || !(entry > 0) || !(invalidation > 0) || !(lots > 0)) return null;
+  const round = (x) => (x === null || x === undefined ? null : +Number(x).toFixed(digits));
+  const dist = Math.abs(entry - invalidation);
+
+  // Brokers enforce SYMBOL_TRADE_STOPS_LEVEL: a stop closer than this to the
+  // market is rejected outright. Better to say so here than to have the ticket
+  // bounce with an "Invalid stops" error at the moment of entry.
+  const tooTight = stopsLevel > 0 && dist < stopsLevel;
+
+  return {
+    side,
+    volume: +lots.toFixed(2),
+    entry: round(entry),
+    stopLoss: round(invalidation),
+    takeProfit: round(target),
+    stopDistance: round(dist),
+    tooTight,
+    warning: tooTight
+      ? `This stop is ${dist.toFixed(digits)} from price, inside your broker's minimum stop distance of ${stopsLevel}. MT5 will reject the order — widen the stop or wait for a better entry.`
+      : null,
+  };
 }
