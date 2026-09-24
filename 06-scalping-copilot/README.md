@@ -158,6 +158,7 @@ reason to be flat.
 ```
 node build.mjs        # inline src/*.js into a single self-contained index.html
 node test/run-all.mjs # 214 assertions across 7 suites
+node test/smoke.mjs   # real browser; needs playwright, see the file header
 ```
 
 `index.html` has no build dependency, no backend and no imports. Open it from anywhere,
@@ -411,4 +412,7 @@ src/
   index.template.html
 build.mjs           inlines the above into index.html
 test/               214 assertions; run-all.mjs runs the lot
+                    smoke.mjs loads the page in a real browser at six
+                    frozen session moments and fails on any page error
+HANDOFF.md          state, decisions and research, for picking this up cold
 ```
