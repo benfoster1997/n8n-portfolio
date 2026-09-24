@@ -392,6 +392,21 @@ scales every position by a factor of 100.
 Everything broker-dependent is shown as an unconfirmed default until you check it. On the
 iPhone: **Quotes → press and hold the symbol → Specification**.
 
+Read off the user's IC Markets demo so far:
+
+| | XAUUSD | BTCUSD |
+|---|---|---|
+| Contract size | 100 oz | 1 BTC |
+| Digits · min lot · step | 2 · 0.01 · 0.01 | 2 · 0.01 · 0.01 |
+| Max volume per order | 100 lots | 10 lots |
+| Stops level | 0 | 0 |
+| Commission | £2.75 a lot **each side** (£5.50 round turn) | none |
+| Swap | −60.891 pts long / +42.602 short, triple on Wednesday | −20% a year long, 0 short, charged every night including weekends |
+
+The swap is not in the scalping arithmetic — a flat-by-16:00 scalper never pays it — but
+the Size tab states it in money so a position left open is priced honestly. Still
+unchecked: BTCUSD's typical spread and its margin rows.
+
 ---
 
 ## Layout
@@ -400,7 +415,7 @@ iPhone: **Quotes → press and hold the symbol → Specification**.
 src/
   timezone.js       DST-safe conversion; fuzzed over 3 years, both zones, hourly
   indicators.js     dependency-free TA, seeded to match MT5/TradingView
-  instruments.js    contract specs, all marked confirm-before-use
+  instruments.js    contract specs, commission and swap; unread ones marked confirm-before-use
   risk.js           sizing under both UK account models, the margin gate,
                     break-even win rate, spread drag
   news-calendar.js  table-driven event data + blackout logic

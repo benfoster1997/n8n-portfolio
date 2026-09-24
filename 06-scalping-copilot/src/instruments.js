@@ -69,6 +69,29 @@ export const INSTRUMENTS = {
     vwapReset: { h: 17, tz: 'America/New_York' },
     minLot: { value: 0.01, confirmed: true },
     lotStep: { value: 0.01, confirmed: true },
+    maxVolume: { value: 100, unit: 'lots per order', confirmed: true },
+
+    // CONFIRMED 24 Sep 2026 — and it contradicts the assumption that a demo
+    // charges nothing. The specification lists "Instant by deal volume, in/out
+    // deals: 2.75 GBP per lot", i.e. charged on BOTH the opening and the
+    // closing deal. So a round turn is £5.50 a lot, about $7.40.
+    commission: { perSide: 2.75, currency: 'GBP', confirmed: true },
+
+    // Swap in POINTS: -60.891 points on a long is 60.891 x $0.01 x 100 oz,
+    // about $60.89 per lot per night. Shorts EARN 42.602 points. Charged
+    // Mon-Fri with Wednesday tripled for the weekend: seven charges a week.
+    swap: { mode: 'points', long: -60.891, short: 42.602, chargesPerWeek: 7, tripleDay: 'Wednesday', confirmed: true },
+
+    // Trading session in SERVER time: 01:02-23:59, Friday to 23:57. The gap
+    // 00:00-01:02 is the daily gold break, which is 17:00-18:00 New York —
+    // so server time is New York + 7 hours, which is UTC+3 while the US is on
+    // daylight time. That confirms the server offset without a chart screenshot.
+    sessionServer: { open: '01:02', close: '23:59', fridayClose: '23:57', confirmed: true },
+
+    // Margin shown by the broker: ~£647 per lot (Initial = Maintenance, on
+    // notional). At ~$4,340 gold and GBP/USD ~1.34 that is 0.2% of notional,
+    // which is exactly what contractSize / 500 gives. It corroborates 1:500.
+    unitLabel: 'oz',
 
     minStopPct: 0.0005,
     tradesAroundTheClock: false,
@@ -82,13 +105,15 @@ export const INSTRUMENTS = {
     display: 'BTC/USD',
     quoteCurrency: 'USD',
 
-    // THE most broker-dependent number in this file. 1 lot = 1 BTC is common
-    // but far from universal.
-    contractSize: { value: 1, unit: 'BTC per 1.00 lot', confirm: true },
-    digits: { value: 2, confirm: true },
-    dollarMoveValuePerLot: { value: 1, confirm: true },
+    // CONFIRMED from the symbol specification, 24 September 2026. This was the
+    // most broker-dependent number in the file — 1 lot is 1 BTC at some
+    // brokers and a fraction of one at others — and here it is 1 BTC.
+    contractSize: { value: 1, unit: 'BTC per 1.00 lot', confirmed: true },
+    digits: { value: 2, confirmed: true },
+    dollarMoveValuePerLot: { value: 1, confirmed: true },
 
     // CFD spreads on bitcoin are wide and are the dominant cost of scalping it.
+    // Still UNMEASURED on this account — no bid/ask screenshot yet.
     typicalSpread: {
       asia: 28, london: 22, newYork: 20, rollover: 60,
       note: 'CFD markup is far wider than spot-exchange spread; measure yours',
@@ -98,16 +123,35 @@ export const INSTRUMENTS = {
     // Bitcoin anchors to the 00:00 UTC day used by every crypto venue.
     vwapReset: 0,
 
-    minLot: { value: 0.01, confirm: true },
-    lotStep: { value: 0.01, confirm: true },
+    minLot: { value: 0.01, confirmed: true },
+    lotStep: { value: 0.01, confirmed: true },
 
-    // 0.15% of $95,000 is ~$143. Same reasoning as gold: bitcoin has traded
-    // between $16k and six figures within a few years, so an absolute floor
-    // is meaningless across regimes.
+    // A tenth of gold's cap. At demo scale a 1%-risk bitcoin position runs to
+    // hundreds of lots, which is dozens of separate tickets at 10 each.
+    maxVolume: { value: 10, unit: 'lots per order', confirmed: true },
+    stopsLevel: { value: 0, confirmed: true },
+
+    // No commission section appears on the bitcoin specification, unlike
+    // gold's. On this account the cost of trading bitcoin is in the spread.
+    commission: { perSide: 0, currency: 'GBP', confirmed: true },
+
+    // Swap in PERCENTAGE terms of the current price, per year: -20% on a long,
+    // zero on a short, charged every night INCLUDING weekends. MT5 computes
+    // this over a 360-day bank year, so about 0.056% of the position a night —
+    // roughly $44 per lot at $80,000. Irrelevant flat by 16:00; brutal if not.
+    swap: { mode: 'percent', long: -20, short: 0, chargesPerWeek: 7, confirmed: true },
+
+    chartIsBid: true,
+    marginCurrency: 'USD',
+    marginCalculation: 'contracts',
+    // Margin per lot NOT yet read — the rows sit below where the screenshot
+    // stopped. Leverage on bitcoin is usually far lower than on gold.
+
     minStopPct: 0.0015,
     tradesAroundTheClock: true,
     symbolAliases: ['BTCUSD', 'BTCUSD.m', 'BITCOIN', 'BTCUSD.pro', 'BTC/USD'],
     decimalsForDisplay: 1,
+    unitLabel: 'BTC',
   },
 };
 
@@ -188,4 +232,54 @@ export function bidChartNote(side, spread, digits = 2) {
     aligned: false,
     text: `Your chart is drawn from bid prices, and a short's stop and target are checked against the ASK. So the stop fires when the chart is still about ${spread.toFixed(digits)} short of the level you drew, and the target needs the chart to travel about ${spread.toFixed(digits)} past it. Nothing is wrong when that happens — it is the spread, paid where the chart does not show it.`,
   };
+}
+
+/**
+ * Commission for one round turn per lot, in the QUOTE currency (USD), which
+ * is what the sizing and cost models work in.
+ *
+ * Brokers quote commission however they like. This one shows it in GBP, per
+ * lot, per SIDE — charged on the entry deal and again on the exit — so the
+ * round turn is double the figure on the screen, and has to be converted
+ * before it can be added to a dollar spread. `gbpusd` is the rate as normally
+ * quoted (1.34 = one pound buys $1.34), so pounds multiply into dollars.
+ *
+ * `overridePerSide` lets the user replace the broker's figure; pass null or
+ * undefined to use it. Zero is a real override, not "use the default".
+ */
+export function commissionRoundTurnQuote(inst, gbpusd, overridePerSide = null) {
+  const c = inst && inst.commission;
+  const perSide = overridePerSide !== null && overridePerSide !== undefined && overridePerSide !== ''
+    ? Number(overridePerSide)
+    : (c ? c.perSide : 0);
+  if (!(perSide >= 0) || !Number.isFinite(perSide)) return null;
+  const currency = c ? c.currency : 'USD';
+  const toQuote = currency === 'GBP' ? (gbpusd > 0 ? gbpusd : null) : 1;
+  if (toQuote === null) return null;
+  return +(perSide * 2 * toQuote).toFixed(4);
+}
+
+/**
+ * What holding a position overnight costs, per lot per night, in USD. Positive
+ * is paid TO you, negative is charged.
+ *
+ * Two different conventions, and the tool has to speak both:
+ *   points  - a fixed number of price points: swap x 10^-digits x contract size
+ *   percent - an annual percentage of the CURRENT price, over MT5's 360-day
+ *             bank year, so it grows as the price does
+ */
+export function swapPerNight(inst, price, side = 'long') {
+  const sw = inst && inst.swap;
+  if (!sw) return null;
+  const rate = side === 'short' ? sw.short : sw.long;
+  const contract = spec(inst, 'contractSize');
+  if (sw.mode === 'points') {
+    const point = 10 ** -spec(inst, 'digits');
+    return +(rate * point * contract).toFixed(2);
+  }
+  if (sw.mode === 'percent') {
+    if (!(price > 0)) return null;
+    return +((price * contract * (rate / 100)) / 360).toFixed(2);
+  }
+  return null;
 }

@@ -50,8 +50,10 @@ and stayed fully green twice while the page was broken.
   indicators and saves no templates, so the tool cannot live inside it — the
   workflow is read chart in MT5 → compute here → type result back into MT5.
 - Currently on an **IC Markets demo** — entity **Raw Trading Ltd** (the Seychelles
-  entity, not FCA), server ICMarketsSC-Demo, **1:500 leverage, GBP account, no
-  commission, hedge mode, ~£9.8m demo balance**.
+  entity, not FCA), server ICMarketsSC-Demo, **1:500 leverage, GBP account, hedge
+  mode, ~£9.8m demo balance**. They said "no commission as I'm using demo", but the
+  XAUUSD spec lists **£2.75 a lot per side** (in/out deals). The tool uses the spec;
+  a closed trade's history would settle it.
 - Asked for the tool to be **designed for the current demo balance**, and will
   re-scale when going live. Shadow-balance mode now lets both coexist.
 - Prefers **direct answers to direct questions**. When asked for a figure, give
@@ -76,8 +78,36 @@ and stayed fully green twice while the page was broken.
 | Filling | Immediate or Cancel | partial fills likely at size; **demo never simulates them** |
 | Spread | floating | observed **$0.05** in a quiet hour |
 
-Still **unknown**: maximum volume per order, and the MT5 server clock offset
-(defaults to UTC+3, which is right for IC Markets in summer).
+Added 24 Sep 2026 from the bottom of the same screen:
+
+| Field | Value | Meaning |
+|---|---|---|
+| Maximal volume | 100 lots | per order; bigger positions are split |
+| Commission | 2.75 GBP per lot, in/out deals | £5.50 round turn ≈ $7.40 |
+| Swap | points; long −60.891, short +42.602 | −$60.89 / +$42.60 a lot a night |
+| Triple swap | Wednesday | 7 charges a week |
+| Sessions (server time) | 01:02–23:59, Friday to 23:57 | see server clock below |
+
+**Server clock: UTC+3, confirmed** without a chart screenshot. Gold's daily break
+ends 01:02 server; that break is 17:00–18:00 New York, so server = New York + 7 =
+UTC+3 in September. Recheck during **25 Oct – 1 Nov 2026**: if the session times
+shift in MT5 that week, the server follows Europe's clocks, not New York's.
+
+### Confirmed BTCUSD symbol specification (24 Sep 2026)
+
+| Field | Value |
+|---|---|
+| Contract size | 1 BTC — a $1 move is $1 per lot |
+| Digits · min lot · step | 2 · 0.01 · 0.01 |
+| Maximal volume | 10 lots per order |
+| Stops level | 0 |
+| Commission | none |
+| Swap | percentage; long −20% a year, short 0, every night including weekends (≈ −$44 a lot a night at $80k) |
+| Chart mode | by bid |
+
+Still **unread**: BTCUSD's bid/ask (typical spread — the tool still shows it as
+unconfirmed) and its margin rows (the screenshot cut off below "notional value").
+Gold margin read £647 a lot, which corroborates 1:500.
 
 ---
 
@@ -143,8 +173,10 @@ A fresh session is likely to "fix" some of these. Don't, without reading why.
 14. **No tax claims at all.** Depends on circumstances and on HMRC's view of
     whether a trade is carried on. The spread-betting page is BIM22020, not BIM22015.
 
-15. **Commission is counted.** On a $0.05-spread raw account, commission is ~58%
-    of per-trade cost. Break-even uses the all-in figure.
+15. **Commission is counted, even on the demo.** On a $0.05-spread raw account,
+    commission is ~58% of per-trade cost. Break-even uses the all-in figure. The
+    Commission box takes GBP **per side** (as the spec prints it) and is empty by
+    default, meaning "use the spec"; typing 0 means zero.
 
 ---
 
@@ -193,8 +225,12 @@ the commit messages are the durable record.
 
 ## Open items for the user
 
-- Enter **max volume per order** (just below "Minimal volume" on the MT5 spec screen).
-- Confirm the **MT5 server clock offset** (default UTC+3).
+- Send the **BTCUSD bid/ask** (Quotes screen, advanced view) so its spread can be
+  marked confirmed, and the **bottom of the BTCUSD spec** for its margin rows.
+- Check one closed XAUUSD trade's commission in History, to settle the "no
+  commission on demo" question.
+- Recheck the XAUUSD session times in MT5 during **25 Oct – 1 Nov 2026** (server
+  clock — see above).
 - Optionally set a **shadow balance** and switch "Size from" to it.
 - Set a **committed sample size** in "Is it working yet?" before logging trades.
 - Before going live: confirm whether the live account charges **commission**, and
@@ -239,8 +275,10 @@ the commit messages are the durable record.
 ## Answers already given in chat, for continuity
 
 - 0.20 lots XAUUSD long from the 2014 low (~$1,130) on £3,000, held to 2026 with no
-  SL/TP: **~£32,000** — $64,900 gross, less an *estimated* ~$25,000 of swap (the
-  least certain input; range £25k–£51k). Required sitting through a 37% drawdown
+  SL/TP: first answered **~£32,000** — $64,900 gross, less an *estimated* ~$25,000 of
+  swap (the least certain input; range £25k–£51k). Revised once the real swap was
+  read (24 Sep): −60.891 pts ≈ 5.1% of notional a year, not the 7% assumed, which
+  puts it nearer **~£37,000**. Required sitting through a 37% drawdown
   to the Dec 2015 low (~$1,046).
 - The same at **1.00 lot: £0** — 23.7× leverage, closed out ~$1,083 in 2015, a 4.1%
   adverse move. Couldn't even be opened at FCA 1:20. Survival threshold ≈ 0.56 lots.

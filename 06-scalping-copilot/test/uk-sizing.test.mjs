@@ -13,7 +13,9 @@ import {
   spreadDrag, allInSpread, breakEvenWinRate, marginPosture, practiceRealism,
   orderSplit, fillRisk,
 } from '../src/risk.js';
-import { marginPerLot, bidChartNote, INSTRUMENTS } from '../src/instruments.js';
+import {
+  marginPerLot, bidChartNote, INSTRUMENTS, commissionRoundTurnQuote, swapPerNight, unconfirmedFields,
+} from '../src/instruments.js';
 
 let passed = 0, failed = 0;
 const test = (n, fn) => {
@@ -320,6 +322,59 @@ test('the confirmed gold specification is recorded as confirmed', () => {
     assert.equal(g[k].confirmed, true, `${k} should be marked confirmed, not a default`);
     assert.notEqual(g[k].confirm, true, `${k} should no longer be awaiting confirmation`);
   }
+});
+
+test('the confirmed bitcoin specification is recorded as confirmed', () => {
+  const b = INSTRUMENTS.BTCUSD;
+  assert.equal(b.contractSize.value, 1, 'one lot is one bitcoin at this broker');
+  assert.equal(b.digits.value, 2);
+  assert.equal(b.minLot.value, 0.01);
+  assert.equal(b.maxVolume.value, 10);
+  assert.equal(b.stopsLevel.value, 0);
+  assert.equal(b.commission.perSide, 0);
+  for (const k of ['contractSize', 'digits', 'minLot', 'lotStep', 'maxVolume', 'stopsLevel']) {
+    assert.equal(b[k].confirmed, true, `${k} should be marked confirmed`);
+  }
+  assert.deepEqual(unconfirmedFields(b).map((f) => f.key), ['typicalSpread'],
+    'only the spread is still unmeasured, and the tool should keep saying so');
+  assert.deepEqual(unconfirmedFields(INSTRUMENTS.XAUUSD), []);
+});
+
+console.log('\ncommission and swap, from the specification');
+
+test('gold commission is per side in GBP, so a round turn is twice it, in dollars', () => {
+  near(commissionRoundTurnQuote(INSTRUMENTS.XAUUSD, 1.35), 2.75 * 2 * 1.35, 1e-6);
+});
+
+test('a typed per-side figure overrides the spec, and zero is a real answer', () => {
+  near(commissionRoundTurnQuote(INSTRUMENTS.XAUUSD, 1.35, '3'), 8.10, 1e-6);
+  assert.equal(commissionRoundTurnQuote(INSTRUMENTS.XAUUSD, 1.35, '0'), 0);
+  near(commissionRoundTurnQuote(INSTRUMENTS.XAUUSD, 1.35, ''), 7.425, 1e-6,
+    'an empty box means "use the spec", not zero');
+});
+
+test('commission refuses without a GBP/USD rate rather than inventing one', () => {
+  assert.equal(commissionRoundTurnQuote(INSTRUMENTS.XAUUSD, 0), null);
+  assert.equal(commissionRoundTurnQuote(INSTRUMENTS.XAUUSD, 1.35, '-1'), null);
+});
+
+test('bitcoin carries no commission', () => {
+  assert.equal(commissionRoundTurnQuote(INSTRUMENTS.BTCUSD, 1.35), 0);
+});
+
+test('gold swap in points: -60.891 points is -$60.89 a lot a night', () => {
+  assert.equal(swapPerNight(INSTRUMENTS.XAUUSD, 4400, 'long'), -60.89);
+  assert.equal(swapPerNight(INSTRUMENTS.XAUUSD, 4400, 'short'), 42.6);
+  assert.equal(swapPerNight(INSTRUMENTS.XAUUSD, 2000, 'long'), -60.89,
+    'a points swap does not move with the price');
+});
+
+test('bitcoin swap is a percentage of the position, so it scales with price', () => {
+  // -20% a year over 360 days on $80,000 of bitcoin.
+  assert.equal(swapPerNight(INSTRUMENTS.BTCUSD, 80000, 'long'), -44.44);
+  assert.equal(swapPerNight(INSTRUMENTS.BTCUSD, 40000, 'long'), -22.22);
+  assert.equal(swapPerNight(INSTRUMENTS.BTCUSD, 80000, 'short'), 0);
+  assert.equal(swapPerNight(INSTRUMENTS.BTCUSD, 0, 'long'), null, 'no price, no figure');
 });
 
 console.log('\nwhat margin is actually doing');

@@ -463,7 +463,10 @@ function renderRisk() {
   const leverage = Number($('leverage').value) || 20;
   const marginFactor = 1 / leverage;
   const spread = currentSpread() || 0;
-  const commission = Number($('commission').value) || 0;
+  // Commission is entered the way the broker shows it — per lot, per SIDE, in
+  // its own currency — and converted to a USD round turn for the models. An
+  // empty field means "use the specification"; zero is a real override.
+  const commission = commissionRoundTurnQuote(i, gbpusd, $('commission').value.trim()) || 0;
   const price = a && a.ok ? a.price : 0;
 
   let stop = Number($('stop-dist').value);
@@ -516,7 +519,7 @@ function renderRisk() {
       </div>
       ${tk.warning ? `<div class="unconfirmed" style="color:var(--danger);background:var(--danger-dim)">${esc(tk.warning)}</div>` : ''}
       ${(() => {
-        const sp = orderSplit(tk.volume, Number($('max-volume').value) || 0);
+        const sp = orderSplit(tk.volume, Number($('max-volume').value) || spec(inst(), 'maxVolume') || 0);
         return sp && sp.needsSplit
           ? `<div class="unconfirmed" style="color:var(--warn);background:var(--warn-dim)">${esc(sp.text)}</div>` : '';
       })()}
@@ -642,7 +645,7 @@ function renderRisk() {
       <div class="row"><dt style="padding-left:12px;color:var(--label-3)">of which commission</dt><dd style="color:var(--warn)">${ccy} ${fmt(d.commissionPart / fx, 2)} · ${d.commissionShare}%</dd></div>` : ''}
       <div class="row"><dt>15 trades a day</dt><dd>${ccy} ${fmt(d.perDay / fx, 2)}</dd></div>
       <div class="row"><dt>Over a month</dt><dd style="color:var(--warn);font-size:17px;font-weight:700">${ccy} ${fmt(d.perMonth / fx, 2)}</dd></div>
-      ${commission > 0 ? `<div class="row"><dt>All-in, as a spread</dt><dd>${fmt(allIn)} per oz</dd></div>` : ''}
+      ${commission > 0 ? `<div class="row"><dt>All-in, as a spread</dt><dd>${fmt(allIn)} per ${esc(i.unitLabel || 'unit')}</dd></div>` : ''}
       <p style="font-size:12.5px;color:var(--label-2);margin:11px 0 0">
         Paid whether you are right or wrong, before a single losing trade.
         ${commission > 0 && d.commissionShare >= 40
@@ -671,7 +674,16 @@ function renderRisk() {
     <p style="font-size:12.5px;color:var(--label-3);margin:0">
       Overnight financing is left out of this deliberately, not silently: it is charged at the daily
       cut, around 22:00 London, and you are flat by 16:00. If you ever hold past the cut, this
-      understates the cost.</p>`;
+      understates the cost${(() => {
+        const sl = swapPerNight(i, price, 'long');
+        const ss = swapPerNight(i, price, 'short');
+        if (sl === null) return '.';
+        const per = i.swap.mode === 'percent'
+          ? `${Math.abs(i.swap.long)}% a year of the position, every night including weekends`
+          : `with ${esc(i.swap.tripleDay)} charged three times to cover the weekend`;
+        return ` — on this account a long ${esc(i.label.toLowerCase())} position pays about
+          $${fmt(Math.abs(sl), 2)} per lot a night (${per})${ss > 0 ? `, while a short earns about $${fmt(ss, 2)}` : ''}.`;
+      })()}</p>`;
   $('cost-out').innerHTML = cost + realismHtml;
 
   /* ---- cost floor and correlation ---- */
@@ -1050,6 +1062,9 @@ function setPair(p) {
   $('min-lot').placeholder = String(spec(i, 'minLot'));
   $('lot-step').placeholder = String(spec(i, 'lotStep'));
   $('digits').placeholder = String(spec(i, 'digits'));
+  $('max-volume').placeholder = spec(i, 'maxVolume') ? String(spec(i, 'maxVolume')) : 'e.g. 100';
+  $('commission').placeholder = i.commission
+    ? `${i.commission.perSide.toFixed(2)} (from the spec)` : '0';
   $('live-spread').value = state.spread[p] ?? '';
   state.bars = sampleBars(p); state.sample = true;
   analyseNow();

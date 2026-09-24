@@ -114,7 +114,7 @@ for (const [label, ms] of Object.entries(MOMENTS)) {
       e.dispatchEvent(new Event('input'));
       e.dispatchEvent(new Event('change'));
     };
-    set('live-spread', '0.05'); set('stop-dist', '3.00'); set('commission', '7');
+    set('live-spread', '0.05'); set('stop-dist', '3.00'); set('commission', '2.75');
     set('max-volume', '100'); set('live-balance', '5000'); set('size-from', 'shadow');
     set('rec-planned', '300'); set('rec-trades', '30'); set('rec-wins', '18');
   });
