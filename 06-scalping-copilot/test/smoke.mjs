@@ -140,6 +140,16 @@ for (const [label, ms] of Object.entries(MOMENTS)) {
   await p.waitForTimeout(200);
   await checkText('brief');
 
+  // The how-to card, every step opened, must read cleanly too.
+  await p.evaluate(() => {
+    document.getElementById('nav-setup').click();
+    document.querySelectorAll('#howto details').forEach((d) => { d.open = true; });
+  });
+  await p.waitForTimeout(150);
+  await checkText('how-to card');
+  if (!(await p.evaluate(() => document.querySelectorAll('#howto details').length === 5))) leaks.push('how-to card: expected 5 steps');
+  await p.evaluate(() => document.getElementById('nav-read').click());
+
   // The simple read must say something, in either instrument.
   await setView('simple');
   const answer = await p.evaluate(() => document.getElementById('simple-read').innerText.trim());

@@ -34,6 +34,7 @@ const state = {
   briefFormOpen: false,
   briefError: null,
   lastBriefHtml: null,
+  lastHowToHtml: null,
 };
 
 /* ---- a plausible sample series so the page opens showing what it does --- */
@@ -555,6 +556,62 @@ function briefAction(action, v) {
     }
   }
   renderBrief(now, true);
+}
+
+/* ============================================================ how to use */
+
+/**
+ * The daily routine, on the Setup tab. Every time in it comes from the
+ * window and the session bands (dayTimes), and every label it names is the
+ * label on the page, so it cannot drift from what the tool does. Re-rendered
+ * only when its content changes, so a step the user has opened stays open.
+ */
+function renderHowTo(now) {
+  const t = dayTimes(now, state.window);
+  const hm = (ms) => formatHM(ms, tzw());
+  const span = (x) => (x ? `${hm(x.fromMs)}–${hm(x.toMs)}` : '—');
+  const sp = (id) => INSTRUMENTS[id].typicalSpread.observed.toFixed(2);
+  const step = (title, when, body, open = false) =>
+    `<details${open ? ' open' : ''}><summary><span>${title}</span>${when ? `<span class="when">${when}</span>` : ''}</summary>${body}</details>`;
+
+  const html = `<p class="card-title">How to use it each day</p>
+    ${step('First time only', '', `<ol>
+      <li>Open this page in <b>Safari</b>, signed in to claude.ai, then Share → <b>Add to Home Screen</b>.</li>
+      <li>Check the dot at the top, under Gold and Bitcoin. <b>Green</b> means live prices. Amber or red: see the last step here.</li>
+      <li>For gold prices, paste a free Twelve Data key into <b>Data</b>, further down this tab.</li>
+      <li>Optional: on the Size tab, tap <b>Show full detail</b> to set your risk % or a shadow balance.</li>
+    </ol>`)}
+    ${step('Before the open', `${hm(t.briefFromMs)}–${hm(t.opensAtMs)}`, `<ol>
+      <li>Choose <b>Gold</b> or <b>Bitcoin</b> at the top.</li>
+      <li>Read the brief on the Read tab: where price sits overnight, today's news and when to be flat, and when to sit out.</li>
+      <li>Set your plan: tap your setups, enter the most trades you will take, then tap <b>Set today's plan</b>.</li>
+    </ol>`)}
+    ${step('Each trade', `${hm(t.opensAtMs)}–${hm(t.closesAtMs)}`, `<ol>
+      <li>On the Read tab, check the answer:
+        <ul>
+          <li><b>Stand aside</b> — news is due. Wait for the "clear at" time it shows.</li>
+          <li><b>Stand down</b> — quiet hours (gold ${span(t.XAUUSD.sitOut)}, bitcoin ${span(t.BTCUSD.sitOut)}). No read is shown.</li>
+          <li><b>No clear direction</b> — nothing to do.</li>
+          <li><b>Leaning up</b> or <b>Leaning down</b> — note the "wrong if" price. Tap <b>Why?</b> for the reasons.</li>
+        </ul></li>
+      <li>Tap <b>See the MT5 ticket</b>. In <b>Live spread</b>, type the gap between MT5's buy and sell prices — about ${sp('XAUUSD')} on gold, ${sp('BTCUSD')} on bitcoin.</li>
+      <li>In MT5, enter the <b>Volume</b>, <b>Stop loss</b> and <b>Take profit</b> exactly as shown. If the stop and target boxes are greyed out, place the trade, then use <b>Modify Position</b> on MT5's Trade tab.</li>
+      <li>If it says <b>Too big for one order</b>, place the separate orders it lists.</li>
+      <li>Back here, tap <b>+ I took a trade</b>.</li>
+      <li>Best stretches: gold ${span(t.XAUUSD.best)}, bitcoin ${span(t.BTCUSD.best)}. From ${hm(t.stricterFromMs)} it is stricter and gives fewer reads, on purpose.</li>
+    </ol>`)}
+    ${step('After the close', `from ${hm(t.closesAtMs)}`, `<ol>
+      <li>The Read tab shows the trades you took against your plan.</li>
+      <li>Optional, weekly: on the Size tab, in <b>Show full detail</b>, fill in <b>Is it working yet?</b> Enter the sample you are committing to first — it gives no verdict before then.</li>
+    </ol>`)}
+    ${step('If the dot is not green', '', `<ol>
+      <li><b style="color:var(--warn)">Do not trade from the read or the ticket's stop and target.</b> Without live prices they come from practice prices.</li>
+      <li>Still useful: the brief, the news times, your plan and trade count — and lot size. On the Size tab, in <b>Show full detail</b>, type your own stop distance and read <b>Volume</b>.</li>
+      <li>Take the stop loss and take profit from your own MT5 chart.</li>
+    </ol>`)}
+    <p style="font-size:12.5px;color:var(--label-3);margin:4px 0 0">It describes the chart and the price it is wrong at. The decision to trade is always yours.</p>`;
+
+  if (html !== state.lastHowToHtml) { $('howto').innerHTML = html; state.lastHowToHtml = html; }
 }
 
 /** Switch between the two views. Remembered on this phone only. */
@@ -1401,6 +1458,7 @@ function analyseNow() {
   renderNews(now);
   renderRisk();
   renderLimits();
+  renderHowTo(now);
 }
 
 async function refresh() {

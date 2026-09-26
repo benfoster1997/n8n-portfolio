@@ -146,3 +146,26 @@ export function planProblem({ setups = [], other = '', maxTrades }) {
   if (!(Number.isInteger(maxTrades) && maxTrades >= 1 && maxTrades <= 50)) return 'Set the most trades you will take today (1 to 50).';
   return null;
 }
+
+/**
+ * The day's clock times for the how-to card, derived from the window and the
+ * session bands rather than typed into prose, so they stay true if the user
+ * moves their hours. Measured from just before the open, so a card read at
+ * 14:00 still shows the morning's sit-out stretch.
+ */
+export function dayTimes(nowMs, win) {
+  const ws = windowState(nowMs, win);
+  const ref = ws.opensAtMs - 60000;
+  const shape = (pair) => {
+    const s = dayShape(ref, pair, win);
+    return { sitOut: s.sitOut[0] || null, best: s.best[0] || null };
+  };
+  return {
+    briefFromMs: ws.opensAtMs - 30 * 60000,
+    opensAtMs: ws.opensAtMs,
+    closesAtMs: ws.closesAtMs,
+    stricterFromMs: ws.closesAtMs - 30 * 60000,
+    XAUUSD: shape('XAUUSD'),
+    BTCUSD: shape('BTCUSD'),
+  };
+}

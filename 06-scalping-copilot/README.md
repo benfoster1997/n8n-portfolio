@@ -157,7 +157,7 @@ overrides, and the Read tab still describes a lean rather than telling you to bu
 | **Read** | Where you are in your session and what the rest of it looks like, then the directional lean, confidence, the invalidation price, targets with their R-multiple, and the win rate the setup needs just to break even after the spread. Plus a candle chart with session VWAP, clustered levels and the invalidation line. |
 | **News** | Split into what lands *while you are trading* and what lands *after you have stopped*. Countdown, London time, and the time as it will appear on your broker's chart. Tier 1 rows produce a hard stand-aside state. |
 | **Size** | Position sizing from account risk, with currency conversion and margin, the cost floor of each instrument in basis points, and the monthly cost of the spread at your trade frequency. |
-| **Setup** | Data source, your broker's contract specs, server clock, your trading window, and the full list of what the tool cannot see. |
+| **Setup** | A step-by-step **how to use it each day** card (its times come from your window, not from prose), the view switch, data source, your broker's contract specs, server clock, your trading window, and the full list of what the tool cannot see. |
 
 Every read carries a **case against it**. The engine always argues both sides, and when
 nothing in the visible data opposes a read it says so — because that usually means it is

@@ -222,6 +222,13 @@ A fresh session is likely to "fix" some of these. Don't, without reading why.
     The plan and trade count live in localStorage (this phone, today only); the
     count is whatever the user taps, and nothing shows P&L.
 
+20. **The how-to card's times are computed, not written.** `dayTimes()` derives
+    every clock time on the Setup-tab card from the window and the session bands,
+    measured from just before the open so it reads the same all day, and the card
+    only re-renders when its text changes so an opened step stays open. Every
+    label it names must be the label on the page — the smoke test opens all five
+    steps and checks them.
+
 ---
 
 ## Research digest

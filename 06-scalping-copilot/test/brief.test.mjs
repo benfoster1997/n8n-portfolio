@@ -10,7 +10,7 @@
 import assert from 'node:assert/strict';
 import {
   dayKey, overnightWindow, rangeOf, whereInRange, overnightVsNorm,
-  todaysPrints, dayShape, planStatus, planProblem, SETUPS,
+  todaysPrints, dayShape, planStatus, planProblem, SETUPS, dayTimes,
 } from '../src/brief.js';
 import { DEFAULT_WINDOW } from '../src/sessions.js';
 import { formatHM } from '../src/timezone.js';
@@ -165,6 +165,24 @@ test('the day for bitcoin: sit out 08:00-12:00, best from 13:18', () => {
   const s = dayShape(Date.UTC(2026, 6, 15, 6, 30), 'BTCUSD', W);
   assert.equal(london(s.sitOut[0].fromMs), '08:00');
   assert.equal(london(s.best[0].fromMs), '13:18');
+});
+
+test('the how-to card times come from the window, and read the same at 14:00', () => {
+  for (const at of [Date.UTC(2026, 6, 15, 6, 0), Date.UTC(2026, 6, 15, 13, 0)]) {
+    const t = dayTimes(at, W);
+    assert.equal(london(t.briefFromMs), '07:30');
+    assert.equal(london(t.stricterFromMs), '15:30', 'the final stretch starts 30 minutes before the close');
+    assert.deepEqual([london(t.XAUUSD.sitOut.fromMs), london(t.XAUUSD.sitOut.toMs)], ['09:00', '12:30']);
+    assert.deepEqual([london(t.XAUUSD.best.fromMs), london(t.XAUUSD.best.toMs)], ['13:18', '15:57']);
+    assert.deepEqual([london(t.BTCUSD.sitOut.fromMs), london(t.BTCUSD.sitOut.toMs)], ['08:00', '12:00']);
+    assert.deepEqual([london(t.BTCUSD.best.fromMs), london(t.BTCUSD.best.toMs)], ['13:18', '16:00']);
+  }
+});
+
+test('move the window and the card moves with it', () => {
+  const t = dayTimes(Date.UTC(2026, 6, 15, 6, 0), { ...W, start: { h: 9, m: 0 }, end: { h: 17, m: 0 } });
+  assert.equal(london(t.briefFromMs), '08:30');
+  assert.equal(london(t.stricterFromMs), '16:30');
 });
 
 console.log('\nthe plan');
