@@ -16,7 +16,7 @@ pre-declared sample. Several of those were reversed once already, deliberately.
 cd 06-scalping-copilot
 node build.mjs          # src/*.js -> index.html (never edit index.html by hand)
 node test/run-all.mjs   # unit suites
-node test/smoke.mjs     # real browser; run after any UI change
+node test/smoke.mjs     # real browser, 7 moments x both views; run after any UI change
 ```
 
 Branch: `claude/xauusd-btcusd-chart-analysis-8pvje5`.
