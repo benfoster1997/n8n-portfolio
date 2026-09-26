@@ -9,8 +9,9 @@
  * for pageerror. This is that check, kept.
  *
  * It freezes the clock at a spread of London-session moments (open, dead zone,
- * prime, final stretch, an NFP blackout), walks every tab on both instruments,
- * and reports page errors and horizontal overflow at iPhone width.
+ * prime, final stretch, an NFP blackout), walks every tab on both instruments
+ * in both the simple and the full view, and reports page errors, horizontal
+ * overflow at iPhone width, and any "undefined" or "NaN" that reaches the screen.
  *
  *   node build.mjs && node test/smoke.mjs
  *
@@ -95,14 +96,36 @@ for (const [label, ms] of Object.entries(MOMENTS)) {
   await p.goto('file://' + harness);
   await p.waitForTimeout(1200);
 
-  for (const pair of ['XAUUSD', 'BTCUSD']) {
-    await p.evaluate((x) => document.getElementById('pair-' + x).click(), pair);
-    await p.waitForTimeout(500);
-    for (const tab of ['read', 'news', 'risk', 'setup', 'read']) {
-      await p.evaluate((t) => document.getElementById('nav-' + t).click(), tab);
-      await p.waitForTimeout(150);
+  const leaks = [];
+  const checkText = async (where) => {
+    const bad = await p.evaluate(() => {
+      const t = document.body.innerText;
+      const m = t.match(/.{0,40}\b(undefined|NaN)\b.{0,40}/);
+      return m ? m[0] : null;
+    });
+    if (bad) leaks.push(`${where}: "${bad.trim()}"`);
+  };
+  const setView = (v) => p.evaluate((v) => {
+    const e = document.getElementById('view-mode');
+    e.value = v; e.dispatchEvent(new Event('change'));
+  }, v);
+
+  for (const view of ['simple', 'full']) {
+    await setView(view);
+    for (const pair of ['XAUUSD', 'BTCUSD']) {
+      await p.evaluate((x) => document.getElementById('pair-' + x).click(), pair);
+      await p.waitForTimeout(500);
+      for (const tab of ['read', 'news', 'risk', 'setup', 'read']) {
+        await p.evaluate((t) => document.getElementById('nav-' + t).click(), tab);
+        await p.waitForTimeout(150);
+        await checkText(`${view}/${pair}/${tab}`);
+      }
     }
   }
+  // The simple read must say something, in either instrument.
+  await setView('simple');
+  const answer = await p.evaluate(() => document.getElementById('simple-read').innerText.trim());
+  if (!answer) leaks.push('simple view: the answer card is empty');
 
   // Exercise the Size tab with real inputs, which is where most logic lives.
   await p.evaluate(() => document.getElementById('nav-risk').click());
@@ -119,6 +142,8 @@ for (const [label, ms] of Object.entries(MOMENTS)) {
     set('rec-planned', '300'); set('rec-trades', '30'); set('rec-wins', '18');
   });
   await p.waitForTimeout(500);
+  await checkText('size tab with inputs');
+  for (const e of leaks) errors.push(e);
 
   const overflow = await p.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
   const unique = [...new Set(errors)];

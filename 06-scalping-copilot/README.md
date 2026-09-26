@@ -103,7 +103,25 @@ trading* and *after you have stopped*, because those are different kinds of fact
 
 ---
 
-## What it shows
+## Two views: simple first
+
+It opens in a **simple view**, because the full one runs to about 3,000 words across
+four tabs, and that is too much to read between trades on a phone.
+
+| | Simple view |
+|---|---|
+| **Read** | One answer — *Leaning up*, *Leaning down*, *No clear direction*, *Stand down* or *Stand aside* — the price that read is wrong at, confidence in a word, and a button to the ticket. Then one line for where you are in the day and one for the next news. The reasons sit behind **Why?**, in plain words rather than indicator names. |
+| **News** | Only what can block a trade: context-only rows and the long explanations are hidden. |
+| **Size** | The MT5 ticket, what it risks, and the two boxes that change every trade — stop distance and live spread. Warnings stay but shrink to a line: "Too big for one order. Place 1 × 100 lots and 1 × 63.11." |
+
+**Show full detail** at the foot of each tab, or Setup → View, switches to everything
+below. Both views run the same calculation; the simple one hides the working, not the
+warnings. It does not relax any rule — the dead zone still withholds its read (and the
+simple view does not even disclose what the technicals read underneath), a blackout still
+overrides, and the Read tab still describes a lean rather than telling you to buy or sell
+(the ticket's BUY or SELL is only which MT5 button a trade in that direction would use).
+
+## What it shows (full detail)
 
 | | |
 |---|---|

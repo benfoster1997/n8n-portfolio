@@ -1,7 +1,7 @@
 # Handoff — M5 Scalp Desk
 
 Everything needed to pick this up in a fresh session without re-deriving it.
-Last updated 24 September 2026. Read this whole file before changing anything —
+Last updated 26 September 2026. Read this whole file before changing anything —
 several decisions below look like mistakes and are not.
 
 ---
@@ -29,8 +29,8 @@ refuse a plain publish and would otherwise create a *second* page. Do this:
 
 ```
 node build.mjs            # inline src/*.js into index.html; refuses on name collisions
-node test/run-all.mjs     # 214 assertions across 7 suites — unit level only
-node test/smoke.mjs       # real browser, 6 frozen London-session moments, fails on any page error
+node test/run-all.mjs     # 226 assertions across 7 suites — unit level only
+node test/smoke.mjs       # real browser, 6 frozen moments x both views; fails on page errors, overflow, "undefined"/"NaN"
 ```
 
 `smoke.mjs` needs playwright, which is deliberately **not** a project dependency.
@@ -197,6 +197,18 @@ A fresh session is likely to "fix" some of these. Don't, without reading why.
     Size tab says which is in force. 0.2% equals 1:500, so the two agree on this
     demo — they need not on a live account, which is why the rate is re-read, not
     derived.
+
+18. **The simple view is the default, and it says "Leaning up", not "Buy".**
+    Built 26 Sep 2026 after the user asked whether the tool was easy to use (it
+    was ~3,000 words over four tabs). One `simple` class on `<body>` hides
+    everything marked `.detail` and shows `.simple-only`; nothing is recomputed,
+    so the views cannot disagree. Its rules: no buy/sell instruction on the Read
+    tab (it describes a lean and its invalidation; the ticket's BUY/SELL is only
+    the MT5 side); the dead-zone stand-down shows **no**
+    direction, not even the suppressed one the full view discloses; the session
+    line uses the coarse phase words, never a time to the close; warnings are
+    shortened, never dropped. The smoke test walks both views and fails on any
+    visible "undefined" or "NaN".
 
 ---
 

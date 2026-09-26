@@ -215,6 +215,7 @@ input.f, select.f {
 input.f:focus, select.f:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: transparent; }
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; }
 .field + .field, .grid2 + .field, .field + .grid2, .grid2 + .grid2 { margin-top: 12px; }
+.grid2 > .field + .field { margin-top: 0; }  /* side by side, not stacked */
 
 button.btn {
   width: 100%; min-height: 46px; border: 0; border-radius: var(--r-md);
@@ -326,6 +327,20 @@ footer.fine {
   padding: 4px 16px 20px; font-size: 11.5px; color: var(--label-3); line-height: 1.55;
 }
 
+/* ------------------------------------------------------------ simple view --
+   One class on <body> decides it. Detail is hidden, never removed and never
+   recomputed, so the two views cannot disagree about anything. */
+body.simple .detail { display: none !important; }
+body:not(.simple) .simple-only { display: none !important; }
+body.simple .ev-why, body.simple .ev details.more { display: none; }
+.answer { display: flex; align-items: center; gap: 10px; font-size: 30px; font-weight: 700; letter-spacing: -.03em; line-height: 1.1; }
+.answer-line { font-size: 15.5px; color: var(--label); margin: 9px 0 0; }
+.answer-sub { font-size: 13px; color: var(--label-2); margin: 6px 0 0; }
+.srow { display: flex; align-items: baseline; gap: 9px; font-size: 14px; color: var(--label-2); }
+.srow + .srow { margin-top: 9px; }
+.srow .pip { width: 8px; height: 8px; border-radius: 50%; flex: none; transform: translateY(-1px); background: var(--label-3); }
+button.linkish { border: 0; background: none; padding: 0; color: var(--accent); font: inherit; cursor: pointer; }
+
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }
 }
@@ -353,16 +368,18 @@ footer.fine {
   <!-- ============================ READ ============================ -->
   <section id="tab-read">
     <div id="blackout-slot"></div>
-    <div class="card" id="session-card"></div>
-    <div class="card readout" id="readout"></div>
-    <div class="card">
+    <div class="card simple-only" id="simple-read"></div>
+    <div class="card detail" id="session-card"></div>
+    <div class="card readout detail" id="readout"></div>
+    <div class="card detail">
       <p class="card-title">Last 5-minute bars</p>
       <div class="chart-wrap"><canvas id="chart" width="700" height="380"></canvas></div>
       <div class="chips" id="chart-chips"></div>
     </div>
-    <div class="card" id="conditions"></div>
-    <div class="card" id="whynot"></div>
-    <div class="card" id="reasoning"></div>
+    <div class="card detail" id="conditions"></div>
+    <div class="card detail" id="whynot"></div>
+    <div class="card detail" id="reasoning"></div>
+    <button class="btn ghost view-toggle"></button>
   </section>
 
   <!-- ============================ NEWS ============================ -->
@@ -370,18 +387,30 @@ footer.fine {
     <h2 class="sec">Scheduled</h2>
     <div id="dst-slot"></div>
     <div class="card" id="news-inside"></div>
-    <div class="card" id="news-outside"></div>
-    <div class="card" id="unschedulable"></div>
+    <div class="card detail" id="news-outside"></div>
+    <div class="card detail" id="unschedulable"></div>
+    <button class="btn ghost view-toggle"></button>
   </section>
 
   <!-- ============================ RISK ============================ -->
   <section id="tab-risk" hidden>
     <h2 class="sec">Size &amp; cost</h2>
     <div class="card" id="ticket"></div>
-    <div class="card" id="corr-note"></div>
+    <div class="card detail" id="corr-note"></div>
     <div class="card">
       <p class="card-title">Position size</p>
       <div class="grid2">
+        <div class="field">
+          <label class="f" for="stop-dist">Stop distance</label>
+          <input class="f num" id="stop-dist" type="number" inputmode="decimal" step="0.01">
+        </div>
+        <div class="field">
+          <label class="f" for="live-spread">Live spread</label>
+          <input class="f num" id="live-spread" type="number" inputmode="decimal" step="0.01">
+        </div>
+      </div>
+      <div id="size-summary" class="simple-only"></div>
+      <div class="grid2 detail">
         <div class="field">
           <label class="f" for="acct-bal">Account balance</label>
           <input class="f num" id="acct-bal" type="number" inputmode="decimal" value="9816107.46">
@@ -393,7 +422,7 @@ footer.fine {
           </select>
         </div>
       </div>
-      <div class="grid2">
+      <div class="grid2 detail">
         <div class="field">
           <label class="f" for="risk-pct">Risk per trade %</label>
           <input class="f num" id="risk-pct" type="number" inputmode="decimal" step="0.1" value="1">
@@ -403,7 +432,7 @@ footer.fine {
           <input class="f num" id="fx-rate" type="number" inputmode="decimal" step="0.0001" value="1.35">
         </div>
       </div>
-      <div class="grid2">
+      <div class="grid2 detail">
         <div class="field">
           <label class="f" for="point-size">Point size (spread bet)</label>
           <select class="f" id="point-size">
@@ -424,17 +453,7 @@ footer.fine {
           </select>
         </div>
       </div>
-      <div class="grid2">
-        <div class="field">
-          <label class="f" for="stop-dist">Stop distance</label>
-          <input class="f num" id="stop-dist" type="number" inputmode="decimal" step="0.01">
-        </div>
-        <div class="field">
-          <label class="f" for="live-spread">Live spread</label>
-          <input class="f num" id="live-spread" type="number" inputmode="decimal" step="0.01">
-        </div>
-      </div>
-      <div class="grid2">
+      <div class="grid2 detail">
         <div class="field">
           <label class="f" for="commission">Commission per lot, each side (GBP)</label>
           <input class="f num" id="commission" type="number" inputmode="decimal" step="0.01" placeholder="from the spec">
@@ -444,26 +463,26 @@ footer.fine {
           <input class="f num" id="live-balance" type="number" inputmode="decimal" placeholder="what you'd trade live">
         </div>
       </div>
-      <div class="field">
+      <div class="field detail">
         <label class="f" for="size-from">Size from</label>
         <select class="f" id="size-from">
           <option value="account">Account balance</option>
           <option value="shadow">Shadow balance — practise at live scale</option>
         </select>
       </div>
-      <div id="size-out"></div>
+      <div id="size-out" class="detail"></div>
     </div>
-    <div class="card" id="margin-gate"></div>
-    <details class="card" id="point-check-wrap" style="padding:15px 16px">
+    <div class="card detail" id="margin-gate"></div>
+    <details class="card detail" id="point-check-wrap" style="padding:15px 16px">
       <summary style="font-size:11px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--label-3);cursor:pointer;list-style:none;min-height:32px;display:flex;align-items:center">
         Spread bet cross-check &nbsp;<span style="color:var(--accent);text-transform:none;letter-spacing:0;font-weight:600">open</span>
       </summary>
       <div id="point-check"></div>
     </details>
-    <div class="card" id="cost-out"></div>
-    <div class="card" id="account-note"></div>
+    <div class="card detail" id="cost-out"></div>
+    <div class="card detail" id="account-note"></div>
 
-    <div class="card">
+    <div class="card detail">
       <p class="card-title">Is it working yet?</p>
       <div class="grid2">
         <div class="field">
@@ -491,11 +510,25 @@ footer.fine {
       </div>
       <div id="edge-out"></div>
     </div>
+    <button class="btn ghost view-toggle"></button>
   </section>
 
   <!-- =========================== SETUP ============================ -->
   <section id="tab-setup" hidden>
     <h2 class="sec">Setup</h2>
+    <div class="card">
+      <p class="card-title">View</p>
+      <div class="field">
+        <label class="f" for="view-mode">How much to show</label>
+        <select class="f" id="view-mode">
+          <option value="simple">Simple — the answer first</option>
+          <option value="full">Full detail — every number and the reasoning</option>
+        </select>
+      </div>
+      <p style="font-size:12.5px;color:var(--label-2);margin:11px 0 0">
+        Both views run the same calculations. Simple hides the working, not the warnings:
+        news blackouts, the quiet-hours stand-down and ticket problems still show.</p>
+    </div>
     <div class="card">
       <p class="card-title">Data</p>
       <div class="field">

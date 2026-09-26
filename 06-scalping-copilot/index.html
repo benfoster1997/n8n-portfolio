@@ -215,6 +215,7 @@ input.f, select.f {
 input.f:focus, select.f:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: transparent; }
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; }
 .field + .field, .grid2 + .field, .field + .grid2, .grid2 + .grid2 { margin-top: 12px; }
+.grid2 > .field + .field { margin-top: 0; }  /* side by side, not stacked */
 
 button.btn {
   width: 100%; min-height: 46px; border: 0; border-radius: var(--r-md);
@@ -326,6 +327,20 @@ footer.fine {
   padding: 4px 16px 20px; font-size: 11.5px; color: var(--label-3); line-height: 1.55;
 }
 
+/* ------------------------------------------------------------ simple view --
+   One class on <body> decides it. Detail is hidden, never removed and never
+   recomputed, so the two views cannot disagree about anything. */
+body.simple .detail { display: none !important; }
+body:not(.simple) .simple-only { display: none !important; }
+body.simple .ev-why, body.simple .ev details.more { display: none; }
+.answer { display: flex; align-items: center; gap: 10px; font-size: 30px; font-weight: 700; letter-spacing: -.03em; line-height: 1.1; }
+.answer-line { font-size: 15.5px; color: var(--label); margin: 9px 0 0; }
+.answer-sub { font-size: 13px; color: var(--label-2); margin: 6px 0 0; }
+.srow { display: flex; align-items: baseline; gap: 9px; font-size: 14px; color: var(--label-2); }
+.srow + .srow { margin-top: 9px; }
+.srow .pip { width: 8px; height: 8px; border-radius: 50%; flex: none; transform: translateY(-1px); background: var(--label-3); }
+button.linkish { border: 0; background: none; padding: 0; color: var(--accent); font: inherit; cursor: pointer; }
+
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }
 }
@@ -353,16 +368,18 @@ footer.fine {
   <!-- ============================ READ ============================ -->
   <section id="tab-read">
     <div id="blackout-slot"></div>
-    <div class="card" id="session-card"></div>
-    <div class="card readout" id="readout"></div>
-    <div class="card">
+    <div class="card simple-only" id="simple-read"></div>
+    <div class="card detail" id="session-card"></div>
+    <div class="card readout detail" id="readout"></div>
+    <div class="card detail">
       <p class="card-title">Last 5-minute bars</p>
       <div class="chart-wrap"><canvas id="chart" width="700" height="380"></canvas></div>
       <div class="chips" id="chart-chips"></div>
     </div>
-    <div class="card" id="conditions"></div>
-    <div class="card" id="whynot"></div>
-    <div class="card" id="reasoning"></div>
+    <div class="card detail" id="conditions"></div>
+    <div class="card detail" id="whynot"></div>
+    <div class="card detail" id="reasoning"></div>
+    <button class="btn ghost view-toggle"></button>
   </section>
 
   <!-- ============================ NEWS ============================ -->
@@ -370,18 +387,30 @@ footer.fine {
     <h2 class="sec">Scheduled</h2>
     <div id="dst-slot"></div>
     <div class="card" id="news-inside"></div>
-    <div class="card" id="news-outside"></div>
-    <div class="card" id="unschedulable"></div>
+    <div class="card detail" id="news-outside"></div>
+    <div class="card detail" id="unschedulable"></div>
+    <button class="btn ghost view-toggle"></button>
   </section>
 
   <!-- ============================ RISK ============================ -->
   <section id="tab-risk" hidden>
     <h2 class="sec">Size &amp; cost</h2>
     <div class="card" id="ticket"></div>
-    <div class="card" id="corr-note"></div>
+    <div class="card detail" id="corr-note"></div>
     <div class="card">
       <p class="card-title">Position size</p>
       <div class="grid2">
+        <div class="field">
+          <label class="f" for="stop-dist">Stop distance</label>
+          <input class="f num" id="stop-dist" type="number" inputmode="decimal" step="0.01">
+        </div>
+        <div class="field">
+          <label class="f" for="live-spread">Live spread</label>
+          <input class="f num" id="live-spread" type="number" inputmode="decimal" step="0.01">
+        </div>
+      </div>
+      <div id="size-summary" class="simple-only"></div>
+      <div class="grid2 detail">
         <div class="field">
           <label class="f" for="acct-bal">Account balance</label>
           <input class="f num" id="acct-bal" type="number" inputmode="decimal" value="9816107.46">
@@ -393,7 +422,7 @@ footer.fine {
           </select>
         </div>
       </div>
-      <div class="grid2">
+      <div class="grid2 detail">
         <div class="field">
           <label class="f" for="risk-pct">Risk per trade %</label>
           <input class="f num" id="risk-pct" type="number" inputmode="decimal" step="0.1" value="1">
@@ -403,7 +432,7 @@ footer.fine {
           <input class="f num" id="fx-rate" type="number" inputmode="decimal" step="0.0001" value="1.35">
         </div>
       </div>
-      <div class="grid2">
+      <div class="grid2 detail">
         <div class="field">
           <label class="f" for="point-size">Point size (spread bet)</label>
           <select class="f" id="point-size">
@@ -424,17 +453,7 @@ footer.fine {
           </select>
         </div>
       </div>
-      <div class="grid2">
-        <div class="field">
-          <label class="f" for="stop-dist">Stop distance</label>
-          <input class="f num" id="stop-dist" type="number" inputmode="decimal" step="0.01">
-        </div>
-        <div class="field">
-          <label class="f" for="live-spread">Live spread</label>
-          <input class="f num" id="live-spread" type="number" inputmode="decimal" step="0.01">
-        </div>
-      </div>
-      <div class="grid2">
+      <div class="grid2 detail">
         <div class="field">
           <label class="f" for="commission">Commission per lot, each side (GBP)</label>
           <input class="f num" id="commission" type="number" inputmode="decimal" step="0.01" placeholder="from the spec">
@@ -444,26 +463,26 @@ footer.fine {
           <input class="f num" id="live-balance" type="number" inputmode="decimal" placeholder="what you'd trade live">
         </div>
       </div>
-      <div class="field">
+      <div class="field detail">
         <label class="f" for="size-from">Size from</label>
         <select class="f" id="size-from">
           <option value="account">Account balance</option>
           <option value="shadow">Shadow balance — practise at live scale</option>
         </select>
       </div>
-      <div id="size-out"></div>
+      <div id="size-out" class="detail"></div>
     </div>
-    <div class="card" id="margin-gate"></div>
-    <details class="card" id="point-check-wrap" style="padding:15px 16px">
+    <div class="card detail" id="margin-gate"></div>
+    <details class="card detail" id="point-check-wrap" style="padding:15px 16px">
       <summary style="font-size:11px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--label-3);cursor:pointer;list-style:none;min-height:32px;display:flex;align-items:center">
         Spread bet cross-check &nbsp;<span style="color:var(--accent);text-transform:none;letter-spacing:0;font-weight:600">open</span>
       </summary>
       <div id="point-check"></div>
     </details>
-    <div class="card" id="cost-out"></div>
-    <div class="card" id="account-note"></div>
+    <div class="card detail" id="cost-out"></div>
+    <div class="card detail" id="account-note"></div>
 
-    <div class="card">
+    <div class="card detail">
       <p class="card-title">Is it working yet?</p>
       <div class="grid2">
         <div class="field">
@@ -491,11 +510,25 @@ footer.fine {
       </div>
       <div id="edge-out"></div>
     </div>
+    <button class="btn ghost view-toggle"></button>
   </section>
 
   <!-- =========================== SETUP ============================ -->
   <section id="tab-setup" hidden>
     <h2 class="sec">Setup</h2>
+    <div class="card">
+      <p class="card-title">View</p>
+      <div class="field">
+        <label class="f" for="view-mode">How much to show</label>
+        <select class="f" id="view-mode">
+          <option value="simple">Simple — the answer first</option>
+          <option value="full">Full detail — every number and the reasoning</option>
+        </select>
+      </div>
+      <p style="font-size:12.5px;color:var(--label-2);margin:11px 0 0">
+        Both views run the same calculations. Simple hides the working, not the warnings:
+        news blackouts, the quiet-hours stand-down and ticket problems still show.</p>
+    </div>
     <div class="card">
       <p class="card-title">Data</p>
       <div class="field">
@@ -3166,7 +3199,7 @@ const BANDS = {
   ],
   BTCUSD: [
     { from: 8, to: 12, band: 'dead', name: 'Worst hours of your day',
-      note: 'These are the poorest bitcoin hours you could pick. The range is near its daily low while the CFD spread is unchanged, so it takes roughly a fifth of a typical candle. Gold is the better use of this stretch.' },
+      note: 'These are the poorest bitcoin hours you could pick. The range is near its daily low while the spread stays the same, so the spread takes a bigger share of every candle. Gold is the better use of this stretch.' },
     { from: 12, to: 13.3, band: 'amber', name: 'Waking up',
       note: 'US participants beginning to arrive. Improving, not yet good.' },
     { from: 13.3, to: 16, band: 'green', name: 'Your bitcoin window',
@@ -4551,6 +4584,7 @@ const state = {
   feed: null,
   spread: store.get('spread', {}),
   window: store.get('window', DEFAULT_WINDOW),
+  view: store.get('view', 'simple'),
   lastAnalysis: null,
 };
 
@@ -4719,6 +4753,17 @@ function renderRead(a) {
     return;
   }
 
+  // A blackout carries no statement of its own — it overrides the read — so
+  // it gets its own branch rather than printing an empty one.
+  if (a.state === 'stand-aside') {
+    el.innerHTML = banner + `
+      <div class="bias-line"><span class="arrow flat">&#9644;</span>
+        <span class="bias flat" style="font-size:22px">Stand aside</span></div>
+      <div class="price-big" style="font-size:26px;color:var(--label-2)">${fmt(a.price)}</div>
+      <p class="statement">${esc(a.detail)}</p>`;
+    return;
+  }
+
   const dir = a.bias === 'long' ? 'up' : a.bias === 'short' ? 'down' : 'flat';
   const arrow = a.bias === 'long' ? '&#9650;' : a.bias === 'short' ? '&#9660;' : '&#9644;';
   const word = a.bias === 'long' ? 'Upward lean' : a.bias === 'short' ? 'Downward lean' : 'No lean';
@@ -4730,7 +4775,7 @@ function renderRead(a) {
       <span class="bias ${dir}">${word}</span>
     </div>
     <div class="price-big">${fmt(a.price)}</div>
-    <p class="statement">${esc(a.statement)}</p>`;
+    <p class="statement">${esc(a.statement || a.detail || '')}</p>`;
 
   // 'none' is the blackout state and carries no targets or weights; only a
   // real directional read has those. Checking for 'neutral' alone let the
@@ -4756,6 +4801,150 @@ function renderRead(a) {
       <p style="font-size:13px;color:var(--label-2);margin:6px 0 0">${esc(a.invalidationBasis)}</p></details>`;
   }
   el.innerHTML = html;
+}
+
+/* =========================================================== simple view */
+
+/**
+ * The simple view: the answer first, in plain words, with everything else one
+ * tap away. It changes what is SHOWN, never what is computed, so the rules
+ * that make the full view awkward hold here too:
+ *  - it never says buy or sell. It says which way price is leaning and the
+ *    level that read is wrong at, the same as the full view;
+ *  - the quiet-hours stand-down shows NO direction. The full view discloses
+ *    what the technicals read underneath; here that would just be traded;
+ *  - no time to the session close, only the coarse phase words.
+ */
+const PLAIN = {
+  trend: ['The trend is up', 'The trend is down'],
+  momentum: ['Momentum is pushing up', 'Momentum is pushing down'],
+  structure: ['Price is making higher highs and higher lows', 'Price is making lower highs and lower lows'],
+  location: ['Price is low in its recent range', 'Price is high in its recent range'],
+  volume: ['Trading picked up on a rising bar', 'Trading picked up on a falling bar'],
+};
+
+function plainReasons(a) {
+  const forIt = [], against = [];
+  if (!a || !a.buckets) return { forIt, against };
+  const sign = a.bias === 'long' ? 1 : a.bias === 'short' ? -1 : 0;
+  for (const [name, words] of Object.entries(PLAIN)) {
+    const b = a.buckets[name];
+    if (!b || b.noData || Math.abs(b.score) < 0.25) continue;
+    const text = b.score > 0 ? words[0] : words[1];
+    if (sign === 0 || Math.sign(b.score) === sign) forIt.push(text); else against.push(text);
+  }
+  if (a.buckets.volatility && a.buckets.volatility.score < 0) {
+    against.push('Price is moving less than usual, so costs take a bigger bite');
+  }
+  if (a.htf && a.htf.agree === false) against.push('The 15-minute and 1-hour charts disagree');
+  return { forIt, against };
+}
+
+function renderSimpleRead(a, now) {
+  const w = windowState(now, state.window);
+  const q = sessionQuality(now, state.pair, state.window);
+
+  let banner = '';
+  if (state.feed && state.feed.ok && state.feed.source.proxy) {
+    banner = `<div class="unconfirmed" style="color:var(--danger);background:var(--danger-dim);margin:0 0 13px">
+      <b>Not real gold.</b> These prices are ${esc(state.feed.source.instrument)}. Never size a trade from them.</div>`;
+  } else if (state.sample) {
+    banner = `<div class="unconfirmed" style="margin:0 0 13px">
+      <b>Practice prices.</b> No live prices yet, so this is not a real read. Connect them in Setup.</div>`;
+  }
+
+  // The answer, in words. Tone is the colour; the word always carries the meaning.
+  let word = 'No clear direction', tone = 'flat', arrow = '&#9644;', line = '', why = '';
+  const read = a && a.ok && (a.bias === 'long' || a.bias === 'short') && a.state === 'read';
+  if (!a || !a.ok) {
+    word = 'Not enough data';
+    line = 'It needs more price history before it can read the chart.';
+  } else if (a.state === 'stand-aside') {
+    word = 'Stand aside'; tone = 'danger';
+    line = `${esc(a.blackout.event.name)} — see the warning above.`;
+    why = esc(a.detail);
+  } else if (a.state === 'stand-down') {
+    word = 'Stand down';
+    line = a.headline === 'Weekend' ? esc(a.detail)
+      : `${esc(a.headline)}: the moves are too small for the costs, so no direction is shown.`;
+    why = esc(a.detail);
+  } else if (a.state === 'no-read') {
+    word = 'No clear read';
+    line = 'There is no sensible level to put a stop at, so there is nothing to trade.';
+  } else if (read) {
+    const up = a.bias === 'long';
+    word = up ? 'Leaning up' : 'Leaning down'; tone = up ? 'up' : 'down';
+    arrow = up ? '&#9650;' : '&#9660;';
+    line = `Wrong if price goes ${up ? 'below' : 'above'} <b class="num">${fmt(a.invalidation)}</b>.`;
+  } else {
+    line = 'The chart is not leaning either way right now.';
+  }
+
+  let html = banner + `<div class="answer" style="color:var(--${tone})"><span>${arrow}</span><span>${word}</span></div>
+    <p class="answer-line">${line}</p>`;
+
+  if (read) {
+    const conf = a.confidenceLabel;
+    html += `<p class="answer-sub">Confidence: <b style="color:var(--label)">${esc(conf)}</b>${conf === 'low'
+      ? ' — treat it as an observation, not a setup.' : '.'}</p>`;
+    const sv = a.spreadVerdict;
+    if (sv && !sv.stopOk) {
+      html += `<div class="unconfirmed" style="color:var(--danger);background:var(--danger-dim)">Your spread is too big for a stop this tight. Costs would eat the trade.</div>`;
+    } else if (sv && !sv.targetOk) {
+      html += `<div class="unconfirmed">The first target is too close to cover the spread.</div>`;
+    }
+    html += `<div style="margin-top:14px"><button class="btn" data-tab="risk">See the MT5 ticket</button></div>`;
+  }
+
+  // Where you are in the day, and what is coming — one line each.
+  const pip = { green: 'up', amber: 'warn', red: 'danger', dead: 'label-3' }[q.band] || 'label-3';
+  const phaseText = w.phase === 'weekend' ? 'Weekend — markets closed or thin'
+    : w.phase === 'before' ? 'Before your window opens'
+      : w.phase === 'after' ? 'Your window has closed'
+        : w.phase === 'last-30' ? 'Final stretch — the bar for a read is raised'
+          : esc(q.name);
+  html += `<div class="hr"></div>
+    <div class="srow"><span class="pip" style="background:var(--${w.open ? pip : 'label-3'})"></span><span>Now: <b style="color:var(--label)">${phaseText}</b></span></div>`;
+
+  const pref = preferredInstrument(now, state.window);
+  if (w.open && pref.pair && pref.confident && pref.pair !== state.pair) {
+    html += `<div class="srow"><span class="pip" style="background:var(--warn)"></span><span>${esc(INSTRUMENTS[pref.pair].label)} is the better of your two right now.</span></div>`;
+  }
+
+  const next = getUpcomingEvents(now, 12, state.pair, { includeContext: false })
+    .filter((e) => e.ts > now && e.tier <= 2 && insideWindow(e.ts, state.window))[0];
+  html += `<div class="srow"><span class="pip" style="background:var(--${next ? (next.tier === 1 ? 'danger' : 'warn') : 'label-3'})"></span><span>${next
+    ? `Next news: <b style="color:var(--label)">${esc(next.short || next.name)}</b> at ${formatHM(next.ts, state.window.tz)} (in ${formatDuration(next.msAway)})`
+    : 'No major news due in your window.'}</span></div>`;
+
+  // Why — in plain words, behind one tap.
+  if (read || (a && a.ok && a.state === 'neutral')) {
+    const pr = plainReasons(a);
+    const list = (xs, cls = '') => `<ul class="reasons ${cls}">${xs.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>`;
+    why = (pr.forIt.length ? `<p class="card-title" style="margin-top:10px">${read ? 'Pointing this way' : 'What it sees'}</p>${list(pr.forIt)}` : '')
+      + (pr.against.length ? `<p class="card-title" style="margin-top:12px">Against it</p>${list(pr.against, 'against')}` : '')
+      || '<p style="font-size:13px;color:var(--label-2);margin:6px 0 0">No single signal stands out.</p>';
+  }
+  if (why) {
+    html += `<details class="more"><summary>Why?</summary>${why.startsWith('<') ? why
+      : `<p style="font-size:13px;color:var(--label-2);margin:6px 0 0">${why}</p>`}</details>`;
+  }
+
+  $('simple-read').innerHTML = html;
+}
+
+/** Switch between the two views. Remembered on this phone only. */
+function setView(v) {
+  state.view = v === 'full' ? 'full' : 'simple';
+  store.set('view', state.view);
+  document.body.classList.toggle('simple', state.view === 'simple');
+  $('view-mode').value = state.view;
+  for (const b of document.querySelectorAll('.view-toggle')) {
+    const toFull = state.view === 'simple';
+    b.dataset.view = toFull ? 'full' : 'simple';
+    b.textContent = toFull ? 'Show full detail' : 'Back to the simple view';
+  }
+  drawChart(state.lastAnalysis);
 }
 
 /* =============================================================== session */
@@ -4905,7 +5094,7 @@ function eventRow(e, now) {
   const cls = e.tier === 1 ? 't1' : e.tier === 2 ? 't2' : e.tier === 3 ? 't3' : 'tc';
   const past = e.ts < now;
   const bt = state.serverOffset !== '' ? brokerChartTime(e.ts, Number(state.serverOffset)) : null;
-  return `<div class="ev">
+  return `<div class="ev${e.tier === 'context' ? ' detail' : ''}">
     <div class="ev-stripe ${cls}"></div>
     <div>
       <div class="ev-name">${esc(e.name)}${e.confidence !== 'verified' ? `<span class="flag">${e.approximate ? 'approx' : 'unconfirmed'}</span>` : ''}${e.dateShifted ? '<span class="flag">shifted</span>' : ''}</div>
@@ -4938,8 +5127,11 @@ function renderNews(now) {
   const outside = rows.filter((e) => !insideWindow(e.ts, state.window));
   const zoneName = zoneLabel();
 
+  // Context-only rows are hidden in the simple view, so say so if that leaves nothing.
+  const blocking = inside.some((e) => e.tier !== 'context');
   $('news-inside').innerHTML = inside.length
-    ? `<p class="card-title">While you are trading · next 7 days</p>${inside.slice(0, 26).map((e) => eventRow(e, now)).join('')}`
+    ? `<p class="card-title">While you are trading · next 7 days</p>${inside.slice(0, 26).map((e) => eventRow(e, now)).join('')}${blocking ? ''
+      : '<p class="simple-only" style="color:var(--label-2);font-size:13.5px;margin:0">Nothing that blocks a trade is scheduled inside your window this week.</p>'}`
     : `<p class="card-title">While you are trading</p><p style="color:var(--label-2);font-size:13.5px;margin:0">Nothing scheduled inside your window for this instrument over the next week.</p>`;
 
   $('news-outside').innerHTML = outside.length
@@ -5015,6 +5207,16 @@ function renderRisk() {
     minLot: Number($('min-lot').value) || spec(i, 'minLot'),
   });
 
+  const mpl = marginPerLotFor(i, contract, leverage, price);
+  const posture = r.ok ? marginPosture({
+    marginPct: r.margin.pctOfEquity / 100, leverage: mm.equivLeverage, equity: bal,
+    marginPerLotAccount: mpl ? mpl.amount / fx : null, wantedLots: r.cfd.lots,
+  }) : null;
+
+  $('size-summary').innerHTML = `<p style="font-size:12.5px;color:var(--label-3);margin:10px 0 0">
+    Sizing from ${usingShadow ? 'your shadow balance of ' : ''}${esc(ccy)} ${fmt(bal, 0)} at ${pct}% risk.
+    <button class="linkish" data-view="full">Change</button></p>`;
+
   /* ---- the ticket: exactly what goes into the MT5 order form ---- */
   const digits = Number($('digits').value) || dp();
   const stopsLevel = Number($('stops-level').value) || 0;
@@ -5046,24 +5248,31 @@ function renderRisk() {
           ? `<div class="tk"><div class="tk-lab"><b>Take profit</b>price level</div><div class="tk-val up">${fmt(tk.takeProfit, digits)}</div></div>`
           : ''}
       </div>
+      ${r.ok ? `<div class="row" style="margin-top:10px"><dt>Risking</dt><dd>${esc(ccy)} ${fmt(r.cfd.actualRisk, 2)} · ${pct}%${usingShadow ? ' of your shadow balance' : ''}</dd></div>` : ''}
+      ${posture && posture.state === 'binding'
+        ? `<div class="unconfirmed simple-only" style="color:var(--danger);background:var(--danger-dim)"><b>${esc(posture.headline)}.</b> This position takes most of the account in margin. <button class="linkish" data-view="full">See why</button></div>`
+        : ''}
       ${tk.warning ? `<div class="unconfirmed" style="color:var(--danger);background:var(--danger-dim)">${esc(tk.warning)}</div>` : ''}
       ${(() => {
         const sp = orderSplit(tk.volume, Number($('max-volume').value) || spec(inst(), 'maxVolume') || 0);
-        return sp && sp.needsSplit
-          ? `<div class="unconfirmed" style="color:var(--warn);background:var(--warn-dim)">${esc(sp.text)}</div>` : '';
+        if (!sp || !sp.needsSplit) return '';
+        const full = sp.remainder ? sp.orders - 1 : sp.orders;
+        return `<div class="unconfirmed detail" style="color:var(--warn);background:var(--warn-dim)">${esc(sp.text)}</div>
+          <div class="unconfirmed simple-only" style="color:var(--warn);background:var(--warn-dim)">Too big for one order. Place ${full} × ${sp.perOrder} lots${sp.remainder ? ` and 1 × ${sp.remainder}` : ''}.</div>`;
       })()}
       ${(() => {
         const fr = fillRisk({ lots: tk.volume, contractSize: contract, fillMode: $('fill-mode').value });
-        return fr && fr.large ? `<div class="unconfirmed">${esc(fr.text)}</div>` : '';
+        return fr && fr.large ? `<div class="unconfirmed detail">${esc(fr.text)}</div>
+          <div class="unconfirmed simple-only">At this size you may only get part of the order filled.</div>` : '';
       })()}
-      <p style="font-size:12.5px;color:var(--label-2);margin:12px 0 0">
+      <p class="detail" style="font-size:12.5px;color:var(--label-2);margin:12px 0 0">
         Stop and target are <b>absolute price levels</b>, which is what the mobile ticket expects —
         not distances. Market price was ${fmt(a.price, digits)} when this was computed;
         if it has moved, the levels still hold but the risk no longer matches.</p>
       ${(() => {
         const n = inst().chartIsBid ? bidChartNote(tk.side, spread || inst().typicalSpread?.observed || 0, digits) : null;
         return n
-          ? `<div class="unconfirmed" style="${n.aligned ? 'color:var(--label-2);background:var(--surface-3)' : ''}">${esc(n.text)}</div>`
+          ? `<div class="unconfirmed detail" style="${n.aligned ? 'color:var(--label-2);background:var(--surface-3)' : ''}">${esc(n.text)}</div>`
           : '';
       })()}
       <details class="more"><summary>Where these go in the app</summary>
@@ -5096,7 +5305,6 @@ function renderRisk() {
 
     /* ---- the margin gate: the constraint that actually binds ---- */
     const m = r.margin;
-    const mpl = marginPerLotFor(i, contract, leverage, price);
     const bySymbol = mpl && mpl.source === 'symbol';
     $('margin-gate').innerHTML = `
       <p class="card-title">Margin</p>
@@ -5106,10 +5314,6 @@ function renderRisk() {
       <div class="row"><dt>Margin required</dt><dd style="color:var(--${m.over ? 'danger' : 'label'})">${ccy} ${fmt(m.amount, 2)}</dd></div>
       <div class="row"><dt>Share of account</dt><dd style="color:var(--${m.over ? 'danger' : 'up'});font-size:19px;font-weight:700">${m.pctOfEquity}%</dd></div>
       ${(() => {
-        const posture = marginPosture({
-          marginPct: m.pctOfEquity / 100, leverage: mm.equivLeverage, equity: bal,
-          marginPerLotAccount: mpl ? mpl.amount / fx : null, wantedLots: r.cfd.lots,
-        });
         if (!posture) return '';
         const cls = posture.state === 'comfortable' ? ' ok' : '';
         return `<div class="gate${cls}">
@@ -5565,6 +5769,7 @@ function analyseNow() {
   renderBlackout(bl, now);
   renderSessionCard(now);
   renderRead(a);
+  renderSimpleRead(a, now);
   renderConditions(a, now);
   renderReasoning(a);
   drawChart(a);
@@ -5625,6 +5830,17 @@ function boot() {
   $('pair-XAUUSD').onclick = () => setPair('XAUUSD');
   $('pair-BTCUSD').onclick = () => setPair('BTCUSD');
   for (const t of ['read', 'news', 'risk', 'setup']) $('nav-' + t).onclick = () => selectTab(t);
+
+  // One delegated handler for "show full detail", "change" and "see the
+  // ticket" links, since the cards that carry them are re-rendered.
+  document.addEventListener('click', (e) => {
+    const v = e.target.closest('[data-view]');
+    if (v) { e.preventDefault(); setView(v.dataset.view); return; }
+    const t = e.target.closest('[data-tab]');
+    if (t) { e.preventDefault(); selectTab(t.dataset.tab); }
+  });
+  $('view-mode').onchange = (e) => setView(e.target.value);
+  setView(state.view);
 
   $('mode').value = state.mode;
   $('manual-panel').hidden = state.mode !== 'manual';

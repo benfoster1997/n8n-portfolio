@@ -133,7 +133,7 @@ const BANDS = {
   ],
   BTCUSD: [
     { from: 8, to: 12, band: 'dead', name: 'Worst hours of your day',
-      note: 'These are the poorest bitcoin hours you could pick. The range is near its daily low while the CFD spread is unchanged, so it takes roughly a fifth of a typical candle. Gold is the better use of this stretch.' },
+      note: 'These are the poorest bitcoin hours you could pick. The range is near its daily low while the spread stays the same, so the spread takes a bigger share of every candle. Gold is the better use of this stretch.' },
     { from: 12, to: 13.3, band: 'amber', name: 'Waking up',
       note: 'US participants beginning to arrive. Improving, not yet good.' },
     { from: 13.3, to: 16, band: 'green', name: 'Your bitcoin window',
