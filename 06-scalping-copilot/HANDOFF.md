@@ -1,7 +1,7 @@
 # Handoff — M5 Scalp Desk
 
 Everything needed to pick this up in a fresh session without re-deriving it.
-Last updated 26 September 2026. Read this whole file before changing anything —
+Last updated 26 September 2026 (end of session). Read this whole file before changing anything —
 several decisions below look like mistakes and are not.
 
 ---
@@ -40,6 +40,24 @@ container it uses the preinstalled headless_shell under `/opt/pw-browsers`.
 **Run the smoke test after any UI change.** The unit suites do not touch the DOM
 and stayed fully green twice while the page was broken.
 
+### What the tool is now (26 Sep 2026, live page version 16, commit `20cae80`+)
+
+- **Opens in the simple view** (decision 18): the Read tab gives one answer word, the
+  "wrong if" price, confidence, a ticket button, a session line and the next news;
+  the Size tab gives the MT5 ticket and two inputs. "Show full detail" / Setup → View
+  switches to everything.
+- **Pre-session brief** before 08:00 (decision 19): overnight range, quiet/busy vs
+  earlier nights, today's releases with flat times, sit-out and best hours, and a
+  plan (setups + max trades) that will not save half-filled. In session: plan +
+  tapped trade count. After: count vs plan.
+- **How-to card** at the top of Setup (decisions 20–21), linked from the Read tab.
+  Its times are computed. It was checked by three independent reviewers, which
+  found real page bugs (all fixed) — worth repeating for any future user-facing
+  instructions.
+- All broker specs for both instruments are **confirmed** from the user's MT5.
+- Account settings and the edge-test record persist on the phone; the stop
+  distance and per-instrument overrides do not.
+
 ---
 
 ## The user
@@ -58,7 +76,12 @@ and stayed fully green twice while the page was broken.
   re-scale when going live. Shadow-balance mode now lets both coexist.
 - Prefers **direct answers to direct questions**. When asked for a figure, give
   the figure. They interrupted a research workflow launched for a simple
-  calculation — do not reach for multi-agent research on arithmetic.
+  calculation, and later a spread-consequences workflow, then said "continue" —
+  do not reach for multi-agent research on arithmetic or small edits. When the
+  session has ultracode on, a small verification workflow (3 reviewers) after
+  building is welcome and paid off.
+- Is **not technical**. Answer in plain English; they asked whether the tool was
+  easy to use, which led to the simple view.
 - Do **not** repeat back the email, phone number or MT5 login visible in the
   screenshots they sent, and never write them into this public repo.
 
@@ -299,8 +322,12 @@ the commit messages are the durable record.
   commission on demo" question.
 - Recheck the XAUUSD session times in MT5 during **25 Oct – 1 Nov 2026** (server
   clock — see above).
-- Optionally set a **shadow balance** and switch "Size from" to it.
+- **First real run on the iPhone** — never done. Ask what the dot under Gold/Bitcoin
+  shows. If not green, ask for a screenshot of Setup → Data → "Feed attempts".
+- Optionally set a **shadow balance** and switch "Size from" to it (now remembered).
 - Set a **committed sample size** in "Is it working yet?" before logging trades.
+- Optional: tap **gbp / lot** on the BTCUSD margin row; it should read ≈ £125 at
+  ~$84k (confirms the notional-rate reading of 0.002).
 - Before going live: confirm whether the live account charges **commission**, which
   **entity** it sits on, and re-read both specs' **margin rows** (bitcoin's rate is
   set per symbol and may differ from the demo's 0.002).
@@ -328,6 +355,13 @@ the commit messages are the durable record.
 
 ## Known limitations
 
+- **Never run in Safari/WebKit.** Every browser check here is headless Chromium at
+  440×956; every iPhone browser is WebKit. No WebKit build is available in the
+  container (do not run `playwright install`).
+- A Home Screen icon on iOS may open as a web app with **storage separate from
+  Safari's**, so saved settings/plan/key might not carry over. Unverified; the
+  how-to card tells the user to use the icon from the start.
+
 - **Live data endpoints were never verified from a real browser** — the sandbox
   blocked every market-data host. Binance (`data-api.binance.vision`) for BTC and
   Twelve Data (free key, in the query string) for gold are the documented intent.
@@ -349,6 +383,14 @@ the commit messages are the durable record.
   to the Dec 2015 low (~$1,046).
 - The same at **1.00 lot: £0** — 23.7× leverage, closed out ~$1,083 in 2015, a 4.1%
   adverse move. Couldn't even be opened at FCA 1:20. Survival threshold ≈ 0.56 lots.
+- "Will it work on my iPhone?" — yes by design (built and tested at its screen size),
+  but never run in Safari; everything except live prices is computed on the phone;
+  whether claude.ai lets the page reach the price feeds is unknown — check the dot.
+- "Is it just for my demo?" — set up with the demo's numbers but not locked to it;
+  going live means re-reading both specs (commission, spread, margin rate, swap).
+  If the live account is with a UK FCA firm, gold is capped at 1:20 and BTC CFDs are
+  not offered to UK retail at all — find out which entity first.
+- "How do I use it each day?" — the answer is now the how-to card on the Setup tab.
 
 ## Conventions
 
