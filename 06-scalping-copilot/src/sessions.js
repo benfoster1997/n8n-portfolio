@@ -122,9 +122,9 @@ const BANDS = {
       note: 'Some genuine activity as London arrives, but gold is not an FX pair and it does not hand over liquidity at 08:00 the way the folklore says. Tradeable in small size; not the main event.' },
     { from: 9, to: 12.5, band: 'dead', name: 'Dead zone',
       note: 'The structural low of your day. Volume thins, the range collapses and the spread does not, so cost takes a far larger share of every trade. The 10:30 LBMA auction is statistically a non-event and will not rescue it. This is the stretch to sit out.' },
-    { from: 12.5, to: 13.3, band: 'amber', name: 'Pre-data build',
+    { from: 12.5, to: 13 + 1 / 3, band: 'amber', name: 'Pre-data build',
       note: 'Books thickening ahead of the US data slot. Worth watching, not yet worth paying the spread for.' },
-    { from: 13.3, to: 15, band: 'green', name: 'COMEX ramp and US data',
+    { from: 13 + 1 / 3, to: 15, band: 'green', name: 'COMEX ramp and US data',
       note: 'Your day. COMEX regular hours open around 13:20, US data lands 13:30, New York equities at 14:30. The liquidity handover that matters for gold is this one, not the London open.' },
     { from: 15, to: 15.95, band: 'green', name: 'Late overlap',
       note: '15:00 carries the US 10:00 ET data slot AND the LBMA PM auction on the same minute — they are confounded, so read it as a data event that happens to coincide with an auction.' },
@@ -134,9 +134,9 @@ const BANDS = {
   BTCUSD: [
     { from: 8, to: 12, band: 'dead', name: 'Worst hours of your day',
       note: 'These are the poorest bitcoin hours you could pick. The range is near its daily low while the spread stays the same, so the spread takes a bigger share of every candle. Gold is the better use of this stretch.' },
-    { from: 12, to: 13.3, band: 'amber', name: 'Waking up',
+    { from: 12, to: 13 + 1 / 3, band: 'amber', name: 'Waking up',
       note: 'US participants beginning to arrive. Improving, not yet good.' },
-    { from: 13.3, to: 16, band: 'green', name: 'Your bitcoin window',
+    { from: 13 + 1 / 3, to: 16, band: 'green', name: 'Your bitcoin window',
       note: 'The only genuinely good bitcoin hours your schedule reaches — and its single most volatile hour falls in your last one. Roughly 38% of bitcoin\'s daily range comes in the seven hours after you close, so this is the end of your day, not the middle of its.' },
   ],
 };
@@ -156,7 +156,7 @@ export function preferredInstrument(atMs, win = DEFAULT_WINDOW) {
     return { pair: 'BTCUSD', confident: false, reason: 'Gold is closed at the weekend. Bitcoin trades on, but broker CFD feeds thin out and spreads widen.' };
   }
   if (h < 8 || h >= 16) return { pair: null, confident: false, reason: 'Outside your window.' };
-  if (h < 13.3) {
+  if (h < 13 + 1 / 3) {
     return {
       pair: 'XAUUSD', confident: true,
       reason: 'Before roughly 13:20 London, gold is the better of your two. Bitcoin is in its worst hours of the day and its spread does not shrink to match the smaller range.',

@@ -574,7 +574,7 @@ export function analyse({
   for (const [name, b] of abstaining) {
     whyNot.push(`No ${name} input this bar: ${b.reasons[0]}. The read is being made on less than the full picture.`);
   }
-  if (session && session.lastStretch) whyNot.push('This is the final stretch of your session, where the bar has been raised deliberately — a trade opened now has to work inside the time left, and the approach of a close increases risk-taking on winning days as much as losing ones.');
+  if (session && session.lastStretch) whyNot.push('This is the final stretch of your session, where confidence is marked down deliberately — a trade opened now has to work inside the time left, and the approach of a close increases risk-taking on winning days as much as losing ones.');
   if (confidence < 0.35) whyNot.push('Bucket agreement is weak. Treat this as an observation about the chart, not a setup.');
   if (bias !== 'neutral' && whyNot.length === 0) {
     whyNot.push('Nothing in the visible data argues against this read — which usually means the engine is missing something it cannot see, not that the trade is safe.');

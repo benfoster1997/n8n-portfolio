@@ -178,6 +178,7 @@ export const XAU_SOURCES = [
   {
     id: 'paxg-kraken',
     label: 'PAXG proxy (Kraken)',
+    instrument: 'PAXG, a gold token — not spot gold',
     needsKey: false,
     proxy: true,
     note: 'NOT GOLD. PAXG is a token redeemable for gold; it tracks spot loosely but carries its own premium, its own liquidity and its own spread. Usable to see shape and rough structure when nothing else is available. Never size a position from it.',

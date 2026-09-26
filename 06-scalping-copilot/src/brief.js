@@ -164,7 +164,6 @@ export function dayTimes(nowMs, win) {
     briefFromMs: ws.opensAtMs - 30 * 60000,
     opensAtMs: ws.opensAtMs,
     closesAtMs: ws.closesAtMs,
-    stricterFromMs: ws.closesAtMs - 30 * 60000,
     XAUUSD: shape('XAUUSD'),
     BTCUSD: shape('BTCUSD'),
   };

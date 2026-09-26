@@ -124,7 +124,7 @@ A fresh session is likely to "fix" some of these. Don't, without reading why.
    well as losing ones (Shah & Li 2025 JMR, ~5m decisions; McKenzie et al. 2016
    JBDM). An earlier version shipped both and they were removed. The session
    shows coarse words only — "Session open", "Into the final hour", "Final
-   stretch". In the final 30 minutes the *engine* raises its bar (confidence ×0.6)
+   stretch". In the final 30 minutes the *engine* marks confidence down (×0.6) — it does not hide reads, and the page must not say it does
    instead of warning. Keep it unconditional on P&L.
 
 2. **The dead zone withholds the read entirely.** 09:00–12:30 London for gold
@@ -228,6 +228,21 @@ A fresh session is likely to "fix" some of these. Don't, without reading why.
     only re-renders when its text changes so an opened step stays open. Every
     label it names must be the label on the page — the smoke test opens all five
     steps and checks them.
+
+21. **Green means current, real prices of the instrument itself — nothing else.**
+    An independent review of the how-to card (26 Sep) found the card's one safety
+    rule ("if the dot is not green, don't trade from the read") could be defeated:
+    the PAXG proxy showed green (and its banner printed "undefined" — no
+    `instrument` field), and manual mode stayed green forever. Now a proxy is
+    always yellow, and typed bars go yellow 12 minutes after they were read in,
+    like a feed. Also from that review: a typed Stop distance now moves the
+    ticket's stop loss to match (Volume was sized from it while the stop stayed at
+    the read's level); account-level settings and the "Is it working yet?" record
+    persist (`in.*` keys) but per-instrument overrides and the stop distance
+    deliberately do not; the final stretch is described as marking confidence
+    down, because it never hides a read (bias ignores confidence — checked over
+    300 random series); and the 13:20 COMEX boundary is `13 + 1/3`, not `13.3`
+    (which rendered as 13:18).
 
 ---
 

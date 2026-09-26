@@ -187,8 +187,8 @@ test('band boundaries resolve to real London instants', () => {
   const prime = r.find((b) => b.name === 'COMEX ramp and US data');
   assert.ok(prime, 'the prime band must be ahead of us at 08:30');
   assert.equal(Math.floor(localHour(prime.startsAtMs, LDN)), 13);
-  assert.equal(Math.round((localHour(prime.startsAtMs, LDN) % 1) * 60), 18,
-    'starts around 13:20 London — the COMEX ramp, not the 13:30 print');
+  assert.equal(Math.round((localHour(prime.startsAtMs, LDN) % 1) * 60), 20,
+    'starts at 13:20 London (08:20 New York, COMEX regular hours) — not the 13:30 print');
 });
 
 console.log('\ninstrument choice and cost');

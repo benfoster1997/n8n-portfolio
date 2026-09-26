@@ -147,12 +147,17 @@ function renderFeed() {
   } else if (state.feed && state.feed.ok) {
     const ageMin = Math.round((Date.now() - state.bars[state.bars.length - 1].t) / 60000);
     const stale = ageMin > 12;
-    dot.className = 'dot ' + (stale ? 'stale' : 'live');
+    // A proxy is never green: PAXG is not gold, and green is the one signal
+    // the how-to card tells the user to trust.
+    dot.className = 'dot ' + (stale || state.feed.source.proxy ? 'stale' : 'live');
     txt.textContent = `${state.feed.source.label} · ${state.bars.length} bars · last ${ageMin}m ago`
       + (state.feed.source.proxy ? ' · PROXY, not gold' : '');
   } else if (state.mode === 'manual') {
-    dot.className = 'dot live';
-    txt.textContent = `Your own bars · ${state.bars.length} read from MT5`;
+    // Typed bars are stamped at the moment they were read in, so they age like
+    // a feed does: green for a bar or two, then yellow until fresh ones go in.
+    const ageMin = state.bars.length ? Math.round((Date.now() - state.bars[state.bars.length - 1].t) / 60000) : 0;
+    dot.className = 'dot ' + (ageMin > 12 ? 'stale' : 'live');
+    txt.textContent = `Your own bars · ${state.bars.length} read from MT5${ageMin > 12 ? ` · ${ageMin}m old` : ''}`;
   } else {
     dot.className = 'dot off';
     txt.textContent = 'No feed. Everything except price still works.';
@@ -171,14 +176,14 @@ function renderRead(a) {
   let banner = '';
   if (state.feed && state.feed.ok && state.feed.source.proxy) {
     banner = `<div class="unconfirmed" style="color:var(--danger);background:var(--danger-dim);margin:0 0 13px">
-      <b>This is ${esc(state.feed.source.instrument)}.</b> ${esc(state.feed.source.note)}</div>`;
+      <b>This is ${esc(state.feed.source.instrument || state.feed.source.label)}.</b> ${esc(state.feed.source.note)}</div>`;
   } else if (state.sample) {
     banner = `<div class="unconfirmed" style="margin:0 0 13px">
       <b>Sample data.</b> These are generated bars so you can see how the tool reads a chart.
       Nothing here is a real price. Connect a feed or type your own bars under Setup.</div>`;
   } else if (state.feed && state.feed.ok && state.feed.source.instrument) {
     banner = `<div style="font-size:11.5px;color:var(--label-3);margin:0 0 11px">
-      ${esc(state.feed.source.instrument)} · not your broker's price. Take entries, stops and targets from MT5.</div>`;
+      ${esc(state.feed.source.instrument || state.feed.source.label)} · not your broker's price. Take entries, stops and targets from MT5.</div>`;
   }
 
   if (!a.ok) {
@@ -296,7 +301,7 @@ function renderSimpleRead(a, now) {
   let banner = '';
   if (state.feed && state.feed.ok && state.feed.source.proxy) {
     banner = `<div class="unconfirmed" style="color:var(--danger);background:var(--danger-dim);margin:0 0 13px">
-      <b>Not real gold.</b> These prices are ${esc(state.feed.source.instrument)}. Never size a trade from them.</div>`;
+      <b>Not real gold.</b> These prices are ${esc(state.feed.source.instrument || state.feed.source.label)}. Never size a trade from them.</div>`;
   } else if (state.sample) {
     banner = `<div class="unconfirmed" style="margin:0 0 13px">
       <b>Practice prices.</b> No live prices yet, so this is not a real read. Connect them in Setup.</div>`;
@@ -353,7 +358,7 @@ function renderSimpleRead(a, now) {
   const phaseText = w.phase === 'weekend' ? 'Weekend — markets closed or thin'
     : w.phase === 'before' ? 'Before your window opens'
       : w.phase === 'after' ? 'Your window has closed'
-        : w.phase === 'last-30' ? 'Final stretch — the bar for a read is raised'
+        : w.phase === 'last-30' ? 'Final stretch — confidence is marked down'
           : esc(q.name);
   html += `<div class="hr"></div>
     <div class="srow"><span class="pip" style="background:var(--${w.open ? pip : 'label-3'})"></span><span>Now: <b style="color:var(--label)">${phaseText}</b></span></div>`;
@@ -575,38 +580,41 @@ function renderHowTo(now) {
     `<details${open ? ' open' : ''}><summary><span>${title}</span>${when ? `<span class="when">${when}</span>` : ''}</summary>${body}</details>`;
 
   const html = `<p class="card-title">How to use it each day</p>
+    <p style="font-size:12.5px;color:var(--label-3);margin:-4px 0 4px">Times are London time — the big clock at the top — not MT5's chart time.</p>
     ${step('First time only', '', `<ol>
-      <li>Open this page in <b>Safari</b>, signed in to claude.ai, then Share → <b>Add to Home Screen</b>.</li>
-      <li>Check the dot at the top, under Gold and Bitcoin. <b>Green</b> means live prices. Amber or red: see the last step here.</li>
+      <li>Open this page in <b>Safari</b>, signed in to claude.ai, then Share → <b>Add to Home Screen</b>. From then on, open it from that icon (sign in again if asked).</li>
       <li>For gold prices, paste a free Twelve Data key into <b>Data</b>, further down this tab.</li>
-      <li>Optional: on the Size tab, tap <b>Show full detail</b> to set your risk % or a shadow balance.</li>
+      <li>Check the dot at the top, under Gold and Bitcoin. <b>Green</b> means live prices. Yellow or red: see <b>If the dot is not green</b>, at the end of this card.</li>
+      <li>Optional: on the Size tab, tap <b>Change</b> under Stop distance to set <b>Risk per trade %</b>, or type what you would trade live in <b>Shadow balance</b> and set <b>Size from</b> to it. Then tap <b>Back to the simple view</b>. The page remembers these.</li>
     </ol>`)}
     ${step('Before the open', `${hm(t.briefFromMs)}–${hm(t.opensAtMs)}`, `<ol>
       <li>Choose <b>Gold</b> or <b>Bitcoin</b> at the top.</li>
-      <li>Read the brief on the Read tab: where price sits overnight, today's news and when to be flat, and when to sit out.</li>
+      <li>Read the brief on the Read tab: where price sits overnight, today's news and when to be flat, the hours to sit out and the best hours.</li>
       <li>Set your plan: tap your setups, enter the most trades you will take, then tap <b>Set today's plan</b>.</li>
+      <li>Late? Tap <b>Set one</b> on the Read tab. The news times are on the News tab.</li>
     </ol>`)}
     ${step('Each trade', `${hm(t.opensAtMs)}–${hm(t.closesAtMs)}`, `<ol>
-      <li>On the Read tab, check the answer:
+      <li>Check the dot is still green, then check the answer on the Read tab:
         <ul>
-          <li><b>Stand aside</b> — news is due. Wait for the "clear at" time it shows.</li>
-          <li><b>Stand down</b> — quiet hours (gold ${span(t.XAUUSD.sitOut)}, bitcoin ${span(t.BTCUSD.sitOut)}). No read is shown.</li>
-          <li><b>No clear direction</b> — nothing to do.</li>
-          <li><b>Leaning up</b> or <b>Leaning down</b> — note the "wrong if" price. Tap <b>Why?</b> for the reasons.</li>
+          <li><b>Stand aside</b> — news is due or has just landed. Be flat until the "clear at" time it shows. A red dot on the News tab means a major release is less than 90 minutes away.</li>
+          <li><b>Stand down</b> — the sit-out hours from the brief (gold ${span(t.XAUUSD.sitOut)}, bitcoin ${span(t.BTCUSD.sitOut)}), and weekends. No direction is shown.</li>
+          <li><b>No clear direction</b>, <b>No clear read</b> or <b>Not enough data</b> — nothing to do.</li>
+          <li><b>Leaning up</b> or <b>Leaning down</b> — the "Wrong if" price becomes the ticket's stop loss. <b>Confidence: low</b> means an observation, not a setup. Tap <b>Why?</b> for the reasons.</li>
         </ul></li>
-      <li>Tap <b>See the MT5 ticket</b>. In <b>Live spread</b>, type the gap between MT5's buy and sell prices — about ${sp('XAUUSD')} on gold, ${sp('BTCUSD')} on bitcoin.</li>
-      <li>In MT5, enter the <b>Volume</b>, <b>Stop loss</b> and <b>Take profit</b> exactly as shown. If the stop and target boxes are greyed out, place the trade, then use <b>Modify Position</b> on MT5's Trade tab.</li>
-      <li>If it says <b>Too big for one order</b>, place the separate orders it lists.</li>
-      <li>Back here, tap <b>+ I took a trade</b>.</li>
-      <li>Best stretches: gold ${span(t.XAUUSD.best)}, bitcoin ${span(t.BTCUSD.best)}. From ${hm(t.stricterFromMs)} it is stricter and gives fewer reads, on purpose.</li>
-    </ol>`)}
+      <li>If it is leaning, it matches a setup in your plan, and you decide to take it, tap <b>See the MT5 ticket</b>.</li>
+      <li>In <b>Live spread</b>, type the gap between the two prices on MT5's Quotes tab — 4,400.10 and 4,400.15 is 0.05. About ${sp('XAUUSD')} on gold and ${sp('BTCUSD')} on bitcoin, not the 5 or 600 "points" MT5 can show. Leave <b>Stop distance</b> empty unless you want your own stop; if you type one, the ticket's stop loss moves to match.</li>
+      <li>In MT5 (Quotes → tap the symbol), enter the <b>Volume</b>, <b>Stop loss</b> and <b>Take profit</b>. Check both levels against your MT5 chart first: they come from a reference price, not your broker's. Then tap the side the ticket shows, <b>BUY</b> or <b>SELL</b>. If the stop and target boxes are greyed out, place the trade, then long-press it on MT5's Trade tab and choose <b>Modify Position</b>.</li>
+      <li>If it says <b>Too big for one order</b>, place the separate orders it lists, each with the same stop loss and take profit.</li>
+      <li>Back on the Read tab, tap <b>+ I took a trade</b> — once per trade, even if you split it. It shows once today's plan is set.</li>
+    </ol>
+    <p style="font-size:13px;color:var(--label-2);margin:-4px 0 14px">In the <b>Final stretch</b> (the header says so), confidence is marked down on purpose, so more reads say low.</p>`)}
     ${step('After the close', `from ${hm(t.closesAtMs)}`, `<ol>
-      <li>The Read tab shows the trades you took against your plan.</li>
-      <li>Optional, weekly: on the Size tab, in <b>Show full detail</b>, fill in <b>Is it working yet?</b> Enter the sample you are committing to first — it gives no verdict before then.</li>
+      <li>If you set a plan, the Read tab shows how many trades you tapped in against it. It cannot see MT5, so the count is only your taps.</li>
+      <li>Optional, weekly: on the Size tab, tap <b>Show full detail</b> and scroll to <b>Is it working yet?</b> Before your first entry, fill in <b>Sample you are committing to</b>: once it is set, there is no verdict until you reach that many trades (left blank, it judges after any number). Take your totals from MT5's History tab. The page remembers them. Then tap <b>Back to the simple view</b>.</li>
     </ol>`)}
     ${step('If the dot is not green', '', `<ol>
-      <li><b style="color:var(--warn)">Do not trade from the read or the ticket's stop and target.</b> Without live prices they come from practice prices.</li>
-      <li>Still useful: the brief, the news times, your plan and trade count — and lot size. On the Size tab, in <b>Show full detail</b>, type your own stop distance and read <b>Volume</b>.</li>
+      <li><b style="color:var(--warn)">Do not trade from the read or the ticket's stop and target.</b> They come from practice prices, or from prices that have stopped updating.</li>
+      <li>Still useful: the brief, the news times, your plan and trade count — and lot size. On the Size tab, type your own <b>Stop distance</b> as a price distance (8 means $8 on gold) and read <b>Volume</b> on the ticket. If there is no ticket, tap <b>Show full detail</b>, then <b>Back to the simple view</b>.</li>
       <li>Take the stop loss and take profit from your own MT5 chart.</li>
     </ol>`)}
     <p style="font-size:12.5px;color:var(--label-3);margin:4px 0 0">It describes the chart and the price it is wrong at. The decision to trade is always yours.</p>`;
@@ -656,7 +664,7 @@ function renderSessionCard(now) {
     // Deliberately NOT a countdown. The confidence bar is raised instead, and
     // the reason is stated once as arithmetic rather than as advice.
     html = head('Final stretch',
-      'The threshold for a read has been raised for the rest of the session. A position opened now has to work inside the time left, which is a constraint the chart knows nothing about — and the approach of a deadline measurably increases risk-taking, on good days as much as bad ones.',
+      'Confidence is marked down for the rest of the session, so more reads show as low. A position opened now has to work inside the time left, which is a constraint the chart knows nothing about — and the approach of a deadline measurably increases risk-taking, on good days as much as bad ones.',
       'warn');
   } else {
     html = head(esc(q.name), esc(q.note),
@@ -902,9 +910,14 @@ function renderRisk() {
   const digits = Number($('digits').value) || dp();
   const stopsLevel = Number($('stops-level').value) || 0;
   const side = a && a.ok && a.bias === 'long' ? 'buy' : a && a.ok && a.bias === 'short' ? 'sell' : null;
+  // Volume is sized from the stop distance, so the stop loss must sit at that
+  // same distance. If the user typed their own, the level follows it; left
+  // empty, both come from the read's invalidation and already agree.
+  const typedStop = Number($('stop-dist').value) > 0 ? Number($('stop-dist').value) : null;
+  const slLevel = side && typedStop ? (side === 'buy' ? a.price - typedStop : a.price + typedStop) : a && a.invalidation;
   const tk = (side && a.invalidation)
     ? mt5Ticket({
-        side, entry: a.price, invalidation: a.invalidation,
+        side, entry: a.price, invalidation: slLevel,
         target: a.targets && a.targets.length ? a.targets[0].price : null,
         lots: r.ok ? r.cfd.lots : 0, digits, stopsLevel,
       })
@@ -929,6 +942,7 @@ function renderRisk() {
           ? `<div class="tk"><div class="tk-lab"><b>Take profit</b>price level</div><div class="tk-val up">${fmt(tk.takeProfit, digits)}</div></div>`
           : ''}
       </div>
+      ${typedStop ? `<p class="answer-sub" style="margin:8px 0 0">Stop loss set at your ${fmt(typedStop, digits)} stop distance, not the read's ${fmt(a.stopDistance, digits)}. Clear the box to use the read's.</p>` : ''}
       ${r.ok ? `<div class="row" style="margin-top:10px"><dt>Risking</dt><dd>${esc(ccy)} ${fmt(r.cfd.actualRisk, 2)} · ${pct}%${usingShadow ? ' of your shadow balance' : ''}</dd></div>` : ''}
       ${posture && posture.state === 'binding'
         ? `<div class="unconfirmed simple-only" style="color:var(--danger);background:var(--danger-dim)"><b>${esc(posture.headline)}.</b> This position takes most of the account in margin. <button class="linkish" data-view="full">See why</button></div>`
@@ -960,7 +974,7 @@ function renderRisk() {
         <p style="font-size:13px;color:var(--label-2);margin:6px 0 0">
           <b>Quotes</b> &rarr; tap the symbol &rarr; the order ticket. Put the volume in
           <b>Volume</b>, then the two levels in <b>Stop Loss</b> and <b>Take Profit</b>, then
-          ${tk.side === 'buy' ? 'the blue <b>BUY</b> button on the right' : 'the blue <b>SELL</b> button on the left'}.
+          ${tk.side === 'buy' ? 'the <b>BUY</b> button' : 'the <b>SELL</b> button'}.
           <br><br>
           On many brokers the stop and target fields are greyed out under Market Execution until the
           position exists — if so, place it, then long-press the row on the <b>Trade</b> tab and use
@@ -1612,6 +1626,21 @@ function boot() {
     state.bars = manualBars(rows); state.sample = false; state.feed = null; state.history = [];
     selectTab('read'); analyseNow();
   };
+
+  // Settings that describe the account, and the running record in "Is it
+  // working yet?", are remembered on this phone. Per-instrument overrides and
+  // the per-trade stop distance are deliberately not: a remembered contract
+  // size would silently apply to the other instrument, and yesterday's stop
+  // has nothing to do with today's trade.
+  const REMEMBERED = ['acct-bal', 'acct-ccy', 'risk-pct', 'fx-rate', 'point-size', 'leverage',
+    'live-balance', 'size-from', 'fill-mode',
+    'rec-trades', 'rec-wins', 'rec-rr', 'rec-perday', 'rec-planned'];
+  for (const id of REMEMBERED) {
+    const el = $(id);
+    const saved = store.get('in.' + id, null);
+    if (el && saved !== null) el.value = saved;
+    if (el) for (const ev of ['input', 'change']) el.addEventListener(ev, () => store.set('in.' + id, el.value));
+  }
 
   for (const id of ['acct-bal', 'risk-pct', 'fx-rate', 'stop-dist', 'acct-ccy',
     'contract-size', 'min-lot', 'lot-step', 'point-size', 'leverage',
