@@ -457,11 +457,12 @@ function renderRisk() {
   const ccy = $('acct-ccy').value;
   const gbpusd = Number($('fx-rate').value) || 1;
   const pointSize = Number($('point-size').value) || 0.10;
-  // Margin here is leverage-derived, not a fixed percentage: the specification
-  // says Calculation: Forex with margin currency XAU, so margin per lot is
-  // contractSize / leverage ounces, converted at the live gold price.
+  // Margin follows the symbol's own model. Gold's is leverage-derived (Forex
+  // mode: contractSize / leverage ounces at the live price). Bitcoin's is a
+  // fixed 0.2% of notional that the leverage setting does not change.
   const leverage = Number($('leverage').value) || 20;
-  const marginFactor = 1 / leverage;
+  const mm = marginModel(i, leverage);
+  const marginFactor = mm.factor;
   const spread = currentSpread() || 0;
   // Commission is entered the way the broker shows it — per lot, per SIDE, in
   // its own currency — and converted to a USD round turn for the models. An
@@ -567,16 +568,18 @@ function renderRisk() {
 
     /* ---- the margin gate: the constraint that actually binds ---- */
     const m = r.margin;
-    const mpl = marginPerLot(contract, leverage, price);
+    const mpl = marginPerLotFor(i, contract, leverage, price);
+    const bySymbol = mpl && mpl.source === 'symbol';
     $('margin-gate').innerHTML = `
       <p class="card-title">Margin</p>
-      ${mpl ? `<div class="row"><dt>Per 1.00 lot at 1:${leverage}</dt><dd>${mpl.units} oz · ${fmt(mpl.amount, 0)} USD</dd></div>` : ''}
+      ${mpl ? `<div class="row"><dt>Per 1.00 lot ${bySymbol ? `· ${+(mpl.asFraction * 100).toFixed(2)}% of value` : `at 1:${leverage}`}</dt><dd>${mpl.units} ${esc(i.unitLabel || '')} · ${fmt(mpl.amount, 0)} USD</dd></div>` : ''}
+      ${bySymbol ? `<p style="font-size:12.5px;color:var(--label-3);margin:6px 0 0">Set by the symbol, not your account leverage — MT5 holds ${+(mpl.asFraction * 100).toFixed(2)}% of the position's value whatever the leverage box says, which is 1:${mpl.equivLeverage} in effect.</p>` : ''}
       <div class="row"><dt>Notional</dt><dd>${ccy} ${fmt(m.notional, 0)}</dd></div>
       <div class="row"><dt>Margin required</dt><dd style="color:var(--${m.over ? 'danger' : 'label'})">${ccy} ${fmt(m.amount, 2)}</dd></div>
       <div class="row"><dt>Share of account</dt><dd style="color:var(--${m.over ? 'danger' : 'up'});font-size:19px;font-weight:700">${m.pctOfEquity}%</dd></div>
       ${(() => {
         const posture = marginPosture({
-          marginPct: m.pctOfEquity / 100, leverage, equity: bal,
+          marginPct: m.pctOfEquity / 100, leverage: mm.equivLeverage, equity: bal,
           marginPerLotAccount: mpl ? mpl.amount / fx : null, wantedLots: r.cfd.lots,
         });
         if (!posture) return '';
@@ -593,10 +596,14 @@ function renderRisk() {
           cancels out, and so does the price level. Tightening the stop while holding risk constant
           means a bigger position, and a bigger position needs more margin.
           <br><br>
-          This is why inherited dollar rules mislead. A $3.00 stop was 0.15% of price when gold was
+          ${i.id === 'XAUUSD'
+            ? `This is why inherited dollar rules mislead. A $3.00 stop was 0.15% of price when gold was
           $2,000 and used about a third of an account. At ${fmt(price)} the same $3.00 is
           ${r.stopFractionOfPrice}% and uses ${m.pctOfEquity}%. The requirement tightens every time
-          gold rises.</p>
+          gold rises.`
+            : `At ${fmt(price)} your ${fmt(r.effectiveStop)} stop is ${r.stopFractionOfPrice}% of price and
+          uses ${m.pctOfEquity}% of the account. Keep the stop the same in dollars while
+          ${esc(i.label.toLowerCase())} rises, and that share rises with it.`}</p>
       </details>`;
 
     /* ---- point size: firm-specific, and a 10x trap if wrong ---- */

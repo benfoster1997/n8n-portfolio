@@ -409,10 +409,13 @@ Read off the user's IC Markets demo so far:
 | Commission | £2.75 a lot **each side** (£5.50 round turn) | none |
 | Swap | −60.891 pts long / +42.602 short, triple on Wednesday | −20% a year long, 0 short, charged every night including weekends |
 | Spread | $0.05, floating (quiet hour) | $6.00 — and $6.00 at the day's high and low, so it looks fixed in ordinary hours |
+| Margin | contract ÷ account leverage (Forex mode): £647 a lot at 1:500 | **0.2% of value, set by the symbol** — the leverage setting does not change it (≈ £125 a lot at $84k) |
+| Broker's own break, London time (BST) | 21:59–23:02 nightly | 21:59–22:05 nightly; Friday 21:55–22:45 |
 
 The swap is not in the scalping arithmetic — a flat-by-16:00 scalper never pays it — but
 the Size tab states it in money so a position left open is priced honestly. Still
-unchecked: BTCUSD's margin rows, and either spread at weekends or the daily rollover.
+unchecked: either spread at weekends or at the daily rollover. Neither broker break comes
+near the 08:00–16:00 window, in summer or winter, and a test holds that.
 
 ---
 

@@ -105,9 +105,12 @@ shift in MT5 that week, the server follows Europe's clocks, not New York's.
 | Swap | percentage; long −20% a year, short 0, every night including weekends (≈ −$44 a lot a night at $80k) |
 | Chart mode | by bid |
 | Spread | **$6.00** at 10:26 London, 24 Sep (bid 84,399.55 / ask 84,405.55); the day's bid/ask highs and lows were also exactly $6.00 apart, so it looks fixed in ordinary hours |
+| Margin (26 Sep) | type **notional value**, rate **0.002** initial and maintenance, buy and sell — 0.2% of value, ≈ $169 (£125) a lot at $84,400 |
+| Sessions (server) | quotes 00:00–23:59, trade **00:05–23:59**; Friday to 23:55; Saturday from 00:45 |
 
-Still **unread**: BTCUSD's margin rows (the screenshot cut off below "notional
-value"), and either instrument's spread at weekends or the daily rollover.
+Bitcoin's broker break is 21:59–22:05 London nightly and Friday 21:55–22:45 (BST),
+nowhere near the window. The one thing still **unmeasured** on either instrument is
+the spread at weekends and at the daily rollover.
 Gold margin read £647 a lot, which corroborates 1:500.
 
 ---
@@ -187,6 +190,14 @@ A fresh session is likely to "fix" some of these. Don't, without reading why.
     points to the live spread-as-share-of-ATR reading. Do not reinstate a
     "bitcoin is dearer to scalp" headline without both instruments' ATR.
 
+17. **Changing the leverage box does not change bitcoin's margin.** The BTCUSD
+    spec prices margin as a fixed 0.002 of notional value, set per symbol; MT5
+    does not divide a notional rate by account leverage. Gold is Forex mode, so
+    its margin does follow leverage. `marginModel()` picks by the spec and the
+    Size tab says which is in force. 0.2% equals 1:500, so the two agree on this
+    demo — they need not on a live account, which is why the rate is re-read, not
+    derived.
+
 ---
 
 ## Research digest
@@ -236,8 +247,6 @@ the commit messages are the durable record.
 
 ## Open items for the user
 
-- Send the **bottom of the BTCUSD spec** for its margin rows (bid/ask received
-  24 Sep: $6.00).
 - Optionally, a BTCUSD bid/ask **at the weekend** and one **around 13:30 London on a
   US data day**, to see whether the $6.00 holds.
 - Check one closed XAUUSD trade's commission in History, to settle the "no
@@ -246,8 +255,9 @@ the commit messages are the durable record.
   clock — see above).
 - Optionally set a **shadow balance** and switch "Size from" to it.
 - Set a **committed sample size** in "Is it working yet?" before logging trades.
-- Before going live: confirm whether the live account charges **commission**, and
-  which **entity** it sits on.
+- Before going live: confirm whether the live account charges **commission**, which
+  **entity** it sits on, and re-read both specs' **margin rows** (bitcoin's rate is
+  set per symbol and may differ from the demo's 0.002).
 
 ## Not yet built — research-recommended, roughly in priority order
 

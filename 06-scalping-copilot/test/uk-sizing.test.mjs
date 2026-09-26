@@ -15,6 +15,7 @@ import {
 } from '../src/risk.js';
 import {
   marginPerLot, bidChartNote, INSTRUMENTS, commissionRoundTurnQuote, swapPerNight, unconfirmedFields,
+  marginModel, marginPerLotFor,
 } from '../src/instruments.js';
 
 let passed = 0, failed = 0;
@@ -376,6 +377,40 @@ test('bitcoin swap is a percentage of the position, so it scales with price', ()
   assert.equal(swapPerNight(INSTRUMENTS.BTCUSD, 40000, 'long'), -22.22);
   assert.equal(swapPerNight(INSTRUMENTS.BTCUSD, 80000, 'short'), 0);
   assert.equal(swapPerNight(INSTRUMENTS.BTCUSD, 0, 'long'), null, 'no price, no figure');
+});
+
+console.log('\ntwo margin models, and the spec says which');
+
+test('gold margin follows the account leverage', () => {
+  const g = INSTRUMENTS.XAUUSD;
+  assert.equal(marginModel(g, 500).source, 'leverage');
+  assert.equal(marginModel(g, 500).factor, 1 / 500);
+  assert.equal(marginModel(g, 20).factor, 1 / 20, 'change the leverage and gold margin moves');
+  assert.deepEqual(
+    [marginPerLotFor(g, 100, 500, 4375).amount, marginPerLotFor(g, 100, 500, 4375).units],
+    [marginPerLot(100, 500, 4375).amount, marginPerLot(100, 500, 4375).units],
+    'the general function agrees with the gold-specific one');
+});
+
+test('bitcoin margin is 0.2% of value, set by the symbol', () => {
+  const b = INSTRUMENTS.BTCUSD;
+  const m = marginPerLotFor(b, 1, 500, 84400);
+  assert.equal(m.source, 'symbol');
+  assert.equal(m.amount, 168.8, '0.002 x 1 BTC x $84,400');
+  assert.equal(m.units, 0.002);
+  assert.equal(m.equivLeverage, 500);
+  near(m.amount / 1.35, 125.04, 0.01, 'about £125 a lot at 1.35 — what "gbp / lot" should show');
+});
+
+test('the leverage setting does not move bitcoin margin', () => {
+  const b = INSTRUMENTS.BTCUSD;
+  assert.equal(marginPerLotFor(b, 1, 20, 84400).amount, marginPerLotFor(b, 1, 500, 84400).amount);
+  assert.equal(marginModel(b, null).factor, 0.002, 'no leverage needed to know it');
+});
+
+test('margin model refuses rather than guessing', () => {
+  assert.equal(marginModel(INSTRUMENTS.XAUUSD, 0), null);
+  assert.equal(marginPerLotFor(INSTRUMENTS.BTCUSD, 1, 500, 0), null);
 });
 
 console.log('\nwhat margin is actually doing');

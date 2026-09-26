@@ -146,10 +146,21 @@ export const INSTRUMENTS = {
     swap: { mode: 'percent', long: -20, short: 0, chargesPerWeek: 7, confirmed: true },
 
     chartIsBid: true,
+
+    // CONFIRMED 26 Sep 2026: margin type "notional value", rate 0.002 initial
+    // and maintenance, buy and sell. So margin is 0.2% of the position's value
+    // — about $169 a lot at $84,400 — and it is set by the SYMBOL. Unlike
+    // gold's Forex mode, MT5 does not divide a notional rate by the account
+    // leverage, so changing leverage does not move it. 0.2% happens to be
+    // 1:500, which is why the two agree on this account; they need not live.
     marginCurrency: 'USD',
-    marginCalculation: 'contracts',
-    // Margin per lot NOT yet read — the rows sit below where the screenshot
-    // stopped. Leverage on bitcoin is usually far lower than on gold.
+    marginCalculation: 'notional',
+    marginRate: { initial: 0.002, maintenance: 0.002, confirmed: true },
+
+    // CONFIRMED, server time (UTC+3 in summer). Trading stops 23:59-00:05
+    // every night and 23:55 Friday to 00:45 Saturday: 21:59-22:05 and
+    // 21:55-22:45 London in BST. Both are hours after the London window.
+    sessionServer: { open: '00:05', close: '23:59', fridayClose: '23:55', saturdayOpen: '00:45', confirmed: true },
 
     minStopPct: 0.0015,
     tradesAroundTheClock: true,
@@ -201,6 +212,38 @@ export function marginPerLot(contractSize, leverage, price) {
     units: +ounces.toFixed(4),
     amount: +(ounces * price).toFixed(2),
     asFraction: 1 / leverage,
+  };
+}
+
+/**
+ * Which margin model a symbol uses, as a fraction of notional.
+ *
+ * The specification decides it. Gold is Forex mode, so the account leverage
+ * sets it (1/leverage). Bitcoin carries a fixed rate of notional value, set per
+ * symbol, which the leverage setting does not change. Returning the source
+ * lets the page say which one is in force rather than implying the leverage
+ * box governs both.
+ */
+export function marginModel(inst, leverage) {
+  const mr = inst && inst.marginRate;
+  if (mr && mr.initial > 0) {
+    return { factor: mr.initial, source: 'symbol', equivLeverage: Math.round(1 / mr.initial) };
+  }
+  if (!(leverage > 0)) return null;
+  return { factor: 1 / leverage, source: 'leverage', equivLeverage: leverage };
+}
+
+/** Margin for one lot under whichever model the symbol uses. */
+export function marginPerLotFor(inst, contractSize, leverage, price) {
+  const m = marginModel(inst, leverage);
+  if (!m || !(contractSize > 0) || !(price > 0)) return null;
+  const units = contractSize * m.factor;
+  return {
+    units: +units.toFixed(4),
+    amount: +(units * price).toFixed(2),
+    asFraction: m.factor,
+    source: m.source,
+    equivLeverage: m.equivLeverage,
   };
 }
 

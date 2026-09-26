@@ -14,6 +14,7 @@ import {
   preferredInstrument, costFloorBps,
 } from '../src/sessions.js';
 import { zonedTimeToUtc } from '../src/timezone.js';
+import { INSTRUMENTS } from '../src/instruments.js';
 
 let passed = 0, failed = 0;
 const test = (n, fn) => {
@@ -239,6 +240,25 @@ test('the broker rollover falls outside a London session — a quiet advantage',
   assert.equal(r.inside, false, 'the 21:00 UTC roll is long after a London close');
   assert.ok(rolloverWindow(Date.UTC(2026, 6, 15, 21, 10), 3).inside);
   assert.equal(rolloverWindow(Date.now ? at(...SUMMER, 13, 0) : 0, null), null, 'never guessed');
+});
+
+test("neither instrument's own trading break touches the London window", () => {
+  // Each break edge, read off the MT5 specs in server time, converted to London.
+  // Summer: server UTC+3, London BST. Winter: server UTC+2, London GMT.
+  const londonHour = (y, mo, d, hm, serverOffset) => {
+    const [h, m] = hm.split(':').map(Number);
+    return localHour(Date.UTC(y, mo - 1, d, h - serverOffset, m), 'Europe/London');
+  };
+  for (const id of ['XAUUSD', 'BTCUSD']) {
+    const ss = INSTRUMENTS[id].sessionServer;
+    const edges = [ss.open, ss.close, ss.fridayClose, ss.saturdayOpen].filter(Boolean);
+    for (const [y, mo, d, off] of [[2026, 7, 15, 3], [2026, 12, 2, 2]]) {
+      for (const e of edges) {
+        const h = londonHour(y, mo, d, e, off);
+        assert.ok(h < 8 || h >= 16, `${id} break edge ${e} server lands at ${h.toFixed(2)} London`);
+      }
+    }
+  }
 });
 
 test('bar-boundary contamination is flagged on the round marks', () => {
