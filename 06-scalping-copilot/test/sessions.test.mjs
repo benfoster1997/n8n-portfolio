@@ -218,12 +218,17 @@ test('outside the window there is no steer at all', () => {
   assert.equal(preferredInstrument(at(...SUMMER, 18, 0)).pair, null);
 });
 
-test('the cost floor says bitcoin needs several times the move gold does', () => {
-  const gold = costFloorBps(0.35, 4391);
-  const btc = costFloorBps(30, 81000);
-  assert.equal(gold, 0.8);
-  assert.equal(btc, 3.7);
-  assert.ok(btc / gold > 3, 'bitcoin should cost several times as much per round trip');
+test('the cost floor at the confirmed costs: bitcoin about 2.5x gold per unit of price', () => {
+  // Gold all-in: $0.05 spread + £5.50 a lot round turn at 1.35, over 100 oz.
+  const goldAllIn = 0.05 + (2.75 * 2 * 1.35) / 100;
+  const gold = costFloorBps(goldAllIn, 4390);
+  const btc = costFloorBps(6.00, 84400);
+  assert.equal(gold, 0.28);
+  assert.equal(btc, 0.71);
+  const ratio = btc / gold;
+  assert.ok(ratio > 2 && ratio < 3, `expected about 2.5x, got ${ratio.toFixed(2)}x`);
+  assert.equal(costFloorBps(0.05, 4390), 0.11,
+    'spread alone would make gold look two and a half times cheaper than it is');
   assert.equal(costFloorBps(0, 4391), null, 'never guessed from a missing spread');
 });
 

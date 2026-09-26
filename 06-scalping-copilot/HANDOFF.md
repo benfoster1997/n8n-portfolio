@@ -104,9 +104,10 @@ shift in MT5 that week, the server follows Europe's clocks, not New York's.
 | Commission | none |
 | Swap | percentage; long −20% a year, short 0, every night including weekends (≈ −$44 a lot a night at $80k) |
 | Chart mode | by bid |
+| Spread | **$6.00** at 10:26 London, 24 Sep (bid 84,399.55 / ask 84,405.55); the day's bid/ask highs and lows were also exactly $6.00 apart, so it looks fixed in ordinary hours |
 
-Still **unread**: BTCUSD's bid/ask (typical spread — the tool still shows it as
-unconfirmed) and its margin rows (the screenshot cut off below "notional value").
+Still **unread**: BTCUSD's margin rows (the screenshot cut off below "notional
+value"), and either instrument's spread at weekends or the daily rollover.
 Gold margin read £647 a lot, which corroborates 1:500.
 
 ---
@@ -178,6 +179,14 @@ A fresh session is likely to "fix" some of these. Don't, without reading why.
     Commission box takes GBP **per side** (as the spec prints it) and is empty by
     default, meaning "use the spec"; typing 0 means zero.
 
+16. **The cost floor does not rank the two instruments.** It used to headline
+    "bitcoin needs ~4× gold's move", from an indicative $30 BTC spread and a
+    $0.35 gold spread with commission ignored. At the confirmed costs it is
+    0.71 vs 0.28 bps (≈2.5×) per unit of *price* — but bitcoin moves further per
+    bar, so that ratio is not cost per unit of opportunity. The card says so and
+    points to the live spread-as-share-of-ATR reading. Do not reinstate a
+    "bitcoin is dearer to scalp" headline without both instruments' ATR.
+
 ---
 
 ## Research digest
@@ -203,7 +212,9 @@ Nothing below was read on a primary page. Confidence is marked accordingly in co
 - **Bitcoin in the London window:** takes ~34–36% of daily variance (fair share),
   but its best hour is the user's last one and ~38% of the day's range falls in
   the seven hours after 16:00. Steer: gold before ~13:20, both after.
-- **Cost floor:** ~3.7 bps BTCUSD vs ~0.8 bps XAUUSD — bitcoin needs ~4× the move.
+- **Cost floor (confirmed costs, 24 Sep):** 0.71 bps BTCUSD ($6.00 spread, no commission) vs
+  0.28 bps XAUUSD ($0.05 + $0.074 commission per oz) — ≈2.5× per unit of price, not per
+  unit of range. The earlier 3.7 vs 0.8 bps ("4× the move") used indicative spreads.
 - **Sample sizes** (one-sided, α .05, power .80): vs a 50% null at 1:1 — 60% ≈ 153,
   55% ≈ 617, 52% ≈ 3,863 trades. Against the user's cost-adjusted 50.8% null the
   numbers are higher (55% ≈ 875).
@@ -225,8 +236,10 @@ the commit messages are the durable record.
 
 ## Open items for the user
 
-- Send the **BTCUSD bid/ask** (Quotes screen, advanced view) so its spread can be
-  marked confirmed, and the **bottom of the BTCUSD spec** for its margin rows.
+- Send the **bottom of the BTCUSD spec** for its margin rows (bid/ask received
+  24 Sep: $6.00).
+- Optionally, a BTCUSD bid/ask **at the weekend** and one **around 13:30 London on a
+  US data day**, to see whether the $6.00 holds.
 - Check one closed XAUUSD trade's commission in History, to settle the "no
   commission on demo" question.
 - Recheck the XAUUSD session times in MT5 during **25 Oct – 1 Nov 2026** (server

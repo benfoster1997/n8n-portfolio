@@ -112,12 +112,16 @@ export const INSTRUMENTS = {
     digits: { value: 2, confirmed: true },
     dollarMoveValuePerLot: { value: 1, confirmed: true },
 
-    // CFD spreads on bitcoin are wide and are the dominant cost of scalping it.
-    // Still UNMEASURED on this account — no bid/ask screenshot yet.
+    // CONFIRMED 24 Sep 2026 at 10:26 London: bid 84,399.55 / ask 84,405.55.
+    // The day's bid and ask highs, and its bid and ask lows, were each exactly
+    // $6.00 apart too, so the markup looks fixed in ordinary hours rather than
+    // floating. This replaced an indicative $20-30 that had made bitcoin look
+    // about four times as expensive as gold to trade; at $6 it is nearer two
+    // and a half, per unit of price. With no commission, this IS the cost.
     typicalSpread: {
-      asia: 28, london: 22, newYork: 20, rollover: 60,
-      note: 'CFD markup is far wider than spot-exchange spread; measure yours',
-      confirm: true,
+      observed: 6.00,
+      note: 'observed $6.00 at 10:26 London, and $6.00 at the day\'s high and low. Weekends and the daily rollover are unmeasured.',
+      confirmed: true,
     },
 
     // Bitcoin anchors to the 00:00 UTC day used by every crypto venue.

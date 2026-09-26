@@ -331,11 +331,17 @@ claim one, and shows all three at once.
 
 ## One more thing it is loud about
 
-**Bitcoin's cost floor is several times gold's.** At a $30 bitcoin spread and a $0.35
-gold spread, one round trip costs about **3.7 bps on BTCUSD against 0.8 bps on XAUUSD**
-— bitcoin needs roughly four times the move just to get back to flat, at every hour of
-your day. That constant does not vary with the session, and it is probably the single
-most useful number in the tool.
+**What a round trip costs before the chart is consulted.** At the costs read off the
+user's MT5 — gold's $0.05 spread plus £5.50 a lot of commission, bitcoin's $6.00 spread
+and no commission — one round trip costs about **0.28 bps on XAUUSD and 0.71 bps on
+BTCUSD**. Per unit of price, bitcoin is about 2.5× dearer. The tool says plainly that this
+is not the same as 2.5× harder to scalp: bitcoin usually moves further in a 5-minute bar,
+and the fair comparison is each instrument's spread against its own ATR, which the Read
+tab computes live.
+
+This section used to say bitcoin needed four times gold's move. That came from an
+indicative $30 bitcoin spread and a $0.35 gold spread with commission left out. Both were
+wrong for this account, and leaving commission out flattered gold by about 2.5×.
 
 ## Two more things it is loud about
 
@@ -402,10 +408,11 @@ Read off the user's IC Markets demo so far:
 | Stops level | 0 | 0 |
 | Commission | £2.75 a lot **each side** (£5.50 round turn) | none |
 | Swap | −60.891 pts long / +42.602 short, triple on Wednesday | −20% a year long, 0 short, charged every night including weekends |
+| Spread | $0.05, floating (quiet hour) | $6.00 — and $6.00 at the day's high and low, so it looks fixed in ordinary hours |
 
 The swap is not in the scalping arithmetic — a flat-by-16:00 scalper never pays it — but
 the Size tab states it in money so a position left open is priced honestly. Still
-unchecked: BTCUSD's typical spread and its margin rows.
+unchecked: BTCUSD's margin rows, and either spread at weekends or the daily rollover.
 
 ---
 

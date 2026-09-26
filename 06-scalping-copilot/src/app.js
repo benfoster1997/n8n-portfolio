@@ -687,17 +687,30 @@ function renderRisk() {
   $('cost-out').innerHTML = cost + realismHtml;
 
   /* ---- cost floor and correlation ---- */
-  const goldFloor = costFloorBps(Number(state.spread.XAUUSD) || 0.35, 4391);
-  const btcFloor = costFloorBps(Number(state.spread.BTCUSD) || 30, 81000);
+  // Each instrument's all-in cost, as a price distance: the spread you entered
+  // (or the one read off your MT5) plus commission spread across the contract.
+  // Gold's commission is most of its cost, so leaving it out flatters gold.
+  const floorFor = (id, price) => {
+    const x = INSTRUMENTS[id];
+    const sp = Number(state.spread[id]) || x.typicalSpread.observed;
+    const typed = id === state.pair ? $('commission').value.trim() : null;
+    const comm = commissionRoundTurnQuote(x, gbpusd, typed) || 0;
+    return costFloorBps(allInSpread(sp, comm, spec(x, 'contractSize')), price);
+  };
+  const goldFloor = floorFor('XAUUSD', 4390);
+  const btcFloor = floorFor('BTCUSD', 84400);
   let floorHtml = '';
   if (goldFloor && btcFloor) {
     floorHtml = `<p class="card-title">Cost floor per round trip</p>
-      <div class="row"><dt>Gold</dt><dd>${goldFloor} bps</dd></div>
-      <div class="row"><dt>Bitcoin</dt><dd style="color:var(--warn)">${btcFloor} bps</dd></div>
+      <div class="row"><dt>Gold, spread + commission</dt><dd>${goldFloor} bps</dd></div>
+      <div class="row"><dt>Bitcoin, spread only</dt><dd>${btcFloor} bps</dd></div>
       <p style="font-size:12.5px;color:var(--label-2);margin:9px 0 0">
-        Bitcoin needs roughly ${(btcFloor / goldFloor).toFixed(1)}x the move gold does just to get back
-        to flat, at every hour of your day. ${state.spread.XAUUSD && state.spread.BTCUSD
-        ? 'Computed from the spreads you entered.' : 'Using indicative spreads until you enter your own on each instrument.'}</p>
+        Per unit of price, a bitcoin round trip costs about ${(btcFloor / goldFloor).toFixed(1)}x a gold one.
+        That is not the same as ${(btcFloor / goldFloor).toFixed(1)}x harder to scalp: bitcoin usually moves
+        further in a 5-minute bar, and the fair test is each one's spread against its own range —
+        <b>Spread as share of ATR</b> on the Read tab. ${state.spread.XAUUSD && state.spread.BTCUSD
+        ? 'Computed from the spreads you entered.'
+        : 'Using the spreads read off your MT5 until you enter live ones on each instrument.'}</p>
       <div class="hr"></div>`;
   }
   /* ---- what the account rules actually are, and what to check ---- */
@@ -1066,6 +1079,8 @@ function setPair(p) {
   $('commission').placeholder = i.commission
     ? `${i.commission.perSide.toFixed(2)} (from the spec)` : '0';
   $('live-spread').value = state.spread[p] ?? '';
+  $('live-spread').placeholder = i.typicalSpread && i.typicalSpread.observed
+    ? `last read ${i.typicalSpread.observed.toFixed(2)}` : '';
   state.bars = sampleBars(p); state.sample = true;
   analyseNow();
   refresh();

@@ -171,9 +171,11 @@ export function preferredInstrument(atMs, win = DEFAULT_WINDOW) {
 /**
  * The cost floor: what one round trip costs before the chart is even consulted.
  *
- * Probably the single most actionable number for a trader running both of
- * these. It does not vary with the hour, and it says plainly that bitcoin
- * needs several times the move gold does just to get back to flat.
+ * Pass the ALL-IN cost as a price distance (spread plus commission spread over
+ * the contract), or a commission-charging instrument looks cheaper than it is.
+ * It compares cost per unit of PRICE. It does not say which instrument is
+ * cheaper to scalp — that needs each one's cost against its own range, which
+ * is what spreadViability does with a live ATR.
  */
 export function costFloorBps(spread, price) {
   if (!(spread > 0) || !(price > 0)) return null;

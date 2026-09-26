@@ -335,8 +335,9 @@ test('the confirmed bitcoin specification is recorded as confirmed', () => {
   for (const k of ['contractSize', 'digits', 'minLot', 'lotStep', 'maxVolume', 'stopsLevel']) {
     assert.equal(b[k].confirmed, true, `${k} should be marked confirmed`);
   }
-  assert.deepEqual(unconfirmedFields(b).map((f) => f.key), ['typicalSpread'],
-    'only the spread is still unmeasured, and the tool should keep saying so');
+  assert.equal(b.typicalSpread.observed, 6.00, 'read off the bid/ask, 24 Sep 2026');
+  assert.equal(b.typicalSpread.confirmed, true);
+  assert.deepEqual(unconfirmedFields(b), [], 'nothing on bitcoin is a default any more');
   assert.deepEqual(unconfirmedFields(INSTRUMENTS.XAUUSD), []);
 });
 
