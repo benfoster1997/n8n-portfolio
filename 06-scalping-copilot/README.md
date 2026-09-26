@@ -103,6 +103,35 @@ trading* and *after you have stopped*, because those are different kinds of fact
 
 ---
 
+## The pre-session brief
+
+Before 08:00 on a weekday, the Read tab opens with a brief:
+
+- **The overnight range** — gold since its 23:00 reopen, bitcoin over the last 24 hours —
+  and where price sits in it: near the high, near the low, or in the middle.
+- **Whether the night was quiet or busy**, against the same stretch on up to three
+  earlier nights (like for like: same length, same clock time, closed markets skipped,
+  median rather than mean). With fewer than two usable nights it says so rather than guess.
+- **Today's releases inside your window**, each with the time to be flat from and until.
+- **The shape of the day**: the stretch to sit out and the stretch that is best.
+- **Your plan**: which setups you will take, and the most trades you will take. It will
+  not save until both are filled in.
+
+During the session the brief shrinks to the plan and a trade count you tap ("+ I took a
+trade"); after it, the count against the plan.
+
+**Why it asks rather than shows.** There is no credible evidence that a pre-market routine
+as such improves results. What does carry over from the checklist research is narrower:
+checklists help when they demand an input and do nothing when they can be ticked through.
+So the brief asks for two decisions and does not offer boxes to tick.
+
+**What it does not do.** It cannot see your trades — the count is only what you tap. The
+plan is stored in this phone's browser for today only; clearing Safari's data clears it. It
+shows no profit or loss and no time to the close. Without live prices it asks you for the
+overnight high, low and current price off your MT5 chart, and cannot compare with other
+nights. With live prices, the range comes from the reference feed (Binance's BTCUSDT, or
+Twelve Data for gold), which can sit a little away from your broker's levels.
+
 ## Two views: simple first
 
 It opens in a **simple view**, because the full one runs to about 3,000 words across
@@ -451,6 +480,7 @@ src/
   data-feeds.js     ordered source chain with honest failure reporting
   signal-engine.js  regime detection, factor buckets, the read
   edge-test.js      whether a run of results means anything yet
+  brief.js          the pre-session brief: overnight range, the day, the plan
   app.js            UI wiring
   index.template.html
 build.mjs           inlines the above into index.html

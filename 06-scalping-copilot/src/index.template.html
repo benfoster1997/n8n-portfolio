@@ -341,6 +341,16 @@ body.simple .ev-why, body.simple .ev details.more { display: none; }
 .srow .pip { width: 8px; height: 8px; border-radius: 50%; flex: none; transform: translateY(-1px); background: var(--label-3); }
 button.linkish { border: 0; background: none; padding: 0; color: var(--accent); font: inherit; cursor: pointer; }
 
+/* -------------------------------------------------------------- the brief */
+.chip-btn {
+  min-height: 38px; padding: 8px 12px; border-radius: 10px; cursor: pointer;
+  border: 1px solid var(--hairline); background: var(--surface-3); color: var(--label-2);
+  font: 600 13.5px var(--ui);
+}
+.chip-btn[aria-pressed="true"] { background: var(--accent); border-color: transparent; color: #fff; }
+.brief-steps { display: flex; gap: 8px; margin-top: 11px; }
+.brief-steps .btn { min-height: 42px; }
+
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }
 }
@@ -368,6 +378,7 @@ button.linkish { border: 0; background: none; padding: 0; color: var(--accent); 
   <!-- ============================ READ ============================ -->
   <section id="tab-read">
     <div id="blackout-slot"></div>
+    <div id="brief" hidden></div>
     <div class="card simple-only" id="simple-read"></div>
     <div class="card detail" id="session-card"></div>
     <div class="card readout detail" id="readout"></div>

@@ -67,6 +67,7 @@ writeFileSync(harness, page);
 // 15 Jul 2026 is a Wednesday in BST, so London = UTC+1. 2 Jul 2026 is the
 // real NFP date (a Thursday, because 3 Jul is the observed holiday).
 const MOMENTS = {
+  'before the open 07:30': Date.UTC(2026, 6, 15, 6, 30),
   'London satellite 08:30': Date.UTC(2026, 6, 15, 7, 30),
   'dead zone 10:30': Date.UTC(2026, 6, 15, 9, 30),
   'prime 13:45': Date.UTC(2026, 6, 15, 12, 45),
@@ -122,6 +123,23 @@ for (const [label, ms] of Object.entries(MOMENTS)) {
       }
     }
   }
+  // The brief: fill the plan in, then tap the trade counter past the plan.
+  await p.evaluate(() => document.getElementById('nav-read').click());
+  await p.evaluate(() => {
+    const click = (sel) => { const e = document.querySelector(sel); if (e) e.click(); };
+    const set = (id, v) => { const e = document.getElementById(id); if (e) { e.value = v; e.dispatchEvent(new Event('input', { bubbles: true })); e.dispatchEvent(new Event('change', { bubbles: true })); } };
+    click('[data-brief="open-form"]');
+    click('[data-brief="set"]');                    // refused: nothing chosen yet
+    click('[data-brief="chip"]');
+    set('brief-max', '2');
+    set('brief-hi', '4402.5'); set('brief-lo', '4380'); set('brief-now', '4399');
+    click('[data-brief="set"]');
+    for (let k = 0; k < 3; k++) click('[data-brief="inc"]');
+    click('[data-brief="dec"]');
+  });
+  await p.waitForTimeout(200);
+  await checkText('brief');
+
   // The simple read must say something, in either instrument.
   await setView('simple');
   const answer = await p.evaluate(() => document.getElementById('simple-read').innerText.trim());

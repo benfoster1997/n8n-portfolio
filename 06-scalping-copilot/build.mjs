@@ -28,6 +28,7 @@ const MODULES = [
   'data-feeds.js',
   'signal-engine.js',
   'edge-test.js',
+  'brief.js',
   'app.js',
 ];
 

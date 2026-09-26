@@ -25,6 +25,15 @@ const state = {
   window: store.get('window', DEFAULT_WINDOW),
   view: store.get('view', 'simple'),
   lastAnalysis: null,
+  // The pre-session brief. `history` is the longer bar series the overnight
+  // comparison needs; the engine still reads only the last 300 of it.
+  history: [],
+  plan: store.get('plan', null),
+  manualRange: store.get('manualRange', null),
+  draft: null,
+  briefFormOpen: false,
+  briefError: null,
+  lastBriefHtml: null,
 };
 
 /* ---- a plausible sample series so the page opens showing what it does --- */
@@ -321,6 +330,9 @@ function renderSimpleRead(a, now) {
 
   let html = banner + `<div class="answer" style="color:var(--${tone})"><span>${arrow}</span><span>${word}</span></div>
     <p class="answer-line">${line}</p>`;
+  if (read && !w.open) {
+    html += '<p class="answer-sub">Outside your trading hours — shown for reference, not for a trade now.</p>';
+  }
 
   if (read) {
     const conf = a.confidenceLabel;
@@ -370,6 +382,179 @@ function renderSimpleRead(a, now) {
   }
 
   $('simple-read').innerHTML = html;
+}
+
+/* ============================================================ the brief */
+
+/**
+ * The pre-session brief (see brief.js for why it asks rather than shows).
+ * Before the open: the overnight range, today's releases, the shape of the
+ * day, then the plan. During the session: the plan and a tapped trade count.
+ * After it: the count against the plan. Hidden at the weekend.
+ */
+const tzw = () => state.window.tz;
+
+function draftFromPlan(today) {
+  const p = state.plan && state.plan.date === today ? state.plan : null;
+  return { setups: p ? [...p.setups] : [], other: p ? p.other || '' : '', maxTrades: p ? p.maxTrades : null };
+}
+
+function planForm() {
+  const d = state.draft || (state.draft = draftFromPlan(dayKey(Date.now(), state.window)));
+  const editing = state.plan && state.briefFormOpen;
+  return `<p class="card-title">Your plan for today</p>
+    <p class="answer-sub" style="margin:0 0 9px">Which setups will you take?</p>
+    <div class="chips" style="margin-top:0">${SETUPS.map((x) => `<button class="chip-btn" data-brief="chip" data-v="${esc(x)}" aria-pressed="${d.setups.includes(x)}">${esc(x)}</button>`).join('')}</div>
+    <div class="field" style="margin-top:12px"><label class="f" for="brief-other">Or in your own words (optional)</label>
+      <input class="f" id="brief-other" type="text" maxlength="80" autocomplete="off" value="${esc(d.other)}" placeholder="e.g. fade the overnight high"></div>
+    <div class="field" style="margin-top:12px"><label class="f" for="brief-max">Most trades you will take today</label>
+      <input class="f num" id="brief-max" type="number" inputmode="numeric" min="1" max="50" step="1" value="${d.maxTrades ?? ''}"></div>
+    ${state.briefError ? `<div class="unconfirmed">${esc(state.briefError)}</div>` : ''}
+    <div class="brief-steps">
+      <button class="btn" data-brief="set">Set today's plan</button>
+      ${editing ? '<button class="btn ghost" style="width:auto;padding:0 16px" data-brief="cancel">Cancel</button>' : ''}
+    </div>`;
+}
+
+function planSummary(ps) {
+  return `<p class="card-title">Your plan for today</p>
+    <div class="row"><dt>${esc(ps.setups.join(' · '))}</dt><dd>up to ${ps.max} trades</dd></div>
+    <p style="margin:9px 0 0"><button class="linkish" data-brief="edit">Edit</button></p>`;
+}
+
+function briefBefore(now, today, ps) {
+  const i = inst();
+  const ow = overnightWindow(now, state.pair, state.window);
+  const basis = state.pair === 'BTCUSD' ? 'the last 24 hours' : `since the ${formatHM(ow.startMs, tzw())} reopen`;
+  const live = !state.sample && state.feed && state.feed.ok && !state.feed.source.proxy && state.history.length;
+
+  let range = '';
+  const r = live ? rangeOf(state.history, ow.startMs, ow.endMs) : null;
+  if (r) {
+    const where = whereInRange(r.last, r.high, r.low);
+    const norm = overnightVsNorm(state.history, ow.startMs, ow.endMs);
+    range = `<div class="row"><dt>${esc(i.label)}, ${basis}</dt><dd>${fmt(r.low)} – ${fmt(r.high)}</dd></div>
+      <p class="answer-line" style="font-size:14.5px">Price is <b>${where.where}</b>. The range is ${fmt(r.size)}, ${((r.size / r.last) * 100).toFixed(2)}% of price.</p>
+      <p class="answer-sub">${norm && norm.word
+        ? `Overnight was <b style="color:var(--label)">${norm.word}</b>, against the last ${norm.nights} nights.`
+        : 'Not enough history yet to compare with other nights.'}</p>
+      <p style="font-size:11.5px;color:var(--label-3);margin:6px 0 0">From ${esc(state.feed.source.instrument || state.feed.source.label)}. Your MT5 levels can differ slightly.</p>`;
+  } else {
+    // No usable live prices: ask for the three numbers off the MT5 chart.
+    const m = state.manualRange && state.manualRange.date === today && state.manualRange.pair === state.pair
+      ? state.manualRange : {};
+    const where = m.high > 0 && m.low > 0 && m.now > 0 ? whereInRange(m.now, m.high, m.low) : null;
+    const val = (x) => (x > 0 ? x : '');
+    range = `<p class="answer-sub" style="margin:0">No live prices, so read these off your MT5 chart — ${esc(i.label)}, ${basis}:</p>
+      <div class="grid2" style="margin-top:10px">
+        <div class="field"><label class="f" for="brief-hi">Overnight high</label><input class="f num" id="brief-hi" type="number" inputmode="decimal" value="${val(m.high)}"></div>
+        <div class="field"><label class="f" for="brief-lo">Overnight low</label><input class="f num" id="brief-lo" type="number" inputmode="decimal" value="${val(m.low)}"></div>
+      </div>
+      <div class="field" style="margin-top:10px"><label class="f" for="brief-now">Price now</label><input class="f num" id="brief-now" type="number" inputmode="decimal" value="${val(m.now)}"></div>
+      ${where ? `<p class="answer-line" style="font-size:14.5px">Price is <b>${where.where}</b>. The range is ${fmt(m.high - m.low)}.</p>`
+        : m.high > 0 && m.low > 0 && !(m.high > m.low) ? '<div class="unconfirmed">The high should be above the low.</div>' : ''}`;
+  }
+
+  const prints = todaysPrints(now, state.pair, state.window);
+  const printsHtml = prints.length
+    ? prints.map((e) => `<div class="srow"><span class="pip" style="background:var(--${e.tier === 1 ? 'danger' : e.tier === 2 ? 'warn' : 'label-3'})"></span>
+        <span><b style="color:var(--label)">${formatHM(e.ts, tzw())} ${esc(e.short || e.name)}</b> · flat ${formatHM(e.flatFromMs, tzw())}–${formatHM(e.flatToMs, tzw())}</span></div>`).join('')
+    : '<p class="answer-sub" style="margin:0">Nothing scheduled in your window today.</p>';
+
+  const shape = dayShape(now, state.pair, state.window);
+  const span = (x) => `${formatHM(x.fromMs, tzw())}–${formatHM(x.toMs, tzw())}`;
+  const dst = dstMisalignment(now);
+  const shapeHtml = shape.sitOut.map((x) => `<div class="srow"><span class="pip" style="background:var(--label-3)"></span><span>Sit out <b style="color:var(--label)">${span(x)}</b> · ${esc(x.names.join(', ').toLowerCase())}</span></div>`).join('')
+    + shape.best.map((x) => `<div class="srow"><span class="pip" style="background:var(--up)"></span><span>Best <b style="color:var(--label)">${span(x)}</b></span></div>`).join('')
+    + (dst ? `<div class="unconfirmed">${esc(dst.message)}</div>` : '');
+
+  return `<div class="card">
+    <p class="card-title">Before the open</p>
+    ${range}
+    <div class="hr"></div>
+    <p class="card-title">Today in your window</p>${printsHtml}
+    <div class="hr"></div>
+    <p class="card-title">The day for ${esc(i.label.toLowerCase())}</p>${shapeHtml}
+    <div class="hr"></div>
+    ${ps && !state.briefFormOpen ? planSummary(ps) : planForm()}
+  </div>`;
+}
+
+function renderBrief(now, force = false) {
+  const el = $('brief');
+  // Never re-render under the user's thumb while they fill the plan in.
+  if (!force && el.contains(document.activeElement)) return;
+  const w = windowState(now, state.window);
+  const today = dayKey(now, state.window);
+  const ps = planStatus(state.plan, today);
+
+  let html = '';
+  if (w.phase === 'before') {
+    html = briefBefore(now, today, ps);
+  } else if (w.open) {
+    if (state.briefFormOpen) {
+      html = `<div class="card">${planForm()}</div>`;
+    } else if (ps) {
+      html = `<div class="card">
+        <p class="card-title">Today's plan</p>
+        <div class="row"><dt>${esc(ps.setups.join(' · '))}</dt>
+          <dd style="color:var(--${ps.over ? 'warn' : 'label'})">${ps.taken} of ${ps.max} trades</dd></div>
+        ${ps.atLimit ? '<p class="answer-sub">That is the number you planned this morning.</p>' : ''}
+        ${ps.over ? '<p class="answer-sub">That is past the number you planned this morning.</p>' : ''}
+        <div class="brief-steps">
+          <button class="btn ghost" style="flex:1" data-brief="inc">+ I took a trade</button>
+          <button class="btn ghost" style="width:auto;padding:0 18px" data-brief="dec" aria-label="Remove one trade">−</button>
+        </div>
+        <p style="margin:10px 0 0"><button class="linkish" data-brief="edit">Edit plan</button></p>
+      </div>`;
+    } else {
+      html = `<div class="card"><div class="srow"><span>No plan set for today.</span>
+        <button class="linkish" data-brief="open-form">Set one</button></div></div>`;
+    }
+  } else if (w.phase === 'after' && ps) {
+    html = `<div class="card">
+      <p class="card-title">Today</p>
+      <div class="row"><dt>Trades taken</dt><dd style="color:var(--${ps.over ? 'warn' : 'label'})">${ps.taken} of ${ps.max} planned</dd></div>
+      ${ps.over ? `<p class="answer-sub">${ps.taken - ps.max} more than you planned this morning.</p>` : ''}
+      <p class="answer-sub">Setups you planned: ${esc(ps.setups.join(', '))}.</p>
+    </div>`;
+  }
+
+  if (html !== state.lastBriefHtml) { el.innerHTML = html; state.lastBriefHtml = html; }
+  el.hidden = !html;
+}
+
+function briefAction(action, v) {
+  const now = Date.now();
+  const today = dayKey(now, state.window);
+  const d = state.draft || (state.draft = draftFromPlan(today));
+  if (action === 'chip') {
+    d.setups = d.setups.includes(v) ? d.setups.filter((x) => x !== v) : [...d.setups, v];
+  } else if (action === 'set') {
+    const typed = $('brief-max') ? $('brief-max').value.trim() : '';
+    d.other = $('brief-other') ? $('brief-other').value : d.other;
+    d.maxTrades = typed === '' ? null : Number(typed);
+    const problem = planProblem(d);
+    if (problem) {
+      state.briefError = problem;
+    } else {
+      const kept = planStatus(state.plan, today);
+      state.plan = { date: today, setups: d.setups, other: d.other.trim(), maxTrades: d.maxTrades, taken: kept ? kept.taken : 0 };
+      store.set('plan', state.plan);
+      state.draft = null; state.briefError = null; state.briefFormOpen = false;
+    }
+  } else if (action === 'edit' || action === 'open-form') {
+    state.draft = draftFromPlan(today); state.briefError = null; state.briefFormOpen = true;
+  } else if (action === 'cancel') {
+    state.draft = null; state.briefError = null; state.briefFormOpen = false;
+  } else if (action === 'inc' || action === 'dec') {
+    const ps = planStatus(state.plan, today);
+    if (ps) {
+      state.plan = { ...state.plan, taken: Math.max(0, ps.taken + (action === 'inc' ? 1 : -1)) };
+      store.set('plan', state.plan);
+    }
+  }
+  renderBrief(now, true);
 }
 
 /** Switch between the two views. Remembered on this phone only. */
@@ -1206,6 +1391,7 @@ function analyseNow() {
 
   renderClock(); renderFeed();
   renderBlackout(bl, now);
+  renderBrief(now);
   renderSessionCard(now);
   renderRead(a);
   renderSimpleRead(a, now);
@@ -1220,11 +1406,15 @@ function analyseNow() {
 async function refresh() {
   if (state.mode === 'manual') { analyseNow(); return; }
   $('feed-text').textContent = 'Connecting…';
-  const res = await loadBars(state.pair, { keys: state.keys, limit: 300, allowProxy: true });
+  // 1,000 bars is about three and a half days: enough to compare tonight with
+  // earlier nights. The engine is still handed the last 300, the length it was
+  // built and checked on — relative volume, for one, would otherwise start
+  // voting, and that should be a deliberate change rather than a side effect.
+  const res = await loadBars(state.pair, { keys: state.keys, limit: 1000, allowProxy: true });
   if (res.ok) {
-    state.bars = res.bars; state.feed = res; state.sample = false;
+    state.history = res.bars; state.bars = res.bars.slice(-300); state.feed = res; state.sample = false;
   } else {
-    state.feed = res;
+    state.feed = res; state.history = [];
     if (!state.bars.length || state.sample) { state.bars = sampleBars(state.pair); state.sample = true; }
   }
   $('feed-detail').innerHTML = `<div class="hr"></div><p class="card-title">Feed attempts</p>` +
@@ -1260,7 +1450,8 @@ function setPair(p) {
   $('live-spread').value = state.spread[p] ?? '';
   $('live-spread').placeholder = i.typicalSpread && i.typicalSpread.observed
     ? `last read ${i.typicalSpread.observed.toFixed(2)}` : '';
-  state.bars = sampleBars(p); state.sample = true;
+  state.bars = sampleBars(p); state.sample = true; state.history = [];
+  state.lastBriefHtml = null;
   analyseNow();
   refresh();
 }
@@ -1273,12 +1464,37 @@ function boot() {
   // One delegated handler for "show full detail", "change" and "see the
   // ticket" links, since the cards that carry them are re-rendered.
   document.addEventListener('click', (e) => {
+    const bb = e.target.closest('[data-brief]');
+    if (bb) { e.preventDefault(); briefAction(bb.dataset.brief, bb.dataset.v); return; }
     const v = e.target.closest('[data-view]');
     if (v) { e.preventDefault(); setView(v.dataset.view); return; }
     const t = e.target.closest('[data-tab]');
     if (t) { e.preventDefault(); selectTab(t.dataset.tab); }
   });
   $('view-mode').onchange = (e) => setView(e.target.value);
+
+  // The brief's inputs are re-rendered, so they are handled by delegation too.
+  document.addEventListener('input', (e) => {
+    if (!state.draft) return;
+    if (e.target.id === 'brief-other') state.draft.other = e.target.value;
+    if (e.target.id === 'brief-max') state.draft.maxTrades = e.target.value === '' ? null : Number(e.target.value);
+  });
+  document.addEventListener('change', (e) => {
+    if (!['brief-hi', 'brief-lo', 'brief-now'].includes(e.target.id)) return;
+    const num = (id) => Number($(id).value) || null;
+    state.manualRange = {
+      date: dayKey(Date.now(), state.window), pair: state.pair,
+      high: num('brief-hi'), low: num('brief-lo'), now: num('brief-now'),
+    };
+    store.set('manualRange', state.manualRange);
+  });
+  // Redraw only once focus has left the brief, so moving from one box to the
+  // next does not rebuild the box being tapped (which drops the iPhone keyboard).
+  document.addEventListener('focusout', (e) => {
+    if (!['brief-hi', 'brief-lo', 'brief-now'].includes(e.target.id)) return;
+    if (e.relatedTarget && $('brief').contains(e.relatedTarget)) return;
+    setTimeout(() => renderBrief(Date.now(), true), 0);
+  });
   setView(state.view);
 
   $('mode').value = state.mode;
@@ -1335,7 +1551,7 @@ function boot() {
       alert('Need at least 5 bars, one per line, as: open high low close');
       return;
     }
-    state.bars = manualBars(rows); state.sample = false; state.feed = null;
+    state.bars = manualBars(rows); state.sample = false; state.feed = null; state.history = [];
     selectTab('read'); analyseNow();
   };
 

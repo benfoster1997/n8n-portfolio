@@ -34,7 +34,7 @@ export function localHour(atMs, tz) {
 }
 
 /** Local calendar date in a named zone, as {y, m, d}. */
-function localDate(atMs, tz) {
+export function localDate(atMs, tz) {
   const p = {};
   for (const { type, value } of new Intl.DateTimeFormat('en-US', {
     timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',

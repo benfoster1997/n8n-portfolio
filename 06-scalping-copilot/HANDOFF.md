@@ -29,8 +29,8 @@ refuse a plain publish and would otherwise create a *second* page. Do this:
 
 ```
 node build.mjs            # inline src/*.js into index.html; refuses on name collisions
-node test/run-all.mjs     # 226 assertions across 7 suites — unit level only
-node test/smoke.mjs       # real browser, 6 frozen moments x both views; fails on page errors, overflow, "undefined"/"NaN"
+node test/run-all.mjs     # 248 assertions across 8 suites — unit level only
+node test/smoke.mjs       # real browser, 7 frozen moments x both views, fills in the brief; fails on page errors, overflow, "undefined"/"NaN"
 ```
 
 `smoke.mjs` needs playwright, which is deliberately **not** a project dependency.
@@ -210,6 +210,18 @@ A fresh session is likely to "fix" some of these. Don't, without reading why.
     shortened, never dropped. The smoke test walks both views and fails on any
     visible "undefined" or "NaN".
 
+19. **The brief asks; it does not tick.** Pre-market routines have no outcome
+    evidence; checklists help only when they demand inputs (Haynes 2009 vs Urbach
+    2014). So the plan will not save without a setup and a max-trades number, and
+    there are no tick boxes. Gold's overnight runs from the 18:00 New York reopen
+    (Sunday's on a Monday), bitcoin's is the last 24h; the busy/quiet verdict is
+    like-for-like against up to 3 earlier nights by median, skips closed markets,
+    and refuses with fewer than 2. The feed now fetches **1,000 bars** for this,
+    but the engine is still handed the **last 300** — with more, relative volume
+    would start voting, which should be a deliberate change, not a side effect.
+    The plan and trade count live in localStorage (this phone, today only); the
+    count is whatever the user taps, and nothing shows P&L.
+
 ---
 
 ## Research digest
@@ -275,9 +287,7 @@ the commit messages are the durable record.
 
 1. **Hide running P&L during the session**; show process counters instead
    (myopic loss aversion — frequent outcome evaluation worsens decisions).
-2. **Pre-session brief, 07:30–08:00**, demanding inputs not ticks: overnight range
-   and where price sits in it (Asia for gold, 24h for BTC), overnight volatility vs
-   norm, today's in-window prints, the day's intent (live setups, max trades).
+2. ~~Pre-session brief~~ — **built 26 Sep 2026**, see decision 19.
 3. **Releases that already happened** (e.g. UK ONS at 07:00) shown as settled-outcome
    cards, never as an overdue red badge.
 4. **FOMC as a day-type label** ("the move is at 19:00, after your close") plus one
