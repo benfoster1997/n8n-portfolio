@@ -267,6 +267,25 @@ A fresh session is likely to "fix" some of these. Don't, without reading why.
     300 random series); and the 13:20 COMEX boundary is `13 + 1/3`, not `13.3`
     (which rendered as 13:18).
 
+22. **Trade ideas from screenshots — and the tool now says buy or sell.** Built
+    27 Sep 2026 because claude.ai blocks every price feed and the user chose to
+    stay in claude.ai. The page sends an MT5 screenshot to Claude through the
+    artifact `sample` capability (declared on publish as `{sample: {}}`; viewer
+    pays; first call asks consent). Thorough = 3 analysts (`complex` tier, one
+    lens each) + a head trader; Fast = 1 reader (`default`). `shot.js` holds the
+    prompts, `shotGate()` (no call in a blackout, the weekday dead zone, or gold
+    at the weekend; weekend BTC and out-of-window allowed with a caution) and
+    `checkPlan()` (any failure → No trade with the reason: <2 agree, price reads
+    >0.15% apart, wrong-side stop, stop <5× spread, TP1 <1:1 net of spread,
+    entry >0.4% from price, level outside the visible axis ±25%). **This
+    reverses the "never says buy or sell" rule at the user's explicit request**;
+    keep the ideas framed as ideas, keep "No trade" easy, keep the gates in code.
+    Without live prices the practice bars never produce a lean or ticket levels:
+    the ticket takes levels only from a fresh (<15 min) analysis on the same
+    instrument, and otherwise gives a lot size from a typed stop. The smoke test
+    drives the whole flow against a stand-in `window.claude`; the real capability
+    cannot be exercised from the container.
+
 ---
 
 ## Research digest

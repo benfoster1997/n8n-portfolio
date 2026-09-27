@@ -103,6 +103,37 @@ trading* and *after you have stopped*, because those are different kinds of fact
 
 ---
 
+## Trade ideas from a chart screenshot
+
+Inside claude.ai the page cannot load live prices — claude.ai's security policy blocks
+its connections to every price feed (confirmed on the user's iPhone, 27 September 2026).
+So the Read tab asks for a **screenshot of the MT5 M5 chart** instead, and sends it to
+Claude on the user's own account through the artifact `sample` capability.
+
+- **Thorough** (default): three analysts read the picture independently — trend and
+  structure, levels and liquidity, momentum and risk — then a head trader checks their
+  work against the picture and decides. **Fast**: one reader, one pass.
+- The answer is **Buy idea**, **Sell idea** or **No trade**, with an entry, a stop loss,
+  two take profits, the reward-to-risk after the spread, a confidence word, and how many
+  analysts agreed. The Size tab's ticket then carries those levels, with a lot size from
+  the user's risk settings, for 15 minutes.
+- **Plain code decides what the model cannot argue with.** No analysis at all — and no
+  usage spent — in a news blackout, in the weekday dead zone, or on gold at the weekend.
+  And any plan is turned into **No trade**, with the reason shown, if fewer than two
+  analysts agree, they read the current price differently, the stop is on the wrong side
+  or inside five spreads, take profit 1 pays less than the risk after the spread, the
+  entry is far from the price, or a level is outside the visible chart.
+
+**This reverses a founding rule of the tool** — that it never says buy or sell — at the
+user's explicit request. The ideas are framed as ideas from a picture, not signals.
+
+**What it does not do.** It reads a picture: a level can be off by a little, so the page
+says to check every level on the MT5 chart before entering. It has no track record and
+has not been tested on past trades. It sees only what is in the screenshot — no order
+book, no news content, nothing beyond the chart. Each analysis spends the user's own
+Claude usage (four requests on Thorough, one on Fast). It works only when the page is
+opened in claude.ai; any other copy of the page says so. The screenshot is never stored.
+
 ## The pre-session brief
 
 Before 08:00 on a weekday, the Read tab opens with a brief:
@@ -481,6 +512,7 @@ src/
   signal-engine.js  regime detection, factor buckets, the read
   edge-test.js      whether a run of results means anything yet
   brief.js          the pre-session brief: overnight range, the day, the plan
+  shot.js           screenshot analysis: prompts, the gate, and the checks on every plan
   app.js            UI wiring
   index.template.html
 build.mjs           inlines the above into index.html

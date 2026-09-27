@@ -86,14 +86,40 @@ const freezeClock = (ms) => `{
   window.Date.UTC = R.UTC; window.Date.parse = R.parse;
 }`;
 
+// A stand-in for claude.ai's `sample` capability, so the screenshot flow runs
+// end to end: three analyst readings and a head-trader plan, priced for
+// whichever instrument the prompt names. It refuses a call with no image, as
+// the real one would be useless without it.
+const mockClaude = `{
+  const px = (p) => /BTCUSD/.test(p)
+    ? { now: 84400, lo: 84200, hi: 84700, sl: 84330, t1: 84520, t2: 84600 }
+    : { now: 4391.2, lo: 4380, hi: 4402, sl: 4386.5, t1: 4398, t2: 4401.5 };
+  const fn = async () => ({ text: 'ok', truncated: false, modelTierApplied: 'default' });
+  fn.limits = async () => ({ maxPromptBytes: 65536, images: { maxCount: 5, maxInputBytes: 2e7, mediaTypes: ['image/png', 'image/jpeg'] } });
+  fn.json = async (prompt, opts) => {
+    if (!(opts && opts.images && opts.images.length)) throw { code: 'invalid_request', message: 'no image' };
+    const v = px(prompt);
+    const levels = { entry: v.now, stop_loss: v.sl, take_profit_1: v.t1, take_profit_2: v.t2, price_now: v.now, axis_low: v.lo, axis_high: v.hi };
+    if (/You are one of three/.test(prompt)) return { readable: true, instrument_seen: 'x', timeframe_seen: 'M5', view: 'buy', confidence: 0.6, reasons: ['Higher lows'], against: ['Near resistance'], ...levels };
+    return { decision: 'buy', entry_type: 'market', confidence: 'moderate', summary: 'Pullback held above support.', reasons: ['Higher lows'], against: ['Near resistance'], invalidated_if: 'A close below the stop.', ...levels };
+  };
+  window.claude = { use: async (n) => (n === 'sample' ? fn : null) };
+}`;
+// A 1x1 PNG: the stand-in never looks at it.
+const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=', 'base64');
+
 const browser = await chromium.launch({ executablePath: browserPath() });
 let failures = 0;
+let shotsRun = 0;
 
 for (const [label, ms] of Object.entries(MOMENTS)) {
   const p = await browser.newPage({ viewport: { width: 440, height: 956 }, deviceScaleFactor: 2 });
   const errors = [];
   p.on('pageerror', (e) => errors.push(e.message));
   await p.addInitScript(freezeClock(ms));
+  // Saturday runs without it, to check the page says the feature needs claude.ai.
+  const withClaude = label !== 'Saturday';
+  if (withClaude) await p.addInitScript(mockClaude);
   await p.goto('file://' + harness);
   await p.waitForTimeout(1200);
 
@@ -140,6 +166,28 @@ for (const [label, ms] of Object.entries(MOMENTS)) {
   await p.waitForTimeout(200);
   await checkText('brief');
 
+  // Screenshot analysis: where the gate allows it, pick a picture, read the
+  // answer, and check the ticket carries the analysis's levels.
+  await p.evaluate(() => document.getElementById('nav-read').click());
+  await p.waitForTimeout(150);
+  const canPick = await p.evaluate(() => !!document.getElementById('shot-file'));
+  const shotCard = await p.evaluate(() => document.getElementById('shot').innerText);
+  if (!withClaude && !/opened in claude\.ai/.test(shotCard)) leaks.push('screenshot: no "needs claude.ai" message without the capability');
+  if (canPick) {
+    await p.setInputFiles('#shot-file', { name: 'chart.png', mimeType: 'image/png', buffer: PNG });
+    await p.waitForTimeout(700);
+    const shotText = await p.evaluate(() => document.getElementById('shot').innerText);
+    if (!/Buy idea|Sell idea|No trade/.test(shotText)) leaks.push(`screenshot: no answer rendered ("${shotText.slice(0, 80)}")`);
+    await checkText('screenshot result');
+    await p.evaluate(() => document.getElementById('nav-risk').click());
+    await p.waitForTimeout(200);
+    const tkt = await p.evaluate(() => document.getElementById('ticket').innerText);
+    if (/Buy idea/.test(shotText) && !/84,330\.00|4,386\.50/.test(tkt)) leaks.push('screenshot: the ticket does not carry the analysis stop loss');
+    await checkText('ticket from screenshot');
+    await p.evaluate(() => document.getElementById('nav-read').click());
+  }
+  shotsRun += canPick ? 1 : 0;
+
   // The how-to card, every step opened, must read cleanly too.
   await p.evaluate(() => {
     document.getElementById('nav-setup').click();
@@ -183,5 +231,6 @@ for (const [label, ms] of Object.entries(MOMENTS)) {
 }
 
 await browser.close();
-console.log(`\n${Object.keys(MOMENTS).length - failures} of ${Object.keys(MOMENTS).length} moments clean\n`);
+console.log(`\n${Object.keys(MOMENTS).length - failures} of ${Object.keys(MOMENTS).length} moments clean · screenshot flow run at ${shotsRun}\n`);
+if (shotsRun === 0) { console.log('  FAIL the screenshot flow never ran'); failures++; }
 process.exit(failures ? 1 : 0);

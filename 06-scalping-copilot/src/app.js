@@ -36,6 +36,19 @@ const state = {
   lastBriefHtml: null,
   lastHowToHtml: null,
   lastFeedRes: null,
+  // Screenshot analysis (shot.js). `sampleFn` is the claude.ai sample
+  // capability, or null where the page cannot use it (any copy outside
+  // claude.ai). Nothing about the picture itself is ever stored.
+  sampleFn: null,
+  sampleReady: false,
+  sampleImages: null,
+  shot: null,
+  shotBusy: false,
+  shotCtl: null,
+  shotStatus: '',
+  shotError: null,
+  shotMode: store.get('shotMode', 'thorough'),
+  lastShotHtml: null,
 };
 
 /* ---- a plausible sample series so the page opens showing what it does --- */
@@ -297,6 +310,33 @@ function plainReasons(a) {
   return { forIt, against };
 }
 
+/** Where you are in the day, which instrument suits it, and the next news — one line each. */
+function sessionLines(now) {
+  const w = windowState(now, state.window);
+  const q = sessionQuality(now, state.pair, state.window);
+  let html = '';
+  const pip = { green: 'up', amber: 'warn', red: 'danger', dead: 'label-3' }[q.band] || 'label-3';
+  const phaseText = w.phase === 'weekend' ? 'Weekend — markets closed or thin'
+    : w.phase === 'before' ? 'Before your window opens'
+      : w.phase === 'after' ? 'Your window has closed'
+        : w.phase === 'last-30' ? 'Final stretch — confidence is marked down'
+          : esc(q.name);
+  html += `<div class="srow"><span class="pip" style="background:var(--${w.open ? pip : 'label-3'})"></span><span>Now: <b style="color:var(--label)">${phaseText}</b></span></div>`;
+
+  const pref = preferredInstrument(now, state.window);
+  if (w.open && pref.pair && pref.confident && pref.pair !== state.pair) {
+    html += `<div class="srow"><span class="pip" style="background:var(--warn)"></span><span>${esc(INSTRUMENTS[pref.pair].label)} is the better of your two right now.</span></div>`;
+  }
+
+  const next = getUpcomingEvents(now, 12, state.pair, { includeContext: false })
+    .filter((e) => e.ts > now && e.tier <= 2 && insideWindow(e.ts, state.window))[0];
+  html += `<div class="srow"><span class="pip" style="background:var(--${next ? (next.tier === 1 ? 'danger' : 'warn') : 'label-3'})"></span><span>${next
+    ? `Next news: <b style="color:var(--label)">${esc(next.short || next.name)}</b> at ${formatHM(next.ts, state.window.tz)} (in ${formatDuration(next.msAway)})`
+    : 'No major news due in your window.'}</span></div>`;
+
+  return html;
+}
+
 function renderSimpleRead(a, now) {
   const w = windowState(now, state.window);
   const q = sessionQuality(now, state.pair, state.window);
@@ -314,8 +354,14 @@ function renderSimpleRead(a, now) {
 
   // The answer, in words. Tone is the colour; the word always carries the meaning.
   let word = 'No clear direction', tone = 'flat', arrow = '&#9644;', line = '', why = '';
-  const read = a && a.ok && (a.bias === 'long' || a.bias === 'short') && a.state === 'read';
-  if (!a || !a.ok) {
+  // Practice bars never produce a lean on screen: a direction gets traded.
+  const read = !state.sample && a && a.ok && (a.bias === 'long' || a.bias === 'short') && a.state === 'read';
+  if (state.sample) {
+    // No live prices: the screenshot card above is the answer (and carries
+    // the blackout and quiet-hours gates). This card keeps only the day.
+    $('simple-read').innerHTML = `<p class="card-title">Your session</p>${sessionLines(now)}`;
+    return;
+  } else if (!a || !a.ok) {
     word = 'Not enough data';
     line = 'It needs more price history before it can read the chart.';
   } else if (a.state === 'stand-aside') {
@@ -358,26 +404,7 @@ function renderSimpleRead(a, now) {
     html += `<div style="margin-top:14px"><button class="btn" data-tab="risk">See the MT5 ticket</button></div>`;
   }
 
-  // Where you are in the day, and what is coming — one line each.
-  const pip = { green: 'up', amber: 'warn', red: 'danger', dead: 'label-3' }[q.band] || 'label-3';
-  const phaseText = w.phase === 'weekend' ? 'Weekend — markets closed or thin'
-    : w.phase === 'before' ? 'Before your window opens'
-      : w.phase === 'after' ? 'Your window has closed'
-        : w.phase === 'last-30' ? 'Final stretch — confidence is marked down'
-          : esc(q.name);
-  html += `<div class="hr"></div>
-    <div class="srow"><span class="pip" style="background:var(--${w.open ? pip : 'label-3'})"></span><span>Now: <b style="color:var(--label)">${phaseText}</b></span></div>`;
-
-  const pref = preferredInstrument(now, state.window);
-  if (w.open && pref.pair && pref.confident && pref.pair !== state.pair) {
-    html += `<div class="srow"><span class="pip" style="background:var(--warn)"></span><span>${esc(INSTRUMENTS[pref.pair].label)} is the better of your two right now.</span></div>`;
-  }
-
-  const next = getUpcomingEvents(now, 12, state.pair, { includeContext: false })
-    .filter((e) => e.ts > now && e.tier <= 2 && insideWindow(e.ts, state.window))[0];
-  html += `<div class="srow"><span class="pip" style="background:var(--${next ? (next.tier === 1 ? 'danger' : 'warn') : 'label-3'})"></span><span>${next
-    ? `Next news: <b style="color:var(--label)">${esc(next.short || next.name)}</b> at ${formatHM(next.ts, state.window.tz)} (in ${formatDuration(next.msAway)})`
-    : 'No major news due in your window.'}</span></div>`;
+  html += `<div class="hr"></div>${sessionLines(now)}`;
 
   // Why — in plain words, behind one tap.
   if (read || (a && a.ok && a.state === 'neutral')) {
@@ -588,8 +615,8 @@ function renderHowTo(now) {
     <p style="font-size:12.5px;color:var(--label-3);margin:-4px 0 4px">Times are London time — the big clock at the top — not MT5's chart time.</p>
     ${step('First time only', '', `<ol>
       <li>Open this page in <b>Safari</b>, signed in to claude.ai, then Share → <b>Add to Home Screen</b>. From then on, open it from that icon (sign in again if asked).</li>
-      <li>For gold prices, paste a free Twelve Data key into <b>Data</b>, further down this tab.</li>
-      <li>Check the dot at the top, under Gold and Bitcoin. <b>Green</b> means live prices. Yellow or red: see <b>If the dot is not green</b>, at the end of this card.</li>
+      <li>The dot at the top stays yellow here: claude.ai does not let the page load live prices. Trade ideas come from your chart screenshots instead.</li>
+      <li>The first time you analyse a screenshot, claude.ai asks whether this page may use Claude. Allow it.</li>
       <li>Optional: on the Size tab, tap <b>Change</b> under Stop distance to set <b>Risk per trade %</b>, or type what you would trade live in <b>Shadow balance</b> and set <b>Size from</b> to it. Then tap <b>Back to the simple view</b>. The page remembers these.</li>
     </ol>`)}
     ${step('Before the open', `${hm(t.briefFromMs)}–${hm(t.opensAtMs)}`, `<ol>
@@ -599,32 +626,212 @@ function renderHowTo(now) {
       <li>Late? Tap <b>Set one</b> on the Read tab. The news times are on the News tab.</li>
     </ol>`)}
     ${step('Each trade', `${hm(t.opensAtMs)}–${hm(t.closesAtMs)}`, `<ol>
-      <li>Check the dot is still green, then check the answer on the Read tab:
+      <li>In MT5, open the <b>M5</b> chart and take a screenshot with the price scale on the right showing.</li>
+      <li>On the Read tab, type the <b>Price now</b> from MT5 if you can (it makes the levels more reliable), then tap <b>Analyse a screenshot</b> and pick it. <b>Thorough</b> (three analysts and a head trader) takes one to three minutes; <b>Fast</b> (one reader) under a minute.</li>
+      <li>Read the answer:
         <ul>
-          <li><b>Stand aside</b> — news is due or has just landed. Be flat until the "clear at" time it shows. A red dot on the News tab means a major release is less than 90 minutes away.</li>
-          <li><b>Stand down</b> — the sit-out hours from the brief (gold ${span(t.XAUUSD.sitOut)}, bitcoin ${span(t.BTCUSD.sitOut)}), and weekends. No direction is shown.</li>
-          <li><b>No clear direction</b>, <b>No clear read</b> or <b>Not enough data</b> — nothing to do.</li>
-          <li><b>Leaning up</b> or <b>Leaning down</b> — the "Wrong if" price becomes the ticket's stop loss. <b>Confidence: low</b> means an observation, not a setup. Tap <b>Why?</b> for the reasons.</li>
+          <li><b>Buy idea</b> or <b>Sell idea</b> — an entry, a stop loss and two take profits. Tap <b>Why?</b> for the reasons.</li>
+          <li><b>No trade</b> — nothing clean, or the idea failed a check (it says which).</li>
+          <li><b>Stand aside</b> — news is due or has just landed. Be flat until the time it shows. A red dot on the News tab means a major release is less than 90 minutes away.</li>
+          <li><b>Stand down</b> — the sit-out hours from the brief (gold ${span(t.XAUUSD.sitOut)}, bitcoin ${span(t.BTCUSD.sitOut)}). No screenshot is analysed then.</li>
         </ul></li>
-      <li>If it is leaning, it matches a setup in your plan, and you decide to take it, tap <b>See the MT5 ticket</b>.</li>
-      <li>In <b>Live spread</b>, type the gap between the two prices on MT5's Quotes tab — 4,400.10 and 4,400.15 is 0.05. About ${sp('XAUUSD')} on gold and ${sp('BTCUSD')} on bitcoin, not the 5 or 600 "points" MT5 can show. Leave <b>Stop distance</b> empty unless you want your own stop; if you type one, the ticket's stop loss moves to match.</li>
-      <li>In MT5 (Quotes → tap the symbol), enter the <b>Volume</b>, <b>Stop loss</b> and <b>Take profit</b>. Check both levels against your MT5 chart first: they come from a reference price, not your broker's. Then tap the side the ticket shows, <b>BUY</b> or <b>SELL</b>. If the stop and target boxes are greyed out, place the trade, then long-press it on MT5's Trade tab and choose <b>Modify Position</b>.</li>
+      <li>If it matches a setup in your plan, and you decide to take it, tap <b>See the MT5 ticket</b>. In <b>Live spread</b>, type the gap between the two prices on MT5's Quotes tab — 4,400.10 and 4,400.15 is 0.05. About ${sp('XAUUSD')} on gold, ${sp('BTCUSD')} on bitcoin, not the 5 or 600 "points" MT5 can show.</li>
+      <li>Check the levels against your MT5 chart, then in MT5 (Quotes → tap the symbol) enter the <b>Volume</b>, <b>Stop loss</b> and <b>Take profit</b> and tap <b>BUY</b> or <b>SELL</b> to match the ticket. If the stop and target boxes are greyed out, place the trade, then long-press it on MT5's Trade tab and choose <b>Modify Position</b>.</li>
       <li>If it says <b>Too big for one order</b>, place the separate orders it lists, each with the same stop loss and take profit.</li>
       <li>Back on the Read tab, tap <b>+ I took a trade</b> — once per trade, even if you split it. It shows once today's plan is set.</li>
     </ol>
-    <p style="font-size:13px;color:var(--label-2);margin:-4px 0 14px">In the <b>Final stretch</b> (the header says so), confidence is marked down on purpose, so more reads say low.</p>`)}
+    <p style="font-size:13px;color:var(--label-2);margin:-4px 0 14px">The ticket uses an analysis for 15 minutes. After that, take a new screenshot.</p>`)}
     ${step('After the close', `from ${hm(t.closesAtMs)}`, `<ol>
       <li>If you set a plan, the Read tab shows how many trades you tapped in against it. It cannot see MT5, so the count is only your taps.</li>
       <li>Optional, weekly: on the Size tab, tap <b>Show full detail</b> and scroll to <b>Is it working yet?</b> Before your first entry, fill in <b>Sample you are committing to</b>: once it is set, there is no verdict until you reach that many trades (left blank, it judges after any number). Take your totals from MT5's History tab. The page remembers them. Then tap <b>Back to the simple view</b>.</li>
     </ol>`)}
-    ${step('If the dot is not green', '', `<ol>
-      <li><b style="color:var(--warn)">Do not trade from the read or the ticket's stop and target.</b> They come from practice prices, or from prices that have stopped updating.</li>
-      <li>Still useful: the brief, the news times, your plan and trade count — and lot size. On the Size tab, type your own <b>Stop distance</b> as a price distance (8 means $8 on gold) and read <b>Volume</b> on the ticket. If there is no ticket, tap <b>Show full detail</b>, then <b>Back to the simple view</b>.</li>
-      <li>Take the stop loss and take profit from your own MT5 chart.</li>
+    ${step('About the trade ideas', '', `<ol>
+      <li>They are read from a picture of your chart, so a level can be a little off. <b>Always check the levels on your MT5 chart before you enter.</b></li>
+      <li>Each analysis uses your own Claude usage: four requests on Thorough, one on Fast.</li>
+      <li>The page turns any idea into <b>No trade</b> if the readers disagree, read the price differently, put the stop inside five spreads, or pay less than the risk after the spread.</li>
+      <li>It has no track record. Treat an idea as a second opinion, not an instruction.</li>
+      <li>Without an analysis you can still get a lot size: type your own <b>Stop distance</b> on the Size tab (8 means $8 on gold) and take the levels from your MT5 chart.</li>
     </ol>`)}
-    <p style="font-size:12.5px;color:var(--label-3);margin:4px 0 0">It describes the chart and the price it is wrong at. The decision to trade is always yours.</p>`;
+    <p style="font-size:12.5px;color:var(--label-3);margin:4px 0 0">It gives ideas and the price they are wrong at. The decision to trade is always yours.</p>`;
 
   if (html !== state.lastHowToHtml) { $('howto').innerHTML = html; state.lastHowToHtml = html; }
+}
+
+/* ======================================================= screenshot read */
+
+/**
+ * The screenshot card. With no live prices inside claude.ai this is where a
+ * trade idea comes from: the user picks a screenshot of the M5 chart and the
+ * page asks Claude, on the user's own account, through the `sample`
+ * capability — three analysts and a head trader, or one reader in Fast mode.
+ * shot.js holds the prompts, the gate and the checks; this is only the card.
+ */
+function currentShotGate(now) {
+  const w = windowState(now, state.window);
+  const q = sessionQuality(now, state.pair, state.window);
+  return shotGate({
+    pair: state.pair, weekend: w.phase === 'weekend',
+    blackout: getActiveBlackout(now, state.pair, state.overrides),
+    band: q.band, insideWindow: w.open, win: state.window,
+  });
+}
+
+function shotContext(now, gate) {
+  const i = inst();
+  const digits = spec(i, 'digits');
+  const typed = currentSpread();
+  const spreadNum = typed || i.typicalSpread.observed;
+  const ps = planStatus(state.plan, dayKey(now, state.window));
+  const priceBox = $('shot-price');
+  const priceNow = priceBox && Number(priceBox.value) > 0 ? Number(priceBox.value) : null;
+  return {
+    pair: state.pair,
+    nowText: formatHM(now, 'Europe/London'),
+    weekday: new Intl.DateTimeFormat('en-GB', { weekday: 'long', timeZone: 'Europe/London' }).format(now),
+    sessionName: sessionQuality(now, state.pair, state.window).name,
+    spread: spreadNum.toFixed(digits), spreadNum,
+    spreadSource: typed ? 'typed in by the trader just now' : "last read off the trader's MT5",
+    news: getUpcomingEvents(now, 1.5, state.pair, { includeContext: false })
+      .filter((e) => e.ts > now).map((e) => `${e.short || e.name} at ${formatHM(e.ts, 'Europe/London')} London`),
+    caution: gate.state === 'caution' ? gate.message : null,
+    planSetups: ps ? ps.setups : [], tradesTaken: ps ? ps.taken : 0, maxTrades: ps ? ps.max : 0,
+    priceNow, minStopText: `${(5 * spreadNum).toFixed(digits)} (5× the spread)`,
+    digits,
+  };
+}
+
+function shotErrorText(e) {
+  const code = e && e.code;
+  return ({
+    not_granted: 'This page was not allowed to use Claude. Reload the page if you want to be asked again.',
+    sampling_disabled: 'Claude is not available to this page on your account.',
+    capability_disabled: 'Claude is not available to this page here.',
+    capability_removed: 'This version of the Claude app cannot run it. Try Safari.',
+    not_declared: 'This page is not set up to use Claude.',
+    images_unavailable: 'This view cannot send pictures to Claude.',
+    rate_limited: 'Too many requests, or your Claude usage limit has been reached. Try again later.',
+    session_expired: 'Sign in to claude.ai again, then try once more.',
+    image_rejected: 'That picture could not be used. Try a normal screenshot.',
+    refused: 'Claude declined to analyse this picture.',
+    invalid_json: 'The analysis came back in the wrong shape. Try again.',
+    empty_completion: 'The analysis came back empty. Try again.',
+  })[code] || 'Could not reach Claude just now. Try again.';
+}
+
+async function runShot(file) {
+  if (!file || state.shotBusy || !state.sampleFn) return;
+  const now = Date.now();
+  const gate = currentShotGate(now);
+  if (!gate.allowed) { renderShot(true); return; }
+  const c = shotContext(now, gate);
+  const ctl = new AbortController();
+  Object.assign(state, { shotCtl: ctl, shotBusy: true, shotError: null });
+  const thorough = state.shotMode !== 'fast';
+  const status = (t) => { state.shotStatus = t; renderShot(true); };
+  status(thorough ? 'Three analysts are reading the chart…' : 'Reading the chart…');
+  const opts = (tier) => ({ images: [file], modelTier: tier, signal: ctl.signal });
+  try {
+    let readings = [], plan;
+    if (thorough) {
+      let done = 0;
+      const settled = await Promise.allSettled(LENSES.map((lens) =>
+        state.sampleFn.json(analystPrompt(lens, c), opts('complex')).then((r) => {
+          done += 1;
+          if (!ctl.signal.aborted) status(`Three analysts are reading the chart… ${done} of 3 done`);
+          return r;
+        })));
+      if (ctl.signal.aborted) throw { code: 'cancelled' };
+      readings = settled.filter((x) => x.status === 'fulfilled' && x.value && typeof x.value === 'object').map((x) => x.value);
+      if (!readings.length) throw settled.find((x) => x.status === 'rejected').reason;
+      status('The head trader is checking their work…');
+      plan = await state.sampleFn.json(headPrompt(readings, c), opts('complex'));
+    } else {
+      plan = await state.sampleFn.json(fastPrompt(c), opts('default'));
+    }
+    const result = checkPlan(plan, readings, { spread: c.spreadNum, digits: c.digits, priceNow: c.priceNow });
+    state.shot = { pair: state.pair, atMs: Date.now(), result, readings: readings.length, mode: thorough ? 'thorough' : 'fast', caution: c.caution };
+  } catch (e) {
+    if (!e || e.code !== 'cancelled') state.shotError = shotErrorText(e);
+  } finally {
+    Object.assign(state, { shotBusy: false, shotCtl: null, shotStatus: '' });
+    renderShot(true);
+    renderRisk();
+  }
+}
+
+function renderShot(force = false) {
+  const el = $('shot');
+  if (!force && el.contains(document.activeElement)) return;
+  const now = Date.now();
+  const i = inst();
+  const gate = currentShotGate(now);
+  const digits = spec(i, 'digits');
+  const title = '<p class="card-title">Chart screenshot</p>';
+  const accept = state.sampleImages ? state.sampleImages.mediaTypes.join(',') : 'image/*';
+  const picker = (label, primary = true) => `<input type="file" id="shot-file" class="vh" accept="${esc(accept)}">
+    <label for="shot-file" class="btn${primary ? '' : ' ghost'}" style="margin-top:12px">${label}</label>`;
+  let html;
+
+  if (!state.sampleReady) {
+    html = `${title}<p class="answer-sub" style="margin:0">Checking whether this page can use Claude…</p>`;
+  } else if (!state.sampleFn) {
+    html = `${title}<p class="answer-sub" style="margin:0">Screenshot analysis works when this page is opened in claude.ai.</p>`;
+  } else if (!state.sampleImages) {
+    html = `${title}<p class="answer-sub" style="margin:0">This view cannot send pictures to Claude. Try the page in Safari.</p>`;
+  } else if (state.shotBusy) {
+    html = `${title}<div class="answer" style="font-size:22px;color:var(--label-2)">${esc(state.shotStatus)}</div>
+      <p class="answer-sub">${state.shotMode === 'fast' ? 'Usually under a minute.' : 'Usually one to three minutes. You can leave this tab and come back.'}</p>
+      <button class="btn ghost" style="margin-top:12px" data-shot="stop">Stop</button>`;
+  } else {
+    const s = state.shot && state.shot.pair === state.pair ? state.shot : null;
+    let body = '';
+    if (s) {
+      const r = s.result;
+      const trade = r.decision === 'buy' || r.decision === 'sell';
+      const age = Math.round((now - s.atMs) / 60000);
+      const stale = now - s.atMs > SHOT_MAX_AGE_MS;
+      const word = r.decision === 'buy' ? ['&#9650;', 'Buy idea', 'up'] : r.decision === 'sell' ? ['&#9660;', 'Sell idea', 'down'] : ['&#9644;', 'No trade', 'flat'];
+      const lv = (label, v, tone = 'label') => `<div class="shot-lv"><span>${label}</span><b style="color:var(--${tone})">${fmt(v, digits)}</b></div>`;
+      const list = (xs, cls = '') => xs.length ? `<ul class="reasons ${cls}">${xs.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : '';
+      body = `<div class="answer" style="color:var(--${word[2]})"><span>${word[0]}</span><span>${word[1]}</span></div>
+        ${stale ? '<div class="unconfirmed">This analysis is over 15 minutes old. Take a new screenshot before trading on it.</div>' : ''}
+        ${trade ? `<div style="margin-top:8px">
+            ${lv(`Entry · ${r.entryType === 'limit' ? 'limit order' : 'market order'}`, r.entry)}
+            ${lv('Stop loss', r.stopLoss, 'down')}
+            ${lv('Take profit 1', r.takeProfit1, 'up')}
+            ${r.takeProfit2 ? lv('Take profit 2', r.takeProfit2, 'up') : ''}
+          </div>
+          <p class="answer-sub">Pays ${r.netR}× the risk at take profit 1, after the spread. Confidence: <b style="color:var(--label)">${esc(r.confidence)}</b>${r.agreement ? ` · ${r.agreement.agree} of ${r.agreement.of} analysts agree` : ''}.</p>`
+          : ''}
+        ${r.summary ? `<p class="answer-line" style="font-size:14.5px">${esc(r.summary)}</p>` : ''}
+        ${!trade && r.problems.length ? `<p class="card-title" style="margin-top:12px">${r.rejected ? `A ${r.rejected} was suggested, but it failed these checks` : 'Why not'}</p>${list(r.problems, 'against')}` : ''}
+        ${trade && !stale ? '<div style="margin-top:12px"><button class="btn" data-tab="risk">See the MT5 ticket</button></div>' : ''}
+        ${(r.reasons.length || r.against.length || r.invalidatedIf) ? `<details class="more"><summary>Why?</summary>
+          ${r.reasons.length ? `<p class="card-title" style="margin-top:10px">For it</p>${list(r.reasons)}` : ''}
+          ${r.against.length ? `<p class="card-title" style="margin-top:12px">Against it</p>${list(r.against, 'against')}` : ''}
+          ${r.invalidatedIf ? `<p class="answer-sub">Wrong if: ${esc(r.invalidatedIf)}</p>` : ''}
+        </details>` : ''}
+        ${s.caution ? `<p class="answer-sub" style="color:var(--warn)">${esc(s.caution)}</p>` : ''}
+        <p style="font-size:12px;color:var(--label-3);margin:10px 0 0">Read from a picture of your chart by Claude, on your account, ${age < 1 ? 'just now' : `${age} min ago`}${s.mode === 'fast' ? ' (Fast)' : ''}. Levels can be a little off: check them against MT5 before you enter. It has no track record, and the decision is yours.</p>`;
+    }
+
+    if (!gate.allowed) {
+      html = `${title}<div class="answer" style="font-size:24px;color:var(--${gate.state === 'stand-aside' ? 'danger' : 'flat'})">${gate.state === 'stand-aside' ? 'Stand aside' : gate.state === 'closed' ? 'Closed' : 'Stand down'}</div>
+        <p class="answer-line">${esc(gate.message)}</p>
+        <p class="answer-sub">No screenshot is analysed now, so none of your Claude usage is spent.</p>`;
+    } else {
+      const mode = (id, label) => `<button class="chip-btn" data-shot="mode" data-v="${id}" aria-pressed="${state.shotMode === id}">${label}</button>`;
+      html = `${title}${body ? body + '<div class="hr"></div>' : ''}
+        ${state.shotError ? `<div class="unconfirmed" style="color:var(--danger);background:var(--danger-dim)">${esc(state.shotError)}</div>` : ''}
+        ${body ? '' : `<p class="answer-sub" style="margin:0">Take a screenshot of your MT5 ${esc(i.label.toLowerCase())} chart on M5, with the price scale on the right showing, then pick it here.</p>`}
+        ${gate.state === 'caution' && !body ? `<p class="answer-sub" style="color:var(--warn)">${esc(gate.message)}</p>` : ''}
+        <div class="shot-modes">${mode('thorough', 'Thorough · 4 readers')}${mode('fast', 'Fast · 1 reader')}</div>
+        <div class="field" style="margin-top:10px"><label class="f" for="shot-price">Price now, from MT5 (optional, makes the levels more reliable)</label>
+          <input class="f num" id="shot-price" type="number" inputmode="decimal" step="0.01" placeholder="e.g. ${fmt(i.id === 'BTCUSD' ? 84400 : 4391.2, digits)}"></div>
+        ${picker(body ? 'Analyse another screenshot' : 'Analyse a screenshot', !body)}`;
+    }
+  }
+  if (html !== state.lastShotHtml) { el.innerHTML = html; state.lastShotHtml = html; }
 }
 
 /** Switch between the two views. Remembered on this phone only. */
@@ -882,12 +1089,29 @@ function renderRisk() {
   // its own currency — and converted to a USD round turn for the models. An
   // empty field means "use the specification"; zero is a real override.
   const commission = commissionRoundTurnQuote(i, gbpusd, $('commission').value.trim()) || 0;
-  const price = a && a.ok ? a.price : 0;
+  // Where the ticket's levels come from. With real bars, the read. Without
+  // them (always, inside claude.ai), a fresh screenshot analysis — and never
+  // the practice bars, whose levels mean nothing. The practice price is kept
+  // only so a lot size can still be worked out from a typed stop: lots do not
+  // depend on price, only the margin figures do.
+  const live = !state.sample;
+  const src = live && a && a.ok ? {
+    kind: 'read', side: a.bias === 'long' ? 'buy' : a.bias === 'short' ? 'sell' : null,
+    entry: a.price, stopLoss: a.invalidation, target: a.targets && a.targets.length ? a.targets[0].price : null,
+    stopDistance: a.stopDistance,
+  } : !live && shotIsFresh(state.shot, Date.now(), state.pair) ? {
+    kind: 'shot', side: state.shot.result.decision, entry: state.shot.result.entry,
+    stopLoss: state.shot.result.stopLoss, target: state.shot.result.takeProfit1,
+    stopDistance: state.shot.result.stopDistance, atMs: state.shot.atMs,
+  } : null;
+  const price = src ? src.entry : a && a.ok ? a.price : 0;
 
   let stop = Number($('stop-dist').value);
-  if (!(stop > 0) && a && a.ok && a.stopDistance) {
-    stop = +a.stopDistance.toFixed(dp());
+  if (!(stop > 0) && src && src.stopDistance) {
+    stop = +src.stopDistance.toFixed(dp());
     $('stop-dist').placeholder = String(stop);
+  } else if (!(stop > 0)) {
+    $('stop-dist').placeholder = live ? '' : 'type one';
   }
 
   const contract = Number($('contract-size').value) || spec(i, 'contractSize');
@@ -912,23 +1136,33 @@ function renderRisk() {
     <button class="linkish" data-view="full">Change</button></p>`;
 
   /* ---- the ticket: exactly what goes into the MT5 order form ---- */
-  const digits = Number($('digits').value) || dp();
+  const digits = Number($('digits').value) || spec(i, 'digits');   // the symbol's digits, as MT5 takes them
   const stopsLevel = Number($('stops-level').value) || 0;
-  const side = a && a.ok && a.bias === 'long' ? 'buy' : a && a.ok && a.bias === 'short' ? 'sell' : null;
+  const side = src ? src.side : null;
   // Volume is sized from the stop distance, so the stop loss must sit at that
   // same distance. If the user typed their own, the level follows it; left
   // empty, both come from the read's invalidation and already agree.
   const typedStop = Number($('stop-dist').value) > 0 ? Number($('stop-dist').value) : null;
-  const slLevel = side && typedStop ? (side === 'buy' ? a.price - typedStop : a.price + typedStop) : a && a.invalidation;
-  const tk = (side && a.invalidation)
+  const slLevel = side && typedStop ? (side === 'buy' ? src.entry - typedStop : src.entry + typedStop) : src && src.stopLoss;
+  const tk = (side && src.stopLoss)
     ? mt5Ticket({
-        side, entry: a.price, invalidation: slLevel,
-        target: a.targets && a.targets.length ? a.targets[0].price : null,
+        side, entry: src.entry, invalidation: slLevel,
+        target: src.target,
         lots: r.ok ? r.cfd.lots : 0, digits, stopsLevel,
       })
     : null;
 
-  if (!tk) {
+  if (!tk && !live) {
+    // No live prices: point at the screenshot, and still give a lot size for a typed stop.
+    $('ticket').innerHTML = `<p class="card-title">Type this into MT5</p>
+      <p style="font-size:13.5px;color:var(--label-2);margin:0">${state.shot && state.shot.pair === state.pair && Date.now() - state.shot.atMs > SHOT_MAX_AGE_MS
+        ? 'The last screenshot analysis is over 15 minutes old. Analyse a new one on the Read tab for levels.'
+        : 'No live prices here, so the levels come from a chart screenshot. Analyse one on the Read tab.'}</p>
+      ${r.ok && Number($('stop-dist').value) > 0
+        ? `<div class="row" style="margin-top:12px"><dt>Volume for your ${fmt(Number($('stop-dist').value), digits)} stop</dt><dd style="font-size:20px;font-weight:700">${r.cfd.lots.toFixed(2)} lots</dd></div>
+           <p class="answer-sub">Take the stop loss and take profit from your MT5 chart.</p>`
+        : '<p class="answer-sub">Or type a stop distance below to get a lot size.</p>'}`;
+  } else if (!tk) {
     const why = !a || !a.ok ? 'No read yet.'
       : a.state === 'stand-aside' ? `Standing aside for ${esc(a.headline.replace(/^Stand aside — /, ''))}.`
       : a.state === 'stand-down' ? `${esc(a.headline)} — the read is being withheld.`
@@ -947,7 +1181,8 @@ function renderRisk() {
           ? `<div class="tk"><div class="tk-lab"><b>Take profit</b>price level</div><div class="tk-val up">${fmt(tk.takeProfit, digits)}</div></div>`
           : ''}
       </div>
-      ${typedStop ? `<p class="answer-sub" style="margin:8px 0 0">Stop loss set at your ${fmt(typedStop, digits)} stop distance, not the read's ${fmt(a.stopDistance, digits)}. Clear the box to use the read's.</p>` : ''}
+      ${src.kind === 'shot' ? `<p class="answer-sub" style="margin:8px 0 0">From your screenshot analysed at ${formatHM(src.atMs, tzw())}. The price has probably moved since: check both levels against MT5.</p>` : ''}
+      ${typedStop ? `<p class="answer-sub" style="margin:8px 0 0">Stop loss set at your ${fmt(typedStop, digits)} stop distance, not the ${src.kind === 'shot' ? "analysis's" : "read's"} ${fmt(src.stopDistance, digits)}. Clear the box to use the ${src.kind === 'shot' ? "analysis's" : "read's"}.</p>` : ''}
       ${r.ok ? `<div class="row" style="margin-top:10px"><dt>Risking</dt><dd>${esc(ccy)} ${fmt(r.cfd.actualRisk, 2)} · ${pct}%${usingShadow ? ' of your shadow balance' : ''}</dd></div>` : ''}
       ${posture && posture.state === 'binding'
         ? `<div class="unconfirmed simple-only" style="color:var(--danger);background:var(--danger-dim)"><b>${esc(posture.headline)}.</b> This position takes most of the account in margin. <button class="linkish" data-view="full">See why</button></div>`
@@ -967,7 +1202,7 @@ function renderRisk() {
       })()}
       <p class="detail" style="font-size:12.5px;color:var(--label-2);margin:12px 0 0">
         Stop and target are <b>absolute price levels</b>, which is what the mobile ticket expects —
-        not distances. Market price was ${fmt(a.price, digits)} when this was computed;
+        not distances. Market price was ${fmt(src.entry, digits)} when this was computed;
         if it has moved, the levels still hold but the risk no longer matches.</p>
       ${(() => {
         const n = inst().chartIsBid ? bidChartNote(tk.side, spread || inst().typicalSpread?.observed || 0, digits) : null;
@@ -1097,8 +1332,8 @@ function renderRisk() {
   }
   // Break-even must use the ALL-IN cost, not the raw spread, or a raw account
   // looks cheaper to trade than it is.
-  const be = stop > 0 && a && a.ok && a.targets && a.targets.length
-    ? breakEvenWinRate(Math.abs(a.targets[0].price - a.price), stop, allIn || spread) : null;
+  const be = stop > 0 && src && src.target
+    ? breakEvenWinRate(Math.abs(src.target - src.entry), stop, allIn || spread) : null;
   if (be && !be.impossible) {
     cost += `<div class="hr"></div>
       <div class="row"><dt>Gross reward:risk</dt><dd>${be.grossR}R</dd></div>
@@ -1468,6 +1703,7 @@ function analyseNow() {
   renderClock(); renderFeed();
   renderBlackout(bl, now);
   renderBrief(now);
+  renderShot();
   renderSessionCard(now);
   renderRead(a);
   renderSimpleRead(a, now);
@@ -1575,6 +1811,13 @@ function boot() {
   // One delegated handler for "show full detail", "change" and "see the
   // ticket" links, since the cards that carry them are re-rendered.
   document.addEventListener('click', (e) => {
+    const sb = e.target.closest('[data-shot]');
+    if (sb) {
+      e.preventDefault();
+      if (sb.dataset.shot === 'stop' && state.shotCtl) state.shotCtl.abort();
+      if (sb.dataset.shot === 'mode') { state.shotMode = sb.dataset.v; store.set('shotMode', state.shotMode); renderShot(true); }
+      return;
+    }
     const bb = e.target.closest('[data-brief]');
     if (bb) { e.preventDefault(); briefAction(bb.dataset.brief, bb.dataset.v); return; }
     const v = e.target.closest('[data-view]');
@@ -1583,6 +1826,26 @@ function boot() {
     if (t) { e.preventDefault(); selectTab(t.dataset.tab); }
   });
   $('view-mode').onchange = (e) => setView(e.target.value);
+
+  // The claude.ai sample capability, if this view has it. Resolves null on
+  // any copy of the page outside claude.ai, and the card says so.
+  const cl = window.claude;
+  (cl && typeof cl.use === 'function' ? cl.use('sample') : Promise.resolve(null))
+    .then(async (fn) => {
+      state.sampleFn = fn || null;
+      if (fn && typeof fn.limits === 'function') {
+        const caps = await fn.limits().catch(() => null);
+        state.sampleImages = caps && caps.images ? caps.images : null;
+      }
+    })
+    .catch(() => { state.sampleFn = null; })
+    .finally(() => { state.sampleReady = true; renderShot(true); });
+  document.addEventListener('change', (e) => {
+    if (e.target.id !== 'shot-file') return;
+    const f = e.target.files && e.target.files[0];
+    e.target.value = '';
+    runShot(f);
+  });
 
   // The brief's inputs are re-rendered, so they are handled by delegation too.
   document.addEventListener('input', (e) => {

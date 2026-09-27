@@ -217,13 +217,13 @@ input.f:focus, select.f:focus { outline: 2px solid var(--accent); outline-offset
 .field + .field, .grid2 + .field, .field + .grid2, .grid2 + .grid2 { margin-top: 12px; }
 .grid2 > .field + .field { margin-top: 0; }  /* side by side, not stacked */
 
-button.btn {
+button.btn, label.btn {
   width: 100%; min-height: 46px; border: 0; border-radius: var(--r-md);
   background: var(--accent); color: #fff;
   font-family: var(--ui); font-size: 15.5px; font-weight: 600; cursor: pointer;
 }
-button.btn.ghost { background: var(--surface-3); color: var(--label); }
-button.btn:active { opacity: .75; }
+button.btn.ghost, label.btn.ghost { background: var(--surface-3); color: var(--label); }
+button.btn:active, label.btn:active { opacity: .75; }
 
 .gate {
   border-radius: var(--r-md); padding: 13px 14px; margin-top: 12px;
@@ -351,6 +351,16 @@ button.linkish { border: 0; background: none; padding: 0; color: var(--accent); 
 .brief-steps { display: flex; gap: 8px; margin-top: 11px; }
 .brief-steps .btn { min-height: 42px; }
 
+/* ------------------------------------------------------- screenshot read */
+.vh { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; pointer-events: none; }
+label.btn { display: flex; align-items: center; justify-content: center; text-align: center; cursor: pointer; }
+.shot-modes { display: flex; gap: 6px; margin: 12px 0 0; }
+.shot-modes .chip-btn { flex: 1; }
+.shot-lv { display: flex; justify-content: space-between; align-items: baseline; padding: 9px 0; }
+.shot-lv + .shot-lv { border-top: .5px solid var(--hairline); }
+.shot-lv span { font-size: 13.5px; color: var(--label-2); }
+.shot-lv b { font-family: var(--mono); font-size: 21px; letter-spacing: -.02em; }
+
 /* ------------------------------------------------------------ how to use */
 .howto details { border-top: .5px solid var(--hairline); }
 .howto details:first-of-type { border-top: 0; }
@@ -396,6 +406,7 @@ button.linkish { border: 0; background: none; padding: 0; color: var(--accent); 
   <section id="tab-read">
     <div id="blackout-slot"></div>
     <div id="brief" hidden></div>
+    <div class="card" id="shot"></div>
     <div class="card simple-only" id="simple-read"></div>
     <div class="card detail" id="session-card"></div>
     <div class="card readout detail" id="readout"></div>

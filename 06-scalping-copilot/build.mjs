@@ -29,6 +29,7 @@ const MODULES = [
   'signal-engine.js',
   'edge-test.js',
   'brief.js',
+  'shot.js',
   'app.js',
 ];
 
