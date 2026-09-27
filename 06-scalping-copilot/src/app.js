@@ -35,6 +35,7 @@ const state = {
   briefError: null,
   lastBriefHtml: null,
   lastHowToHtml: null,
+  lastFeedRes: null,
 };
 
 /* ---- a plausible sample series so the page opens showing what it does --- */
@@ -143,7 +144,9 @@ function renderFeed() {
   const dot = $('feed-dot'), txt = $('feed-text');
   if (state.sample) {
     dot.className = 'dot stale';
-    txt.textContent = 'Sample data — not live. Connect a feed or type your own bars in Setup.';
+    txt.textContent = cspBlocked.size
+      ? 'No live prices: claude.ai blocks this page from reaching price feeds. Practice prices shown.'
+      : 'Sample data — not live. Connect a feed or type your own bars in Setup.';
   } else if (state.feed && state.feed.ok) {
     const ageMin = Math.round((Date.now() - state.bars[state.bars.length - 1].t) / 60000);
     const stale = ageMin > 12;
@@ -304,7 +307,9 @@ function renderSimpleRead(a, now) {
       <b>Not real gold.</b> These prices are ${esc(state.feed.source.instrument || state.feed.source.label)}. Never size a trade from them.</div>`;
   } else if (state.sample) {
     banner = `<div class="unconfirmed" style="margin:0 0 13px">
-      <b>Practice prices.</b> No live prices yet, so this is not a real read. Connect them in Setup.</div>`;
+      <b>Practice prices.</b> ${cspBlocked.size
+        ? 'claude.ai does not let this page reach price feeds, so this is not a real read.'
+        : 'No live prices yet, so this is not a real read. Connect them in Setup.'}</div>`;
   }
 
   // The answer, in words. Tone is the colour; the word always carries the meaning.
@@ -1489,10 +1494,44 @@ async function refresh() {
     state.feed = res; state.history = [];
     if (!state.bars.length || state.sample) { state.bars = sampleBars(state.pair); state.sample = true; }
   }
+  state.lastFeedRes = res;
+  renderFeedDetail();
+  analyseNow();
+}
+
+/*
+ * Why every feed fails, when the page itself is not allowed to ask.
+ *
+ * A page published inside claude.ai runs under that site's security policy,
+ * which can forbid connections to outside hosts. When it does, every source
+ * fails with the same unhelpful "Load failed", which reads like a broken feed.
+ * The browser does report the real reason — a securitypolicyviolation event
+ * naming the rule that blocked it — so the page listens for that and says so.
+ */
+const cspBlocked = new Set();
+function noteCspViolation(e) {
+  const rule = e.effectiveDirective || e.violatedDirective || '';
+  if (!/connect-src|default-src/.test(rule)) return;
+  let host = String(e.blockedURI || '');
+  try { host = new URL(e.blockedURI).host; } catch { /* keep the raw value */ }
+  if (host && !cspBlocked.has(host)) {
+    cspBlocked.add(host);
+    renderFeed(); renderFeedDetail(); renderSimpleRead(state.lastAnalysis, Date.now());
+  }
+}
+document.addEventListener('securitypolicyviolation', noteCspViolation);
+
+function renderFeedDetail() {
+  const res = state.lastFeedRes;
+  if (!res) return;
+  const blocked = cspBlocked.size > 0;
   $('feed-detail').innerHTML = `<div class="hr"></div><p class="card-title">Feed attempts</p>` +
     (res.attempts || []).map((x) => `<div class="row"><dt>${esc(x.label)}</dt><dd style="color:var(--${x.ok ? 'up' : 'label-3'})">${x.ok ? `${x.bars} bars` : esc(x.reason)}</dd></div>`).join('') +
-    (res.ok ? '' : `<p style="font-size:12.5px;color:var(--label-2);margin:11px 0 0">${esc(res.reason)}</p>`);
-  analyseNow();
+    (blocked
+      ? `<div class="unconfirmed" style="color:var(--danger);background:var(--danger-dim)"><b>Blocked by claude.ai, not by the feeds.</b>
+          This page is not allowed to connect to outside websites (${esc([...cspBlocked].join(', '))}), so no live prices can load while it is opened inside claude.ai.
+          The brief, news times, plan and lot size still work.</div>`
+      : res.ok ? '' : `<p style="font-size:12.5px;color:var(--label-2);margin:11px 0 0">${esc(res.reason)}</p>`);
 }
 
 /* =================================================================== wire */
