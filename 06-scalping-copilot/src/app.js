@@ -724,6 +724,7 @@ async function runShot(file) {
   const gate = currentShotGate(now);
   if (!gate.allowed) { renderShot(true); return; }
   const c = shotContext(now, gate);
+  const pair = state.pair;   // the instrument in the picture, even if the user switches mid-analysis
   const ctl = new AbortController();
   Object.assign(state, { shotCtl: ctl, shotBusy: true, shotError: null });
   const thorough = state.shotMode !== 'fast';
@@ -749,7 +750,7 @@ async function runShot(file) {
       plan = await state.sampleFn.json(fastPrompt(c), opts('default'));
     }
     const result = checkPlan(plan, readings, { spread: c.spreadNum, digits: c.digits, priceNow: c.priceNow });
-    state.shot = { pair: state.pair, atMs: Date.now(), result, readings: readings.length, mode: thorough ? 'thorough' : 'fast', caution: c.caution };
+    state.shot = { pair, atMs: Date.now(), result, readings: readings.length, mode: thorough ? 'thorough' : 'fast', caution: c.caution };
   } catch (e) {
     if (!e || e.code !== 'cancelled') state.shotError = shotErrorText(e);
   } finally {
