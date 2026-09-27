@@ -322,9 +322,6 @@ the commit messages are the durable record.
   commission on demo" question.
 - Recheck the XAUUSD session times in MT5 during **25 Oct – 1 Nov 2026** (server
   clock — see above).
-- **Reload the page on the iPhone** and report the line under Gold/Bitcoin. If it
-  says claude.ai blocks the page, decide between Netlify hosting and no live prices
-  (see Known limitations).
 - Optionally set a **shadow balance** and switch "Size from" to it (now remembered).
 - Set a **committed sample size** in "Is it working yet?" before logging trades.
 - Optional: tap **gbp / lot** on the BTCUSD margin row; it should read ≈ £125 at
@@ -365,15 +362,18 @@ the commit messages are the durable record.
   the header, the Read banner and Setup → Data ("Blocked by claude.ai, not by the
   feeds"), listing the blocked hosts. Tested locally with a `connect-src 'none'`
   meta policy (and without one, to be sure it does not blame claude.ai for an
-  ordinary network failure). Awaiting the user's reload to confirm.
+  ordinary network failure). **Confirmed by the user on reload, 27 Sep: claude.ai
+  blocks it.**
 - If claude.ai does block it, **live prices cannot work inside the artifact at all.**
   The options put to the user: host the same file on their own Netlify site (the
   Netlify connector is available; the page is static and needs no changes, but a
   Netlify URL is public to anyone who has it), or feed prices through a claude.ai
   connector via the artifact `mcp` capability (needs a market-data connector the
   user does not have; free tiers such as Alpha Vantage's 25 calls/day are too few
-  for 5-minute polling). Until then the tool is used without live prices, as the
-  how-to card's "If the dot is not green" step describes.
+  for 5-minute polling). **The user chose to keep it in claude.ai, without live
+  prices (27 Sep)** — do not re-offer Netlify unless they raise it. The tool is used
+  as the how-to card's "If the dot is not green" step describes: the brief, news,
+  plan, trade count and lot size from a typed stop; levels from the MT5 chart.
 - Only headless Chromium runs here; no WebKit build is available in the container
   (do not run `playwright install`).
 - A Home Screen icon on iOS may open as a web app with **storage separate from
