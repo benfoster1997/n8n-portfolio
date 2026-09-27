@@ -77,10 +77,10 @@ const MOMENTS = {
 };
 
 const freezeClock = (ms) => `{
-  const T = ${ms}; const R = Date;
+  window.__T = ${ms}; const R = Date;
   window.Date = class extends R {
-    constructor(...a) { if (!a.length) super(T); else super(...a); }
-    static now() { return T; }
+    constructor(...a) { if (!a.length) super(window.__T); else super(...a); }
+    static now() { return window.__T; }
   };
   Object.setPrototypeOf(window.Date, R);
   window.Date.UTC = R.UTC; window.Date.parse = R.parse;
@@ -92,16 +92,26 @@ const freezeClock = (ms) => `{
 // the real one would be useless without it.
 const mockClaude = `{
   const px = (p) => /BTCUSD/.test(p)
-    ? { now: 84400, lo: 84200, hi: 84700, sl: 84330, t1: 84520, t2: 84600 }
-    : { now: 4391.2, lo: 4380, hi: 4402, sl: 4386.5, t1: 4398, t2: 4401.5 };
+    ? { sym: 'BTCUSD', now: 84400, lo: 84200, hi: 84700, sl: 84330, t1: 84520, t2: 84600 }
+    : { sym: 'XAUUSD', now: 4391.2, lo: 4380, hi: 4402, sl: 4386.5, t1: 4398, t2: 4401.5 };
+  window.__prompts = [];
   const fn = async () => ({ text: 'ok', truncated: false, modelTierApplied: 'default' });
   fn.limits = async () => ({ maxPromptBytes: 65536, images: { maxCount: 5, maxInputBytes: 2e7, mediaTypes: ['image/png', 'image/jpeg'] } });
   fn.json = async (prompt, opts) => {
+    window.__prompts.push(prompt);
     if (!(opts && opts.images && opts.images.length)) throw { code: 'invalid_request', message: 'no image' };
+    const mode = window.__mode || 'ok';
+    if (mode === 'not_granted') throw { code: 'not_granted', message: 'declined' };
     const v = px(prompt);
-    const levels = { entry: v.now, stop_loss: v.sl, take_profit_1: v.t1, take_profit_2: v.t2, price_now: v.now, axis_low: v.lo, axis_high: v.hi };
-    if (/You are one of three/.test(prompt)) return { readable: true, instrument_seen: 'x', timeframe_seen: 'M5', view: 'buy', confidence: 0.6, reasons: ['Higher lows'], against: ['Near resistance'], ...levels };
-    return { decision: 'buy', entry_type: 'market', confidence: 'moderate', summary: 'Pullback held above support.', reasons: ['Higher lows'], against: ['Near resistance'], invalidated_if: 'A close below the stop.', ...levels };
+    const seen = { instrument_seen: v.sym, timeframe_seen: 'M5', price_now: v.now, axis_low: v.lo, axis_high: v.hi };
+    const levels = { stop_loss: v.sl, take_profit_1: v.t1, take_profit_2: v.t2 };
+    if (/You are one of three/.test(prompt)) {
+      if (mode === 'one_bad' && /Your lens is trend/.test(prompt)) throw { code: 'invalid_json', message: 'bad', text: 'nope' };
+      return { readable: true, view: 'buy', confidence: 0.6, reasons: ['Higher lows'], against: ['Near resistance'], ...seen, ...levels };
+    }
+    return { decision: 'buy', confidence: 'moderate', summary: 'Pullback held above support.', reasons: ['Higher lows'],
+      against: ['Near resistance'], invalidated_if: 'A close below the stop.', ...seen, ...levels,
+      ...(mode === 'limit' ? { entry_type: 'limit', entry: v.now - 3 } : {}) };
   };
   window.claude = { use: async (n) => (n === 'sample' ? fn : null) };
 }`;
@@ -170,10 +180,16 @@ for (const [label, ms] of Object.entries(MOMENTS)) {
   // answer, and check the ticket carries the analysis's levels.
   await p.evaluate(() => document.getElementById('nav-read').click());
   await p.waitForTimeout(150);
-  const canPick = await p.evaluate(() => !!document.getElementById('shot-file'));
+  const canPick = await p.evaluate(() => !!document.querySelector('#shot label[for="shot-file"]'));
   const shotCard = await p.evaluate(() => document.getElementById('shot').innerText);
   if (!withClaude && !/opened in claude\.ai/.test(shotCard)) leaks.push('screenshot: no "needs claude.ai" message without the capability');
   if (canPick) {
+    await p.evaluate(() => {
+      const set = (id, v) => { const e = document.getElementById(id); if (e) { e.value = v; e.dispatchEvent(new Event('input', { bubbles: true })); } };
+      const btc = document.getElementById('pair-BTCUSD').getAttribute('aria-selected') === 'true';
+      set('shot-price', btc ? '84400' : '4391.2');
+      set('shot-spread', btc ? '6' : '0.05');
+    });
     await p.setInputFiles('#shot-file', { name: 'chart.png', mimeType: 'image/png', buffer: PNG });
     await p.waitForTimeout(700);
     const shotText = await p.evaluate(() => document.getElementById('shot').innerText);
@@ -228,6 +244,59 @@ for (const [label, ms] of Object.entries(MOMENTS)) {
   console.log(`${ok ? '  ok  ' : '  FAIL'} ${label}${overflow ? '  [horizontal overflow]' : ''}`);
   for (const e of unique) console.log('         ' + e);
   await p.close();
+}
+
+// ---- the failure paths an independent review said were never exercised ----
+async function shotPage(ms, mode) {
+  const p = await browser.newPage({ viewport: { width: 440, height: 956 } });
+  const errors = []; p.on('pageerror', (e) => errors.push(e.message));
+  await p.addInitScript(freezeClock(ms));
+  await p.addInitScript(mockClaude);
+  await p.addInitScript(`window.__mode = ${JSON.stringify(mode)};`);
+  await p.goto('file://' + harness);
+  await p.waitForTimeout(900);
+  await p.evaluate(() => document.getElementById('pair-XAUUSD').click());
+  await p.waitForTimeout(300);
+  await p.evaluate(() => { const e = document.getElementById('shot-price'); e.value = '4391.2'; e.dispatchEvent(new Event('input', { bubbles: true })); });
+  await p.setInputFiles('#shot-file', { name: 'chart.png', mimeType: 'image/png', buffer: PNG });
+  await p.waitForTimeout(700);
+  return { p, errors, card: await p.evaluate(() => document.getElementById('shot').innerText) };
+}
+const PRIME = Date.UTC(2026, 6, 15, 12, 45);
+const checks = [];
+{
+  const { p, errors, card } = await shotPage(PRIME, 'one_bad');
+  const head = await p.evaluate(() => window.__prompts.find((x) => /You are the head trader/.test(x)) || '');
+  checks.push(['one analyst fails: the others keep their own lenses', /Analyst 1 \(Levels and liquidity\)/.test(head) && /2 analysts independently/.test(head)]);
+  checks.push(['one analyst fails: the card says so', /2 of 3 readings agree \(1 could not read it\)/.test(card)]);
+  checks.push(['one analyst fails: no page errors', !errors.length]);
+  await p.close();
+}
+{
+  const { p, card } = await shotPage(PRIME, 'not_granted');
+  const label = await p.evaluate(() => !!document.querySelector('label[for="shot-file"]'));
+  checks.push(['permission refused: the feature hides, with the reason', /not allowed to use Claude/.test(card) && !label]);
+  await p.close();
+}
+{
+  const { card } = await shotPage(PRIME, 'limit');
+  checks.push(['a limit-order idea is No trade', /No trade/.test(card) && /limit order/.test(card) && !/Buy idea/.test(card)]);
+}
+{
+  // NFP day: analysed at 13:13, inside the 30-minute caution but before the blackout.
+  const { p, card } = await shotPage(Date.UTC(2026, 6, 2, 12, 13), 'ok');
+  checks.push(['before the blackout: an idea is given, with the release named', /Buy idea/.test(card) && /NFP/.test(card)]);
+  await p.evaluate(() => { window.__T = Date.UTC(2026, 6, 2, 12, 16); document.getElementById('live-spread').dispatchEvent(new Event('input')); });
+  await p.waitForTimeout(300);
+  const ticket = await p.evaluate(() => document.getElementById('ticket').innerText);
+  const shotNow = await p.evaluate(() => document.getElementById('shot').innerText);
+  checks.push(['once the blackout begins: the ticket drops the levels', !/STOP LOSS/i.test(ticket) && /Stand aside/i.test(ticket)]);
+  checks.push(['once the blackout begins: the card says Stand aside', /Stand aside/.test(shotNow) && !/Buy idea/.test(shotNow)]);
+  await p.close();
+}
+for (const [name, ok] of checks) {
+  console.log(`${ok ? '  ok  ' : '  FAIL'} ${name}`);
+  if (!ok) failures++;
 }
 
 await browser.close();

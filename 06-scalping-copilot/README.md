@@ -14,8 +14,10 @@ you have stopped, and which of the two instruments is worth watching right now.
 the same standard as the rest of this repository, and to the same principle: *say when
 not to trust the output.*
 
-It never tells you to buy or sell. It describes what the chart is doing and names the
-price at which that description is wrong.
+It describes what the chart is doing and names the price at which that description is
+wrong. The one exception, added at the user's request, is the screenshot card: it gives
+buy or sell *ideas* from a picture of the MT5 chart, behind checks written in plain code
+(see below).
 
 ---
 
@@ -107,22 +109,31 @@ trading* and *after you have stopped*, because those are different kinds of fact
 
 Inside claude.ai the page cannot load live prices — claude.ai's security policy blocks
 its connections to every price feed (confirmed on the user's iPhone, 27 September 2026).
-So the Read tab asks for a **screenshot of the MT5 M5 chart** instead, and sends it to
-Claude on the user's own account through the artifact `sample` capability.
+So the Read tab asks for the **current price, typed from MT5**, and a **screenshot of the
+MT5 M5 chart**, and sends the picture to Claude on the user's own account through the
+artifact `sample` capability. At weekends and outside the window it also asks for the
+spread, which is unmeasured then.
 
 - **Thorough** (default): three analysts read the picture independently — trend and
   structure, levels and liquidity, momentum and risk — then a head trader checks their
   work against the picture and decides. **Fast**: one reader, one pass.
-- The answer is **Buy idea**, **Sell idea** or **No trade**, with an entry, a stop loss,
-  two take profits, the reward-to-risk after the spread, a confidence word, and how many
-  analysts agreed. The Size tab's ticket then carries those levels, with a lot size from
-  the user's risk settings, for 15 minutes.
+- The answer is **Buy idea**, **Sell idea** or **No trade**. An idea is always a market
+  order at the typed price, with a stop loss, take profit 1 (and a second level if the
+  chart shows one), the reward-to-risk after spread and commission, the readers' own
+  confidence, and how many readings agreed. The Size tab's ticket then carries the stop
+  loss and take profit 1, with a lot size from the user's risk settings, for 15 minutes —
+  and drops them at once if a blackout or the dead zone begins.
 - **Plain code decides what the model cannot argue with.** No analysis at all — and no
-  usage spent — in a news blackout, in the weekday dead zone, or on gold at the weekend.
-  And any plan is turned into **No trade**, with the reason shown, if fewer than two
-  analysts agree, they read the current price differently, the stop is on the wrong side
-  or inside five spreads, take profit 1 pays less than the risk after the spread, the
-  entry is far from the price, or a level is outside the visible chart.
+  usage spent — when the broker's market is shut, in a news blackout, or in the weekday
+  dead zone. Any plan becomes **No trade**, with the reason shown, if the chart shows a
+  different price from the typed one, it is the wrong instrument or not M5, the price
+  scale cannot be read, the stop is on the wrong side or inside the floor (the larger of
+  10× the all-in cost and half the minimum stop), take profit 1 pays less than the risk
+  after costs, the readers call it low confidence, it asks for a limit order, or a level is
+  off the visible chart — and, on Thorough, if fewer than two readings agree. Fast has one
+  reader, so it cannot catch a disagreement.
+- The readers are one AI reading the picture four ways. They catch each other's slips,
+  not a shared mistake; the typed price is the check that does not depend on the picture.
 
 **This reverses a founding rule of the tool** — that it never says buy or sell — at the
 user's explicit request. The ideas are framed as ideas from a picture, not signals.
@@ -132,7 +143,8 @@ says to check every level on the MT5 chart before entering. It has no track reco
 has not been tested on past trades. It sees only what is in the screenshot — no order
 book, no news content, nothing beyond the chart. Each analysis spends the user's own
 Claude usage (four requests on Thorough, one on Fast). It works only when the page is
-opened in claude.ai; any other copy of the page says so. The screenshot is never stored.
+opened in claude.ai; any other copy of the page says so. The page never saves the
+screenshot; it is sent to Claude on the user's account, like a chat attachment.
 
 ## The pre-session brief
 
@@ -273,7 +285,9 @@ with the safe areas handled.
   blocked every market-data host, so the CORS behaviour is documented intent, not observed
   fact. The design assumes failure: sources are tried in order, the UI always names which
   one answered, and manual entry needs no network.
-- **It will never tell you to buy or sell.**
+- **Its buy and sell ideas have no track record.** They come only from a screenshot the
+  user sends, are read from a picture, can be a little off, and must be checked against
+  MT5 before entering.
 
 ## Knowing whether it works
 
