@@ -40,8 +40,12 @@ container it uses the preinstalled headless_shell under `/opt/pw-browsers`.
 **Run the smoke test after any UI change.** The unit suites do not touch the DOM
 and stayed fully green twice while the page was broken.
 
-### What the tool is now (26 Sep 2026, live page version 16, commit `20cae80`+)
+### What the tool is now (27 Sep 2026, live page version 18, published with `capabilities: {sample: {}}`)
 
+- **Inside claude.ai there are no live prices** (claude.ai blocks the feeds; the user
+  chose to stay). Trade ideas come from **MT5 chart screenshots** read by Claude on the
+  user's account (decision 22). Republishing must keep the `sample` capability: omit
+  `capabilities` on a redeploy (that keeps it), never pass `{}`.
 - **Opens in the simple view** (decision 18): the Read tab gives one answer word, the
   "wrong if" price, confidence, a ticket button, a session line and the next news;
   the Size tab gives the MT5 ticket and two inputs. "Show full detail" / Setup → View
