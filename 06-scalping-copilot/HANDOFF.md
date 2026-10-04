@@ -55,7 +55,8 @@ and stayed fully green twice while the page was broken.
   de-duplicated, all fixed and under test. The one that mattered most was in `checkPlan()`,
   so the page had it too: a decision written "Buy" or "long" skipped every check and showed as
   a No trade with its direction in the summary. Now normalised, and anything unrecognised is
-  rejected. The page was rebuilt for it. **Not yet run on a real screenshot from the user.**
+  rejected. The page was rebuilt for it, smoke-tested (7/7) and **published as live version 20**.
+  **Not yet run on a real screenshot from the user.**
 - **Next step:** wait for the user's first screenshot. If Thorough says no picture was found
   on disk, check where the Claude app put it (`~/.claude/uploads/<session>/` held earlier
   uploads) and fix `latestUpload()`.
@@ -75,7 +76,7 @@ and stayed fully green twice while the page was broken.
 - **Next step: wait for the user** to try the chat route on Bitcoin and report what the
   card says. Nothing is built or pending beyond that.
 
-### What the tool is now (live page version 19, 4 Oct 2026; `capabilities: {sample: {}}` since version 18)
+### What the page is (live page version 20, 4 Oct 2026; `capabilities: {sample: {}}` since version 18)
 
 - **Inside claude.ai there are no live prices** (claude.ai blocks the feeds; the user
   chose to stay). Trade ideas come from **MT5 chart screenshots** read by Claude on the
