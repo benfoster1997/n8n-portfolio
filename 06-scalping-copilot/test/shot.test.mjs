@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 import {
   shotGate, checkPlan, analystPrompt, headPrompt, fastPrompt, contextLines,
   LENSES, median, shotIsFresh, SHOT_MAX_AGE_MS, marketOpenNow, seesInstrument, stopFloor,
+  chatPrompt, parseReply,
 } from '../src/shot.js';
 import { DEFAULT_WINDOW } from '../src/sessions.js';
 import { INSTRUMENTS } from '../src/instruments.js';
@@ -85,6 +86,26 @@ test('a major release within 30 minutes is a caution, not a block', () => {
   const now = Date.UTC(2026, 6, 2, 12, 0);
   const g = gate({ nowMs: now, nextMajor: { short: 'NFP', ts: now + 20 * 60000 } });
   assert.equal(g.state, 'caution'); assert.match(g.message, /NFP/); assert.equal(g.needsSpread, false);
+});
+test('bitcoin is analysed at any hour: its quiet hours do not stop it (user request, 4 Oct)', () => {
+  const g = gate({ pair: 'BTCUSD', band: 'dead', insideWindow: true });
+  assert.equal(g.allowed, true); assert.equal(g.state, 'ok');
+});
+test('bitcoin outside the trading window is allowed, asking only for the spread', () => {
+  const g = gate({ pair: 'BTCUSD', band: 'red', insideWindow: false });
+  assert.equal(g.allowed, true); assert.equal(g.needsSpread, true);
+});
+test('for bitcoin a release blackout is a warning, not a block', () => {
+  const g = gate({ pair: 'BTCUSD', blackout: { active: true, phase: 'before', event: { name: 'Non-Farm Payrolls' }, endsAtMs: Date.UTC(2026, 6, 2, 13, 0) } });
+  assert.equal(g.allowed, true); assert.equal(g.state, 'caution'); assert.equal(g.needsSpread, true);
+  assert.match(g.message, /Non-Farm Payrolls/); assert.match(g.message, /slip/);
+});
+test("but a closed broker market still stops bitcoin: MT5 cannot take the order", () => {
+  assert.equal(gate({ pair: 'BTCUSD', marketOpen: false }).allowed, false);
+});
+test('gold keeps its rules: blackout and dead zone still stop it', () => {
+  assert.equal(gate({ band: 'dead' }).state, 'stand-down');
+  assert.equal(gate({ blackout: { active: true, phase: 'after', event: { name: 'CPI' } } }).state, 'stand-aside');
 });
 test('inside the window in a good band, with nothing due, is simply allowed', () => {
   assert.equal(gate().state, 'ok');
@@ -225,6 +246,25 @@ test('the head trader is told how many answered, and each reading keeps its own 
 });
 test('commission is named when there is some', () => {
   assert.ok(contextLines({ ...C, commission: '0.074', cost: '0.124' }).some((l) => /commission worth about 0\.074/.test(l)));
+});
+
+console.log('\nthe chat route, for views that cannot attach a picture');
+
+test('the chat prompt carries the same context and rules, and asks for JSON only', () => {
+  const p = chatPrompt(C);
+  for (const s of ['BTCUSD', '84400', '63.30', 'market order', 'ONLY one JSON object', '"decision": "no_trade"']) assert.ok(p.includes(s), `missing "${s}"`);
+});
+test('a pasted reply is read whether bare, fenced or wrapped in a sentence', () => {
+  assert.deepEqual(parseReply('{"decision":"buy"}'), { decision: 'buy' });
+  assert.deepEqual(parseReply('Here it is:\n```json\n{"decision":"sell"}\n```'), { decision: 'sell' });
+  assert.deepEqual(parseReply('Sure. {"decision":"no_trade"} Good luck.'), { decision: 'no_trade' });
+  assert.equal(parseReply('I cannot read this chart.'), null);
+  assert.equal(parseReply(''), null);
+});
+test('a pasted plan gets every check a page analysis gets', () => {
+  const F = { ...CTX, asked: 0 };
+  assert.equal(checkPlan(parseReply(JSON.stringify(plan())), [], F).decision, 'buy');
+  assert.equal(checkPlan(parseReply(JSON.stringify(plan({ stop_loss: 4395 }))), [], F).decision, 'no_trade');
 });
 
 console.log('\nodds and ends');

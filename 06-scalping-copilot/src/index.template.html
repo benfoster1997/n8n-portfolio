@@ -206,13 +206,13 @@ canvas { display: block; width: 100%; height: 190px; border-radius: var(--r-md);
 /* ---------------------------------------------------------------- forms -- */
 
 label.f { display: block; font-size: 12.5px; color: var(--label-2); margin: 0 0 5px; }
-input.f, select.f {
+input.f, select.f, textarea.f {
   width: 100%; min-height: 44px; padding: 10px 12px;
   background: var(--surface-3); color: var(--label);
   border: 1px solid transparent; border-radius: var(--r-sm);
   font-family: var(--mono); font-size: 16px; /* 16px prevents iOS zoom-on-focus */
 }
-input.f:focus, select.f:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: transparent; }
+input.f:focus, select.f:focus, textarea.f:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: transparent; }
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; }
 .field + .field, .grid2 + .field, .field + .grid2, .grid2 + .grid2 { margin-top: 12px; }
 .grid2 > .field + .field { margin-top: 0; }  /* side by side, not stacked */

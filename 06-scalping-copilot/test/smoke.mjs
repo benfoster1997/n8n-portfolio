@@ -96,7 +96,9 @@ const mockClaude = `{
     : { sym: 'XAUUSD', now: 4391.2, lo: 4380, hi: 4402, sl: 4386.5, t1: 4398, t2: 4401.5 };
   window.__prompts = [];
   const fn = async () => ({ text: 'ok', truncated: false, modelTierApplied: 'default' });
-  fn.limits = async () => ({ maxPromptBytes: 65536, images: { maxCount: 5, maxInputBytes: 2e7, mediaTypes: ['image/png', 'image/jpeg'] } });
+  fn.limits = async () => (window.__mode === 'noimages'
+    ? { maxPromptBytes: 65536 }
+    : { maxPromptBytes: 65536, images: { maxCount: 5, maxInputBytes: 2e7, mediaTypes: ['image/png', 'image/jpeg'] } });
   fn.json = async (prompt, opts) => {
     window.__prompts.push(prompt);
     if (!(opts && opts.images && opts.images.length)) throw { code: 'invalid_request', message: 'no image' };
@@ -182,7 +184,7 @@ for (const [label, ms] of Object.entries(MOMENTS)) {
   await p.waitForTimeout(150);
   const canPick = await p.evaluate(() => !!document.querySelector('#shot label[for="shot-file"]'));
   const shotCard = await p.evaluate(() => document.getElementById('shot').innerText);
-  if (!withClaude && !/opened in claude\.ai/.test(shotCard)) leaks.push('screenshot: no "needs claude.ai" message without the capability');
+  if (!withClaude && !/Use a Claude chat instead/i.test(shotCard)) leaks.push('screenshot: no chat route offered without the capability');
   if (canPick) {
     await p.evaluate(() => {
       const set = (id, v) => { const e = document.getElementById(id); if (e) { e.value = v; e.dispatchEvent(new Event('input', { bubbles: true })); } };
@@ -292,6 +294,50 @@ const checks = [];
   const shotNow = await p.evaluate(() => document.getElementById('shot').innerText);
   checks.push(['once the blackout begins: the ticket drops the levels', !/STOP LOSS/i.test(ticket) && /Stand aside/i.test(ticket)]);
   checks.push(['once the blackout begins: the card says Stand aside', /Stand aside/.test(shotNow) && !/Buy idea/.test(shotNow)]);
+  await p.close();
+}
+{
+  // claude.ai reports no pictures for this view: the card says so and offers the chat route,
+  // which ends in the same checks and the same ticket.
+  const p = await browser.newPage({ viewport: { width: 440, height: 956 } });
+  const errors = []; p.on('pageerror', (e) => errors.push(e.message));
+  await p.addInitScript(freezeClock(Date.UTC(2026, 8, 27, 20, 30)));   // a Sunday evening: bitcoin
+  await p.addInitScript(mockClaude);
+  await p.addInitScript('window.__mode = "noimages";');
+  await p.goto('file://' + harness);
+  await p.waitForTimeout(900);
+  await p.evaluate(() => document.getElementById('pair-BTCUSD').click());
+  await p.waitForTimeout(300);
+  const card = await p.evaluate(() => document.getElementById('shot').innerText);
+  checks.push(['no pictures here: the card says why and offers a Claude chat', /send pictures to Claude on this device/.test(card) && /Use a Claude chat instead/i.test(card) && /Try sending a picture anyway/.test(card)]);
+  await p.evaluate(() => {
+    const set = (id, v) => { const e = document.getElementById(id); e.value = v; e.dispatchEvent(new Event('input', { bubbles: true })); };
+    set('shot-price', '84400'); set('shot-spread', '6');
+    document.querySelector('[data-shot="copy"]').click();
+  });
+  await p.waitForTimeout(300);
+  const afterCopy = await p.evaluate(() => ({ text: document.getElementById('shot').innerText, prompt: (document.getElementById('chat-prompt') || {}).value || '' }));
+  checks.push(['copy: the instructions are copied, or shown to copy by hand', /Copied\./.test(afterCopy.text) || /84400/.test(afterCopy.prompt)]);
+  await p.evaluate(() => {
+    const reply = 'Here is my read:\n```json\n' + JSON.stringify({ decision: 'buy', instrument_seen: 'BTCUSD', timeframe_seen: 'M5', price_now: 84400, axis_low: 84200, axis_high: 84700, stop_loss: 84330, take_profit_1: 84520, take_profit_2: null, confidence: 'moderate', summary: 'Higher low held.', reasons: ['Higher lows'], against: ['Thin weekend'], invalidated_if: 'Below 84330.' }) + '\n```';
+    const box = document.getElementById('chat-reply'); box.value = reply; box.dispatchEvent(new Event('input', { bubbles: true }));
+    document.querySelector('[data-shot="check"]').click();
+  });
+  await p.waitForTimeout(300);
+  const result = await p.evaluate(() => document.getElementById('shot').innerText);
+  checks.push(['a pasted reply is checked and shown', /Buy idea/.test(result) && /through a Claude chat/.test(result)]);
+  await p.evaluate(() => document.getElementById('nav-risk').click());
+  await p.waitForTimeout(200);
+  const ticket = await p.evaluate(() => document.getElementById('ticket').innerText);
+  checks.push(['the pasted plan reaches the ticket', /84,330\.00/.test(ticket)]);
+  await p.evaluate(() => {
+    document.getElementById('nav-read').click();
+    const box = document.getElementById('chat-reply'); box.value = 'I could not read this chart.'; box.dispatchEvent(new Event('input', { bubbles: true }));
+    document.querySelector('[data-shot="check"]').click();
+  });
+  await p.waitForTimeout(200);
+  const bad = await p.evaluate(() => document.getElementById('shot').innerText);
+  checks.push(['a reply that is not a plan is explained, not crashed on', /doesn't look like Claude's plan/.test(bad) && !errors.length]);
   await p.close();
 }
 for (const [name, ok] of checks) {

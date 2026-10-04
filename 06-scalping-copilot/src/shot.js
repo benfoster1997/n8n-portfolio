@@ -77,11 +77,16 @@ export function marketOpenNow(inst, nowMs, serverOffsetHours) {
 /**
  * Whether to analyse at all, decided before any usage is spent.
  *   closed      the broker's market is shut (weekend gold, a daily break)
- *   stand-aside a scheduled release is inside its blackout
- *   stand-down  the weekday dead zone for this instrument (decision 2)
- *   caution     allowed, with a warning: weekend, outside the window, or a
- *               major release due soon enough to catch an open trade
+ *   stand-aside a scheduled release is inside its blackout (gold)
+ *   stand-down  the weekday dead zone (gold — decision 2)
+ *   caution     allowed, with a warning: weekend, outside the window, a major
+ *               release due soon, or (bitcoin) a release blackout
  *   ok          allowed
+ *
+ * Bitcoin is analysed at any hour the broker's market is open (the user's
+ * request, 4 Oct 2026): its quiet hours and the trading window no longer
+ * stop it, and a release blackout becomes a warning rather than a block. Only
+ * a closed market still stops it, because MT5 cannot take an order then.
  */
 export function shotGate({ pair, weekend, blackout, band, insideWindow, win, marketOpen = null, bandEndsAtMs = null, nextMajor = null, nowMs = 0 }) {
   if (marketOpen === false || (pair === 'XAUUSD' && weekend)) {
@@ -92,6 +97,14 @@ export function shotGate({ pair, weekend, blackout, band, insideWindow, win, mar
         : 'Your broker\'s market is shut right now (its daily break). There is nothing to trade.',
     };
   }
+  const anyTime = pair === 'BTCUSD';
+  if (blackout && blackout.active && anyTime) {
+    const clear = blackout.endsAtMs && win ? ` The usual all-clear is ${formatHM(blackout.endsAtMs, win.tz)}.` : '';
+    return {
+      allowed: true, state: 'caution', needsSpread: true,
+      message: `${blackout.event.name} ${blackout.phase === 'before' ? 'is about to be released' : 'has just been released'}: spreads can jump and stops can slip past their level. Type the spread as it is right now.${clear}`,
+    };
+  }
   if (blackout && blackout.active) {
     const clear = blackout.endsAtMs && win ? ` Clear at ${formatHM(blackout.endsAtMs, win.tz)}.` : '';
     return {
@@ -99,7 +112,7 @@ export function shotGate({ pair, weekend, blackout, band, insideWindow, win, mar
       message: `${blackout.event.name} ${blackout.phase === 'before' ? 'is about to be released' : 'has just been released'}. Stand aside.${clear}`,
     };
   }
-  if (band === 'dead' && !weekend) {
+  if (band === 'dead' && !weekend && !anyTime) {
     const until = bandEndsAtMs && win ? ` until ${formatHM(bandEndsAtMs, win.tz)}` : '';
     return {
       allowed: false, state: 'stand-down',
@@ -218,6 +231,43 @@ export function fastPrompt(c) {
     PLAN_JSON,
     'Use null for the stop and targets when the decision is "no_trade".',
   ].join('\n');
+}
+
+/**
+ * The same job as one pass of the page's readers, written for an ordinary
+ * Claude chat, for a view where claude.ai will not let the page attach a
+ * picture. The user pastes this into a chat with the screenshot, then pastes
+ * the reply back, and checkPlan() applies the same rules to it.
+ */
+export function chatPrompt(c) {
+  return [
+    'I am attaching a screenshot of my MetaTrader 5 chart. I scalp the five-minute chart. Read it carefully, as three independent analysts would (trend and structure; levels and liquidity; momentum and risk), then decide as a head trader who checks their work against the picture.',
+    '',
+    'Context from my trading tool (reliable):',
+    ...contextLines(c).map((l) => `- ${l}`),
+    '',
+    ...READ_RULES(c).map((r) => r.replace('set "readable": false', 'the decision is "no_trade"').replace('set "readable": false', 'the decision is "no_trade"')),
+    '3. Read structure, levels and momentum.',
+    ...PLAN_RULES(c),
+    '',
+    'Reply with ONLY one JSON object, no other text, in this shape (this example is a "no_trade"):',
+    PLAN_JSON,
+    'Use null for the stop and targets when the decision is "no_trade".',
+  ].join('\n');
+}
+
+/** Read a plan pasted back from a chat: the whole text, a code fence, or the first { to the last }. */
+export function parseReply(text) {
+  if (typeof text !== 'string' || !text.trim()) return null;
+  const tries = [text.trim()];
+  const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fence) tries.push(fence[1].trim());
+  const a = text.indexOf('{'), b = text.lastIndexOf('}');
+  if (a >= 0 && b > a) tries.push(text.slice(a, b + 1));
+  for (const t of tries) {
+    try { const v = JSON.parse(t); if (v && typeof v === 'object' && !Array.isArray(v)) return v; } catch { /* next */ }
+  }
+  return null;
 }
 
 const num = (x) => (typeof x === 'number' ? x : typeof x === 'string' && x.trim() !== '' ? Number(x.replace(/,/g, '')) : NaN);

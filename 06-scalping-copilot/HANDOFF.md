@@ -40,6 +40,21 @@ container it uses the preinstalled headless_shell under `/opt/pw-browsers`.
 **Run the smoke test after any UI change.** The unit suites do not touch the DOM
 and stayed fully green twice while the page was broken.
 
+### Where we stopped (4 Oct 2026) — read this first
+
+- The user reported the screenshot card **refuses pictures on their iPhone, even in
+  Safari**: claude.ai's `sample.limits()` reports no `images` for that view (decision 23).
+- Built, committed and tested (304 unit assertions, smoke 7/7 plus all failure-path and
+  chat-route checks), but **NOT yet published**: the chat route (copy instructions → paste
+  into a Claude chat with the screenshot → paste the reply back → same checks → ticket),
+  a "try sending a picture anyway" button, the reason claude.ai gave, and **bitcoin
+  analysed at any hour** (user request; decision 23).
+- **Next step on "resume": publish** — `Artifact` publish with `url` =
+  https://claude.ai/artifact/R1FY8JSKruN8kvhu7XQ3B9 and `file_path` =
+  `06-scalping-copilot/index.html`, **omitting `capabilities`** (that keeps `sample`).
+  From a new conversation, `Artifact` `action: "read"` on the URL first. Then ask the
+  user to try the chat route on Bitcoin and report what the card says.
+
 ### What the tool is now (27 Sep 2026, live page version 18, published with `capabilities: {sample: {}}`)
 
 - **Inside claude.ai there are no live prices** (claude.ai blocks the feeds; the user
@@ -311,6 +326,24 @@ A fresh session is likely to "fix" some of these. Don't, without reading why.
     the failure paths (one analyst failing, permission refused, a limit idea,
     news starting after an analysis). The real capability cannot be exercised
     from the container; the first real run is the user's.
+
+23. **Bitcoin screenshots at any hour; a chat route when pictures are refused.**
+    4 Oct 2026, at the user's request: for BTCUSD the screenshot gate no longer
+    stops in its quiet hours or outside the window, and a release blackout is
+    a caution (spread required) rather than a block — they want to be able to
+    trade whenever they choose. A closed broker market still stops it (MT5
+    cannot take the order). **This is a deliberate partial reversal of decision
+    2 for bitcoin's screenshot path only; gold keeps its blackout and dead
+    zone.** Same day: on the user's iPhone the card said it could not send a
+    picture — `sample.limits()` reported no `images` for that view, which is
+    claude.ai's per-device decision (contract 0.2.67 is no different). The card
+    now shows what claude.ai reported, offers one "try anyway" (a real call;
+    `images_unavailable` then hides it for good), and a **chat route**:
+    `chatPrompt()` copies the same context and rules for an ordinary Claude
+    chat, the user attaches the screenshot there and pastes the reply back,
+    `parseReply()` extracts the JSON and `checkPlan()` (asked: 0, like Fast)
+    decides. Clipboard writes may be refused in the artifact frame, so the
+    prompt is also shown to copy by hand.
 
 ---
 

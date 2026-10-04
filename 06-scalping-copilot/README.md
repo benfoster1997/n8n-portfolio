@@ -124,8 +124,10 @@ spread, which is unmeasured then.
   loss and take profit 1, with a lot size from the user's risk settings, for 15 minutes —
   and drops them at once if a blackout or the dead zone begins.
 - **Plain code decides what the model cannot argue with.** No analysis at all — and no
-  usage spent — when the broker's market is shut, in a news blackout, or in the weekday
-  dead zone. Any plan becomes **No trade**, with the reason shown, if the chart shows a
+  usage spent — when the broker's market is shut, and for gold in a news blackout or the
+  weekday dead zone. **Bitcoin is analysed at any hour its market is open** (the user's
+  request, 4 October 2026): its quiet hours and the trading window no longer stop it, and a
+  release blackout is shown as a warning, with the spread required, rather than a block. Any plan becomes **No trade**, with the reason shown, if the chart shows a
   different price from the typed one, it is the wrong instrument or not M5, the price
   scale cannot be read, the stop is on the wrong side or inside the floor (the larger of
   10× the all-in cost and half the minimum stop), take profit 1 pays less than the risk
@@ -137,6 +139,14 @@ spread, which is unmeasured then.
 
 **This reverses a founding rule of the tool** — that it never says buy or sell — at the
 user's explicit request. The ideas are framed as ideas from a picture, not signals.
+
+**When claude.ai will not let the page send a picture.** Whether a page may attach an
+image is decided by claude.ai for each device, and on the user's iPhone it said no. The
+card then says so (with what claude.ai reported), offers one "try anyway", and a route
+that works anywhere: it copies a prompt with the same context and rules, the user pastes
+it into an ordinary Claude chat with the screenshot, and pastes the reply back. The page
+reads the JSON out of the reply and runs the same `checkPlan()` on it before anything
+reaches the ticket. It is one reader, like Fast.
 
 **What it does not do.** It reads a picture: a level can be off by a little, so the page
 says to check every level on the MT5 chart before entering. It has no track record and

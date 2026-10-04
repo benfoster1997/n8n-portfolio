@@ -52,6 +52,16 @@ const state = {
   shotBlocked: null,
   shotBusyPair: null,
   shotErrorPair: null,
+  // Why the page cannot send a picture itself, when it cannot, and the chat
+  // route used instead (the user pastes our instructions and the screenshot
+  // into an ordinary Claude chat, then pastes the reply back).
+  sampleDiag: '',
+  forceImages: false,
+  chatCtx: null,
+  chatPromptText: '',
+  chatCopied: false,
+  chatCopyFailed: false,
+  chatReply: '',
   lastShotHtml: null,
 };
 
@@ -637,14 +647,15 @@ function renderHowTo(now) {
     </ol>`)}
     ${step('Each trade', `${hm(t.opensAtMs)}–${hm(t.closesAtMs)}`, `<ol>
       <li>In MT5, open the <b>M5</b> chart and take a screenshot with the price scale on the right showing.</li>
-      <li>On the Read tab, type the <b>Price now</b> from MT5's Quotes tab. At weekends or outside your hours, also type the <b>Spread now</b>: the gap between the two prices there (4,400.10 and 4,400.15 is 0.05), not the 5 or 600 "points" MT5 can show. Then tap <b>Analyse a screenshot</b> and pick it.</li>
+      <li>On the Read tab, type the <b>Price now</b> from MT5's Quotes tab. At weekends, outside your hours or around news, also type the <b>Spread now</b>: the gap between the two prices there (4,400.10 and 4,400.15 is 0.05), not the 5 or 600 "points" MT5 can show. Then tap <b>Analyse a screenshot</b> and pick it.</li>
+      <li>If the card says claude.ai won't let it send pictures on your device, use <b>Use a Claude chat instead</b> on the same card: tap <b>Copy instructions</b>, paste them into a new chat in the Claude app with your screenshot, then paste Claude's whole reply back and tap <b>Check this plan</b>. The same checks run on it.</li>
       <li>Wait: <b>Thorough</b> (three analysts and a head trader) takes a few minutes; <b>Fast</b> (one reader) under a minute. Keep this page open — switching to MT5 can stop it.</li>
       <li>Read the answer:
         <ul>
           <li><b>Buy idea</b> or <b>Sell idea</b> — a market order at your price, a stop loss, and take profit 1 (sometimes a second level). Tap <b>Why?</b> for the reasons.</li>
           <li><b>No trade</b> — nothing clean, or the idea failed a check (it says which).</li>
-          <li><b>Stand aside</b> — news is due or has just landed. Be flat until the time it shows. A red dot on the News tab means a major release is less than 90 minutes away.</li>
-          <li><b>Stand down</b> — the sit-out hours from the brief (gold ${span(t.XAUUSD.sitOut)}, bitcoin ${span(t.BTCUSD.sitOut)}). <b>Closed</b> — your broker's market is shut (gold at the weekend). No screenshot is analysed then.</li>
+          <li><b>Stand aside</b> (gold) — news is due or has just landed. Be flat until the time it shows. For bitcoin you get a warning instead, and the choice is yours. A red dot on the News tab means a major release is less than 90 minutes away.</li>
+          <li><b>Stand down</b> (gold) — its sit-out hours, ${span(t.XAUUSD.sitOut)}. Bitcoin is analysed at any hour. <b>Closed</b> — your broker's market is shut (gold at the weekend; bitcoin for a few minutes a night). No screenshot is analysed then.</li>
         </ul></li>
       <li>If you decide to take it — on weekdays, only if it matches a setup in your plan — tap <b>See the MT5 ticket</b>.</li>
       <li>Check the levels against your MT5 chart, then in MT5 (Quotes → tap the symbol) enter the <b>Volume</b>, <b>Stop loss</b> and <b>Take profit</b> and tap <b>BUY</b> or <b>SELL</b> to match the ticket. If the stop and target boxes are greyed out, place the trade, then long-press it on MT5's Trade tab and choose <b>Modify Position</b>.</li>
@@ -755,7 +766,7 @@ function shotErrorText(e) {
 }
 
 async function runShot(file) {
-  if (!file || state.shotBusy || !state.sampleFn || state.shotBlocked) return;
+  if (!file || state.shotBusy || !state.sampleFn || state.shotBlocked || !(state.sampleImages || state.forceImages)) return;
   const now = Date.now();
   const gate = currentShotGate(now);
   if (!gate.allowed) { renderShot(true); return; }
@@ -822,6 +833,83 @@ async function runShot(file) {
   }
 }
 
+async function copyChatPrompt() {
+  const now = Date.now();
+  const gate = currentShotGate(now);
+  if (!gate.allowed) { renderShot(true); return; }
+  const i = inst();
+  const pair = state.pair;
+  const priceNow = Number(state.shotPrice) > 0 ? Number(state.shotPrice) : null;
+  const typedSpread = Number(state.spread[pair]) > 0 ? Number(state.spread[pair]) : null;
+  const fail = (msg) => { state.shotError = msg; state.shotErrorPair = pair; renderShot(true); };
+  if (!priceNow) return fail(`Type the price now from MT5 first (the ${i.label.toLowerCase()} price on the Quotes tab).`);
+  if (gate.needsSpread && !typedSpread) return fail('Type the spread now from MT5 first.');
+  const spreadNum = typedSpread || i.typicalSpread.observed;
+  const c = shotContext(now, gate, priceNow, spreadNum);
+  state.chatPromptText = chatPrompt(c);
+  state.chatCtx = { pair, priceNow, cost: c.costNum, digits: c.digits, lastStretch: c.lastStretch, caution: c.caution, spread: spreadNum, atMs: now };
+  state.shotError = null;
+  try {
+    await navigator.clipboard.writeText(state.chatPromptText);
+    Object.assign(state, { chatCopied: true, chatCopyFailed: false });
+  } catch {
+    // The page's frame may not be allowed the clipboard: show the text to copy by hand.
+    Object.assign(state, { chatCopied: false, chatCopyFailed: true });
+  }
+  renderShot(true);
+}
+
+function checkChatReply() {
+  const box = $('chat-reply');
+  if (box) state.chatReply = box.value;
+  const i = inst();
+  const pair = state.pair;
+  const fail = (msg) => { state.shotError = msg; state.shotErrorPair = pair; renderShot(true); };
+  const plan = parseReply(state.chatReply);
+  if (!plan) return fail("That doesn't look like Claude's plan. Copy Claude's whole reply — a block of text that starts with { — and paste it here.");
+  const cc = state.chatCtx && state.chatCtx.pair === pair ? state.chatCtx : null;
+  const priceNow = cc ? cc.priceNow : Number(state.shotPrice) > 0 ? Number(state.shotPrice) : null;
+  if (!priceNow) return fail('Type the price now first, then tap Copy instructions.');
+  const spreadNum = cc ? cc.spread : Number(state.spread[pair]) || i.typicalSpread.observed;
+  const gate = currentShotGate(Date.now());
+  if (!gate.allowed) return fail(gate.message);
+  const result = checkPlan(plan, [], {
+    priceNow, cost: cc ? cc.cost : shotCost(i, spreadNum).cost, digits: spec(i, 'digits'), pair,
+    minStopPct: i.minStopPct, asked: 0, lastStretch: windowState(Date.now(), state.window).phase === 'last-30',
+  });
+  state.shot = { pair, atMs: cc ? cc.atMs : Date.now(), result, mode: 'chat', caution: cc ? cc.caution : null, spread: spreadNum };
+  Object.assign(state, { chatReply: '', shotError: null });
+  $('stop-dist').value = '';
+  renderShot(true);
+  renderRisk();
+}
+
+function chatRouteHtml(reason) {
+  const i = inst();
+  const digits = spec(i, 'digits');
+  const gate = currentShotGate(Date.now());
+  return `<p class="answer-sub" style="margin:0">${reason}</p>
+    ${state.sampleDiag && state.sampleDiag !== 'images' ? `<p style="font-size:11.5px;color:var(--label-3);margin:4px 0 0">claude.ai reports: ${esc(state.sampleDiag)}.</p>` : ''}
+    ${state.sampleFn && !state.sampleImages && !state.forceImages && !state.shotBlocked
+      ? '<button class="btn ghost" style="margin-top:10px" data-shot="force">Try sending a picture anyway</button>' : ''}
+    <p class="card-title" style="margin-top:14px">Use a Claude chat instead</p>
+    <p class="answer-sub" style="margin:0"><b style="color:var(--label)">1.</b> Type the price now${gate.needsSpread ? ' and the spread' : ''} from MT5, then tap Copy instructions.</p>
+    <div class="grid2" style="margin-top:10px">
+      <div class="field"><label class="f" for="shot-price">Price now, from MT5</label>
+        <input class="f num" id="shot-price" type="number" inputmode="decimal" step="0.01" value="${esc(state.shotPrice)}" placeholder="needed"></div>
+      <div class="field"><label class="f" for="shot-spread">Spread now${gate.needsSpread ? '' : ' (optional)'}</label>
+        <input class="f num" id="shot-spread" type="number" inputmode="decimal" step="0.01" value="${esc(state.spread[state.pair] ?? '')}" placeholder="${gate.needsSpread ? 'needed' : `usual ${i.typicalSpread.observed.toFixed(digits)}`}"></div>
+    </div>
+    <button class="btn" style="margin-top:12px" data-shot="copy">Copy instructions</button>
+    ${state.chatCopied ? '<p class="answer-sub" style="color:var(--up)">Copied.</p>' : ''}
+    ${state.chatCopyFailed && state.chatPromptText ? `<p class="answer-sub">It could not copy automatically. Press and hold the text below, choose Select All, then Copy.</p>
+      <textarea class="f" id="chat-prompt" rows="5" readonly style="font-size:12px;margin-top:6px">${esc(state.chatPromptText)}</textarea>` : ''}
+    <p class="answer-sub"><b style="color:var(--label)">2.</b> Open the Claude app, start a new chat, paste the instructions, attach your MT5 screenshot, and send.</p>
+    <p class="answer-sub"><b style="color:var(--label)">3.</b> When Claude replies, copy its whole reply, paste it here, and tap Check this plan.</p>
+    <textarea class="f" id="chat-reply" rows="4" style="margin-top:8px" placeholder="Paste Claude's reply here">${esc(state.chatReply)}</textarea>
+    <button class="btn ghost" style="margin-top:10px" data-shot="check">Check this plan</button>`;
+}
+
 function renderShot(force = false) {
   const el = $('shot');
   if (!force && el.contains(document.activeElement)) return;
@@ -833,14 +921,14 @@ function renderShot(force = false) {
   const picker = (label, primary = true) => `<label for="shot-file" class="btn${primary ? '' : ' ghost'}" style="margin-top:12px">${label}</label>`;
   let html;
 
+  // Can the page send the picture itself? If not, it offers the chat route.
+  const direct = state.sampleFn && (state.sampleImages || state.forceImages) && !state.shotBlocked;
+  const why = state.shotBlocked ? esc(state.shotBlocked)
+    : !state.sampleFn ? 'This page cannot use Claude directly here.'
+      : "claude.ai doesn't let this page send pictures to Claude on this device.";
+
   if (!state.sampleReady) {
     html = `${title}<p class="answer-sub" style="margin:0">Checking whether this page can use Claude…</p>`;
-  } else if (!state.sampleFn) {
-    html = `${title}<p class="answer-sub" style="margin:0">Screenshot analysis works when this page is opened in claude.ai.</p>`;
-  } else if (!state.sampleImages) {
-    html = `${title}<p class="answer-sub" style="margin:0">This view cannot send pictures to Claude. Try the page in Safari.</p>`;
-  } else if (state.shotBlocked) {
-    html = `${title}<p class="answer-sub" style="margin:0">${esc(state.shotBlocked)}</p>`;
   } else if (state.shotBusy && state.shotBusyPair === state.pair) {
     html = `${title}<div class="answer" style="font-size:22px;color:var(--label-2)">${esc(state.shotStatus)}</div>
       <p class="answer-sub">${state.shotMode === 'fast' ? 'Usually under a minute.' : 'Usually a few minutes: claude.ai runs two readers at a time.'} You can use the other tabs here, but keep this page open — switching to MT5 or locking the phone can stop it.</p>
@@ -881,7 +969,7 @@ function renderShot(force = false) {
           ${r.invalidatedIf ? `<p class="answer-sub">Wrong if: ${esc(r.invalidatedIf)}</p>` : ''}
         </details>` : ''}
         ${!trade && !r.rejected && (r.reasons.length || r.against.length) ? `<details class="more"><summary>Why?</summary>${list([...r.reasons, ...r.against])}</details>` : ''}
-        <p style="font-size:12px;color:var(--label-3);margin:10px 0 0">Read from a picture of your chart by Claude, on your account, ${age < 1 ? 'just now' : `${age} min ago`}${s.mode === 'fast' ? ' (Fast)' : ''}. Levels can be a little off: check them against MT5 before you enter. It has no track record, and the decision is yours.</p>`;
+        <p style="font-size:12px;color:var(--label-3);margin:10px 0 0">Read from a picture of your chart by Claude, on your account, ${age < 1 ? 'just now' : `${age} min ago`}${s.mode === 'fast' ? ' (Fast)' : s.mode === 'chat' ? ' (through a Claude chat)' : ''}. Levels can be a little off: check them against MT5 before you enter. It has no track record, and the decision is yours.</p>`;
     }
 
     if (!gate.allowed) {
@@ -891,6 +979,14 @@ function renderShot(force = false) {
     } else {
       const mode = (id, label) => `<button class="chip-btn" data-shot="mode" data-v="${id}" aria-pressed="${state.shotMode === id}">${label}</button>`;
       const spreadVal = state.spread[state.pair] ?? '';
+      const err = state.shotError && state.shotErrorPair === state.pair ? `<div class="unconfirmed" style="color:var(--danger);background:var(--danger-dim)">${esc(state.shotError)}</div>` : '';
+      if (!direct) {
+        html = `${title}${body ? `${body}<div class="hr"></div>` : ''}${err}
+          ${gate.state === 'caution' && !body ? `<p class="answer-sub" style="color:var(--warn);margin-top:0">${esc(gate.message)}</p>` : ''}
+          ${chatRouteHtml(why)}`;
+        if (html !== state.lastShotHtml) { el.innerHTML = html; state.lastShotHtml = html; }
+        return;
+      }
       html = `${title}${body ? `${body}<div class="hr"></div>` : ''}
         ${state.shotError && state.shotErrorPair === state.pair ? `<div class="unconfirmed" style="color:var(--danger);background:var(--danger-dim)">${esc(state.shotError)}</div>` : ''}
         ${other ? `<p class="answer-sub" style="margin-top:0">Your ${esc(INSTRUMENTS[other.pair].label.toLowerCase())} analysis is ready — switch at the top to see it.</p>` : ''}
@@ -1898,6 +1994,9 @@ function boot() {
       e.preventDefault();
       if (sb.dataset.shot === 'stop' && state.shotCtl) state.shotCtl.abort();
       if (sb.dataset.shot === 'mode') { state.shotMode = sb.dataset.v; store.set('shotMode', state.shotMode); renderShot(true); }
+      if (sb.dataset.shot === 'copy') copyChatPrompt();
+      if (sb.dataset.shot === 'check') checkChatReply();
+      if (sb.dataset.shot === 'force') { state.forceImages = true; renderShot(true); }
       return;
     }
     const bb = e.target.closest('[data-brief]');
@@ -1916,15 +2015,19 @@ function boot() {
     .then(async (fn) => {
       state.sampleFn = fn || null;
       if (fn && typeof fn.limits === 'function') {
-        const caps = await fn.limits().catch(() => null);
+        const caps = await fn.limits().catch((e) => ({ failed: (e && e.code) || 'unknown' }));
         state.sampleImages = caps && caps.images ? caps.images : null;
+        state.sampleDiag = caps.failed ? `limits failed: ${caps.failed}` : caps.images ? 'images' : 'no images reported';
         if (state.sampleImages) $('shot-file').accept = state.sampleImages.mediaTypes.join(',');
+      } else {
+        state.sampleDiag = fn ? 'no limits function' : 'no sample capability';
       }
     })
     .catch(() => { state.sampleFn = null; })
     .finally(() => { state.sampleReady = true; renderShot(true); });
   document.addEventListener('input', (e) => {
     if (e.target.id === 'shot-price') state.shotPrice = e.target.value;
+    if (e.target.id === 'chat-reply') state.chatReply = e.target.value;
     if (e.target.id === 'shot-spread') {
       // One spread per instrument, shared with the Size tab's Live spread box.
       state.spread[state.pair] = e.target.value; store.set('spread', state.spread);
