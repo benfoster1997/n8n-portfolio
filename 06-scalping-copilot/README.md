@@ -19,6 +19,51 @@ wrong. The one exception, added at the user's request, is the screenshot card: i
 buy or sell *ideas* from a picture of the MT5 chart, behind checks written in plain code
 (see below).
 
+**Since 4 October 2026 it also runs inside a Claude chat** — the user sends MT5 screenshots
+to a Claude Code session from the Claude app, and the session runs the desk (`desk/`)
+instead of the page. That is now the main way it is used; see the next section.
+
+---
+
+## In a Claude chat: the desk
+
+Inside claude.ai the page cannot load prices, and on the user's iPhone claude.ai would not
+let it attach a picture either. A Claude Code session has neither problem: the Claude app
+uploads a screenshot into the session, and the session can open it. So the same tool runs
+there. The user sends a screenshot and the price (and, at weekends or outside their hours,
+the spread); the session runs `desk/desk.mjs` and sends back what it prints.
+
+- **The same rules, from the same code.** `desk/lib.mjs` imports the gate, the plan checks,
+  the sizing and the ticket from `src/` — the functions the page runs — so the chat and the
+  page cannot disagree. What the desk adds is chat wording and plumbing.
+- **Thorough** (default): three reader agents, each with one lens, open the uploaded picture
+  from disk (`~/.claude/uploads/`) and write a reading; a head-trader agent checks them
+  against the picture; `checkPlan()` decides. About a minute and a half. **Fast**: the session
+  reads the picture itself, one pass. If the picture cannot be found on disk, Thorough falls
+  back to Fast and says so.
+- **The reader never decides alone.** The gate runs before anything is read: gold's quiet
+  hours, a gold news blackout or a shut market mean no reading at all. A plan that fails a
+  check comes back as **No trade** with the reasons and without its direction or levels. The
+  gate runs again when the analysis finishes.
+- **The reply** is a Buy idea, Sell idea or No trade; for an idea, the levels, the
+  reward-to-risk after costs, and the MT5 ticket (volume, stop loss, take profit) sized from
+  the account settings in `desk/config.json`, with the order-splitting and partial-fill
+  warnings the page gives. A plain No trade gives its reasons, not the case for a trade
+  (on the page that list sits behind a tap; a chat has no tap).
+- **Also:** the brief, the week's news, "can I trade now", a lot size for a typed stop, the day's
+  plan and trade count, and the "is it working yet?" record. The rules for the session are in
+  `.claude/skills/scalp-desk/SKILL.md`.
+
+**What the desk does not do.** It reads a picture, so a level can be a little off; every idea
+says to check the levels on the MT5 chart. It has no track record. It cannot see MT5: the price
+and spread are what the user types, the trade count is what the user reports, and it never
+sees fills or P&L. The readers are one AI reading four ways — they catch each other's slips,
+not a shared mistake. Each Thorough read costs the user four agent runs of their own Claude
+usage. Today's plan, the trade count and the last spread live in the container
+(`~/.scalp-desk/`) and are lost if it is reclaimed — the session restores them from the
+conversation. A typed spread is reused for one hour, then asked for again where it is needed.
+Account settings and the trade record are in `desk/config.json`, which is committed.
+
 ---
 
 ## The problem it actually solves
@@ -257,8 +302,10 @@ reason to be flat.
 
 ```
 node build.mjs        # inline src/*.js into a single self-contained index.html
-node test/run-all.mjs # 214 assertions across 7 suites
+node test/run-all.mjs # 332 assertions across 10 suites, the desk's included
 node test/smoke.mjs   # real browser; needs playwright, see the file header
+node desk/desk.mjs now                         # the desk, as the chat session runs it
+node desk/desk.mjs gate --pair gold --price 4400
 ```
 
 `index.html` has no build dependency, no backend and no imports. Open it from anywhere,
@@ -298,6 +345,8 @@ with the safe areas handled.
 - **Its buy and sell ideas have no track record.** They come only from a screenshot the
   user sends, are read from a picture, can be a little off, and must be checked against
   MT5 before entering.
+- **In a chat, it cannot see MT5.** The desk knows only the price, spread and trades the
+  user types; it never sees an order, a fill or a balance.
 
 ## Knowing whether it works
 
@@ -540,7 +589,12 @@ src/
   app.js            UI wiring
   index.template.html
 build.mjs           inlines the above into index.html
-test/               214 assertions; run-all.mjs runs the lot
+desk/
+  lib.mjs           the same rules for a Claude chat: gate, context, replies, sizing
+  desk.mjs          the commands the chat session runs (now, brief, gate, check, size, plan…)
+  config.json       account settings and the trade record, committed
+../.claude/skills/scalp-desk/SKILL.md   how a session runs the desk
+test/               332 assertions; run-all.mjs runs the lot
                     smoke.mjs loads the page in a real browser at six
                     frozen session moments and fails on any page error
 HANDOFF.md          state, decisions and research, for picking this up cold

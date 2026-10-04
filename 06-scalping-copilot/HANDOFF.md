@@ -14,6 +14,7 @@ several decisions below look like mistakes and are not.
 | Branch | `claude/xauusd-btcusd-chart-analysis-8pvje5` — pushed, **no PR opened** (never asked for one) |
 | Live page | https://claude.ai/artifact/R1FY8JSKruN8kvhu7XQ3B9 (private to the user) |
 | Shipped file | `06-scalping-copilot/index.html`, **generated** by `node build.mjs` from `src/` — never edit it directly |
+| In the chat | `06-scalping-copilot/desk/` + `.claude/skills/scalp-desk/SKILL.md` — the session runs it when the user sends a screenshot |
 
 ### Republishing the page from a new conversation
 
@@ -29,7 +30,8 @@ refuse a plain publish and would otherwise create a *second* page. Do this:
 
 ```
 node build.mjs            # inline src/*.js into index.html; refuses on name collisions
-node test/run-all.mjs     # 248 assertions across 8 suites — unit level only
+node test/run-all.mjs     # 332 assertions across 10 suites — unit level only
+node desk/desk.mjs now    # the in-chat desk; see .claude/skills/scalp-desk/SKILL.md
 node test/smoke.mjs       # real browser, 7 frozen moments x both views, fills in the brief; fails on page errors, overflow, "undefined"/"NaN"
 ```
 
@@ -40,7 +42,21 @@ container it uses the preinstalled headless_shell under `/opt/pw-browsers`.
 **Run the smoke test after any UI change.** The unit suites do not touch the DOM
 and stayed fully green twice while the page was broken.
 
-### Where we stopped (4 Oct 2026) — read this first
+### Where we stopped (4 Oct 2026, late) — read this first
+
+- **The tool now runs inside the Claude chat** (decision 24). The user asked for it not to need
+  a browser: they send MT5 screenshots into a Claude Code session from the Claude app. The
+  session runs `desk/desk.mjs` by the rules in `.claude/skills/scalp-desk/SKILL.md`. This is
+  now the main way the tool is used. The page below still works and is left published.
+- Tested: 332 unit assertions (the desk's 28 included), and one full Thorough run with real
+  reader agents on a stand-in MT5 chart image (they read the price and axis correctly, all
+  called it "none", and the head trader and check agreed). **Not yet run on a real screenshot
+  from the user.**
+- **Next step:** wait for the user's first screenshot. If Thorough says no picture was found
+  on disk, check where the Claude app put it (`~/.claude/uploads/<session>/` held earlier
+  uploads) and fix `latestUpload()`.
+
+### Before that (4 Oct 2026)
 
 - The user reported the screenshot card **refuses pictures on their iPhone, even in
   Safari**: claude.ai's `sample.limits()` reports no `images` for that view (decision 23).
@@ -344,6 +360,30 @@ A fresh session is likely to "fix" some of these. Don't, without reading why.
     `parseReply()` extracts the JSON and `checkPlan()` (asked: 0, like Fast)
     decides. Clipboard writes may be refused in the artifact frame, so the
     prompt is also shown to copy by hand.
+
+24. **The tool runs in the chat, and the session is the reader, not the judge.**
+    4 Oct 2026, at the user's request ("work within this session so it doesn't
+    need to load on a browser"). `desk/lib.mjs` imports every rule from `src/`
+    and adds only chat wording; `desk/desk.mjs` is the commands; the skill file
+    is the protocol. Things that look like choices to undo, and are not:
+    - **The gate runs before the picture is read**, and on a stop the session
+      sends the gate's words and says nothing about the chart.
+    - **The price comes from the user's words only**, never read off the picture
+      to fill the gap: it is the one check independent of the picture.
+    - **Thorough uses separate agents** that open the upload from disk
+      (`~/.claude/uploads/<session>/`). They see only their prompt and the
+      picture, not the conversation — so the user saying "looks like it's
+      going up" cannot anchor them. Fast is the session's own read, told to
+      ignore such remarks.
+    - **A plain No trade shows its reasons but not its "against" list** — a
+      deliberate difference from the page, where that list sits behind a Why?
+      tap. Against a no-trade is the case for a trade; a chat has no tap.
+    - **A typed spread is reused for one hour**, then asked for again where it is
+      required (weekend or out-of-hours bitcoin, a bitcoin blackout).
+    - **Plan, trade count and last spread are container state** (`~/.scalp-desk/`)
+      and die with the container; the session restores the plan from the
+      conversation. Account settings and the trade record are in
+      `desk/config.json`, committed, so they survive.
 
 ---
 

@@ -1,0 +1,24 @@
+{
+  "account": {
+    "balance": 9816107.46,
+    "currency": "GBP",
+    "riskPct": 1,
+    "gbpusd": 1.35,
+    "leverage": 500,
+    "shadowBalance": null,
+    "sizeFrom": "account",
+    "commissionPerSideGBP": null
+  },
+  "broker": {
+    "serverOffset": 3,
+    "fillMode": "ioc"
+  },
+  "mode": "thorough",
+  "record": {
+    "trades": 0,
+    "wins": 0,
+    "rewardRisk": 1,
+    "perDay": 5,
+    "plannedSample": 0
+  }
+}

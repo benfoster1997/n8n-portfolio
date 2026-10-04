@@ -5,6 +5,11 @@
 A 5-minute scalping dashboard for XAUUSD and BTCUSD, built for one user who trades
 the London session on MetaTrader 5 on an iPhone.
 
+**It now runs inside this chat.** When the user sends an MT5 screenshot, or asks for the
+brief, the news, a lot size or their plan, use the `scalp-desk` skill
+(`.claude/skills/scalp-desk/SKILL.md`): it runs `06-scalping-copilot/desk/desk.mjs`, which
+applies the same gate and checks as the page. You read the picture; the desk decides.
+
 **Before touching it, read `06-scalping-copilot/HANDOFF.md` in full.** It holds the
 live page URL and how to republish it from a new conversation, the user's confirmed
 broker specification, the research behind the design, and a list of decisions that
@@ -15,7 +20,7 @@ pre-declared sample. Several of those were reversed once already, deliberately.
 ```
 cd 06-scalping-copilot
 node build.mjs          # src/*.js -> index.html (never edit index.html by hand)
-node test/run-all.mjs   # unit suites
+node test/run-all.mjs   # unit suites, the desk's included
 node test/smoke.mjs     # real browser, 7 moments x both views; run after any UI change
 ```
 
