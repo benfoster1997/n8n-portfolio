@@ -45,17 +45,17 @@ and stayed fully green twice while the page was broken.
 - The user reported the screenshot card **refuses pictures on their iPhone, even in
   Safari**: claude.ai's `sample.limits()` reports no `images` for that view (decision 23).
 - Built, committed and tested (304 unit assertions, smoke 7/7 plus all failure-path and
-  chat-route checks), but **NOT yet published**: the chat route (copy instructions → paste
-  into a Claude chat with the screenshot → paste the reply back → same checks → ticket),
-  a "try sending a picture anyway" button, the reason claude.ai gave, and **bitcoin
-  analysed at any hour** (user request; decision 23).
-- **Next step on "resume": publish** — `Artifact` publish with `url` =
-  https://claude.ai/artifact/R1FY8JSKruN8kvhu7XQ3B9 and `file_path` =
-  `06-scalping-copilot/index.html`, **omitting `capabilities`** (that keeps `sample`).
-  From a new conversation, `Artifact` `action: "read"` on the URL first. Then ask the
-  user to try the chat route on Bitcoin and report what the card says.
+  chat-route checks): the chat route (copy instructions → paste into a Claude chat with
+  the screenshot → paste the reply back → same checks → ticket), a "try sending a picture
+  anyway" button, the reason claude.ai gave, and **bitcoin analysed at any hour** (user
+  request; decision 23).
+- **Published 4 Oct 2026 as live version 19**, `sample` capability kept (capabilities
+  omitted on the redeploy). The live page before it was exactly commit e1a84a7's build,
+  so nothing saved from inside the page was lost.
+- **Next step: wait for the user** to try the chat route on Bitcoin and report what the
+  card says. Nothing is built or pending beyond that.
 
-### What the tool is now (27 Sep 2026, live page version 18, published with `capabilities: {sample: {}}`)
+### What the tool is now (live page version 19, 4 Oct 2026; `capabilities: {sample: {}}` since version 18)
 
 - **Inside claude.ai there are no live prices** (claude.ai blocks the feeds; the user
   chose to stay). Trade ideas come from **MT5 chart screenshots** read by Claude on the
