@@ -289,5 +289,27 @@ test('an analysis is used for a ticket only while fresh, on the same instrument,
   assert.equal(shotIsFresh({ ...shot, result: { decision: 'no_trade' } }, 1, 'XAUUSD'), false);
 });
 
+console.log('\nhow the decision is written');
+test('"Buy", "long", "SELL" and "short" are checked like buy and sell', () => {
+  for (const d of ['Buy', ' BUY ', 'long']) assert.equal(checkPlan(plan({ decision: d }), three(), CTX).decision, 'buy', d);
+  for (const d of ['SELL', 'short']) {
+    const r = checkPlan(plan({ decision: d, stop_loss: 4396, take_profit_1: 4384, take_profit_2: null }), three({ view: d, stop_loss: 4396, take_profit_1: 4384 }), CTX);
+    assert.equal(r.decision, 'sell', d);
+  }
+});
+test('an unrecognised decision is rejected with its summary and reasons withheld', () => {
+  for (const d of ['hold', 'wait', '', undefined, 'buy now']) {
+    const r = checkPlan(plan({ decision: d }), three(), CTX);
+    assert.equal(r.decision, 'no_trade'); assert.equal(r.rejected, true, String(d));
+    assert.equal(r.summary, ''); assert.deepEqual(r.reasons, []);
+  }
+  const ok = checkPlan(plan({ decision: 'No trade', summary: 'Mid-range.' }), [], { ...CTX, asked: 0 });
+  assert.equal(ok.rejected, undefined); assert.equal(ok.summary, 'Mid-range.');
+});
+test('analyst views written as "Buy" still count towards agreement; "Moderate" is moderate', () => {
+  const r = checkPlan(plan({ confidence: 'Moderate' }), [reading({ view: 'Buy' }), reading({ view: 'long' }), reading({ view: 'none' })], CTX);
+  assert.equal(r.decision, 'buy'); assert.equal(r.agreement.agree, 2); assert.equal(r.confidence, 'moderate');
+});
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed ? 1 : 0);

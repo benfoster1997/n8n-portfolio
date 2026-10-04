@@ -10,7 +10,7 @@
     "commissionPerSideGBP": null
   },
   "broker": {
-    "serverOffset": 3,
+    "serverOffset": "auto",
     "fillMode": "ioc"
   },
   "mode": "thorough",

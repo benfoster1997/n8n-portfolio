@@ -62,7 +62,10 @@ not a shared mistake. Each Thorough read costs the user four agent runs of their
 usage. Today's plan, the trade count and the last spread live in the container
 (`~/.scalp-desk/`) and are lost if it is reclaimed — the session restores them from the
 conversation. A typed spread is reused for one hour, then asked for again where it is needed.
-Account settings and the trade record are in `desk/config.json`, which is committed.
+Account settings and the trade record are in `desk/config.json`, which is committed. The MT5
+server clock is taken as New York + 7 (what the broker's gold break showed): UTC+3 until
+1 November, UTC+2 after; in the one week the conventions disagree, the desk asks the user to
+check the clock on their MT5 chart.
 
 ---
 
@@ -302,7 +305,7 @@ reason to be flat.
 
 ```
 node build.mjs        # inline src/*.js into a single self-contained index.html
-node test/run-all.mjs # 332 assertions across 10 suites, the desk's included
+node test/run-all.mjs # 349 assertions across 10 suites, the desk's included
 node test/smoke.mjs   # real browser; needs playwright, see the file header
 node desk/desk.mjs now                         # the desk, as the chat session runs it
 node desk/desk.mjs gate --pair gold --price 4400
@@ -594,7 +597,7 @@ desk/
   desk.mjs          the commands the chat session runs (now, brief, gate, check, size, plan…)
   config.json       account settings and the trade record, committed
 ../.claude/skills/scalp-desk/SKILL.md   how a session runs the desk
-test/               332 assertions; run-all.mjs runs the lot
+test/               349 assertions; run-all.mjs runs the lot
                     smoke.mjs loads the page in a real browser at six
                     frozen session moments and fails on any page error
 HANDOFF.md          state, decisions and research, for picking this up cold

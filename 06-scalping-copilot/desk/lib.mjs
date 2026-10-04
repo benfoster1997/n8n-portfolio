@@ -15,11 +15,17 @@
  * for a chat reply, and the session-specific plumbing: where the uploaded
  * picture is on disk, and where a run's files live.
  *
+ * Two deliberate differences from the page (HANDOFF decision 24). The ticket
+ * is sized with the spread the analysis used — typed, or the confirmed usual
+ * one — where the page uses 0 until a live spread is typed; leaving it out
+ * would undercount the cost (decision 15). And a plain No trade shows its
+ * reasons but not its "against" list, which is the case for a trade.
+ *
  * Pure apart from latestUpload(), so it is tested under node without a page.
  */
 import { readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { formatHM, formatDuration } from '../src/timezone.js';
+import { formatHM, formatDuration, tzOffsetMs } from '../src/timezone.js';
 import { INSTRUMENTS, spec, marginModel, marginPerLotFor, commissionRoundTurnQuote } from '../src/instruments.js';
 import { sizeBothModels, mt5Ticket, orderSplit, fillRisk, marginPosture } from '../src/risk.js';
 import { getUpcomingEvents, getActiveBlackout, brokerChartTime, dstMisalignment } from '../src/news-calendar.js';
@@ -36,7 +42,9 @@ export const DEFAULT_CONFIG = {
     // Null means "use the specification" (gold 2.75 GBP a lot each side, bitcoin none); 0 means zero.
     commissionPerSideGBP: null,
   },
-  broker: { serverOffset: 3, fillMode: 'ioc' },
+  // 'auto': New York + 7, which is what the broker's gold break showed (its
+  // 01:02 server reopen is 18:00 New York). UTC+3 now, UTC+2 from 1 November.
+  broker: { serverOffset: 'auto', fillMode: 'ioc' },
   window: DEFAULT_WINDOW,
   mode: 'thorough',
   record: { trades: 0, wins: 0, rewardRisk: 1, perDay: 5, plannedSample: 0 },
@@ -68,6 +76,31 @@ export function fmt(x, d = 2) {
   return Number(x).toLocaleString('en-GB', { minimumFractionDigits: d, maximumFractionDigits: d });
 }
 
+/* ----------------------------------------------------------------- clock */
+
+/**
+ * The MT5 server's UTC offset. A number in the config is used as it is;
+ * 'auto' follows New York + 7. The only week that can disagree is 25 Oct –
+ * 1 Nov 2026, when Europe has changed its clocks and New York has not: if the
+ * broker follows Europe instead, it is UTC+2 that week. clockCheckLine() asks
+ * the user to look.
+ */
+export function serverOffsetFor(nowMs, cfg) {
+  const o = cfg.broker.serverOffset;
+  if (o === 'auto' || o === null || o === undefined || o === '') {
+    return Math.round(tzOffsetMs(nowMs, 'America/New_York') / 3600e3) + 7;
+  }
+  return Number(o);
+}
+
+/** In the week the two clock conventions disagree, one line asking the user to check MT5's clock. */
+export function clockCheckLine(nowMs, cfg) {
+  const d = dstMisalignment(nowMs);
+  if (!d || !/Europe off DST/.test(d.note) || cfg.broker.serverOffset !== 'auto') return '';
+  const chart = brokerChartTime(nowMs, serverOffsetFor(nowMs, cfg));
+  return `Clocks-change week: does the clock on your MT5 chart read about **${chart.text}** right now? If it reads an hour earlier, tell me — the broker's daily breaks move by an hour.`;
+}
+
 /* ------------------------------------------------------------------ gate */
 
 /** The same gate the page's screenshot card applies (app.js currentShotGate). */
@@ -83,7 +116,7 @@ export function gateFor(pair, nowMs, cfg) {
     pair, weekend: w.phase === 'weekend',
     blackout: getActiveBlackout(nowMs, pair, {}),
     band: q.band, insideWindow: w.open, win,
-    marketOpen: marketOpenNow(inst, nowMs, cfg.broker.serverOffset),
+    marketOpen: marketOpenNow(inst, nowMs, serverOffsetFor(nowMs, cfg)),
     bandEndsAtMs: band ? band.endsAtMs : null, nextMajor, nowMs,
   });
 }
@@ -105,8 +138,7 @@ export function contextFor({ nowMs, pair, gate, priceNow, spreadNum, spreadTyped
   const digits = digitsOf(pair);
   const { comm, cost } = costFor(pair, spreadNum, cfg);
   const ps = planStatus(plan, dayKey(nowMs, cfg.window));
-  const off = cfg.broker.serverOffset;
-  const chart = off !== null && off !== '' && off !== undefined ? brokerChartTime(nowMs, Number(off)) : null;
+  const chart = brokerChartTime(nowMs, serverOffsetFor(nowMs, cfg));
   return {
     pair, digits, priceNow,
     nowText: formatHM(nowMs, 'Europe/London'),
@@ -137,8 +169,8 @@ export function forChat(text) {
     .replace('the instrument selected at the top', 'the instrument you named')
     .replace('This page builds market orders only', 'The desk builds market orders only')
     .replace('Switch to Bitcoin, or come back on Monday', 'Bitcoin is still open, or come back on Monday')
-    .replace('type today\'s spread before you analyse', 'send today\'s spread with the screenshot')
-    .replace('type the spread from MT5 before you analyse', 'send the spread from MT5 with the screenshot')
+    .replace('type today\'s spread before you analyse', 'send me today\'s spread from MT5')
+    .replace('type the spread from MT5 before you analyse', 'send me the spread from MT5')
     .replace('Type the spread as it is right now', 'Send the spread as it is right now');
 }
 
@@ -192,7 +224,7 @@ export function formatBlocked(pair, gate) {
  * stop loss on the ticket sits at the distance the volume was sized from: a
  * typed stop moves it, otherwise it is the analysis's own.
  */
-export function sizeFor({ pair, cfg, stop, entry, spreadNum = 0, side = null, stopLoss = null, target = null }) {
+export function sizeFor({ pair, cfg, stop, entry, spreadNum = 0, side = null, stopLoss = null, target = null, typedStop = false }) {
   const inst = INSTRUMENTS[pair];
   const a = cfg.account;
   const usingShadow = a.sizeFrom === 'shadow' && a.shadowBalance > 0;
@@ -208,7 +240,9 @@ export function sizeFor({ pair, cfg, stop, entry, spreadNum = 0, side = null, st
     accountCurrency: a.currency, spread: spreadNum, commissionPerLotRoundTurn: commission,
     lotStep: spec(inst, 'lotStep'), minLot: spec(inst, 'minLot'),
   });
-  const slLevel = side && stop > 0 ? (side === 'buy' ? entry - stop : entry + stop) : stopLoss;
+  // The idea's own stop loss stays exactly as checked; only a stop the user
+  // typed moves it (to the distance the volume was sized from).
+  const slLevel = side && typedStop && stop > 0 ? (side === 'buy' ? entry - stop : entry + stop) : stopLoss;
   const tk = side && slLevel ? mt5Ticket({ side, entry, invalidation: slLevel, target, lots: r.ok ? r.cfd.lots : 0, digits }) : null;
   const lots = tk ? tk.volume : r.ok ? r.cfd.lots : 0;
   const split = lots > 0 ? orderSplit(lots, spec(inst, 'maxVolume') || 0) : null;
@@ -239,8 +273,9 @@ const riskLine = (s, cfg) =>
 /** The ticket lines of a reply. */
 export function ticketLines(s, pair, cfg) {
   const { r, tk, digits } = s;
-  if (!tk || !r.ok) return [`Could not size it: ${r.ok ? 'no stop' : r.blocked.join('; ')}.`];
-  if (!(tk.volume > 0)) return [r.cfd.note || 'The stop is too wide for this balance and risk %: it comes to less than the minimum lot.'];
+  if (!r.ok) return [`Could not size it: ${r.blocked.join('; ')}.`];
+  if (!(r.cfd.lots > 0)) return [`${r.cfd.note || 'Below the minimum lot.'} The stop is too wide for this balance and risk %, so there is no ticket.`];
+  if (!tk) return ['Could not build a ticket: no stop loss.'];
   const out = [
     `**MT5 ticket — ${tk.side.toUpperCase()} ${pair}**`,
     `- Volume **${tk.volume.toFixed(2)}** lots`,
@@ -252,12 +287,12 @@ export function ticketLines(s, pair, cfg) {
 }
 
 /** A lot size for a stop distance the user typed, with no idea to attach it to. */
-export function lotsOnlyLines(s, stop, cfg) {
+export function lotsOnlyLines(s, stop, cfg, pair) {
   const { r, digits } = s;
   if (!r.ok) return [`Could not size it: ${r.blocked.join('; ')}.`];
-  if (!(r.cfd.lots > 0)) return [r.cfd.note || 'That stop comes to less than the minimum lot for this balance and risk %.'];
+  if (!(r.cfd.lots > 0)) return [`${label(pair)}: a ${fmt(stop, digits)} stop comes to less than the minimum lot for this balance and risk %.`];
   return [
-    `Volume for your ${fmt(stop, digits)} stop: **${r.cfd.lots.toFixed(2)} lots**.`,
+    `${label(pair)}: volume for your ${fmt(stop, digits)} stop is **${r.cfd.lots.toFixed(2)} lots**.`,
     riskLine(s, cfg),
     ...sizeWarnings(s),
     'Take the stop loss and take profit from your MT5 chart.',
@@ -336,6 +371,8 @@ export function formatNow(nowMs, cfg, plan) {
   if (news) out.push(news);
   const pl = planLine(plan, nowMs, win);
   if (pl) out.push(pl);
+  const clock = clockCheckLine(nowMs, cfg);
+  if (clock) out.push(clock);
   return out.join('\n\n');
 }
 
@@ -366,6 +403,8 @@ export function formatBrief(nowMs, cfg, plan, pairs = ['XAUUSD', 'BTCUSD'], rang
   }
   const dst = dstMisalignment(nowMs);
   if (dst) out.push(`⚠ ${dst.message}`);
+  const clock = clockCheckLine(nowMs, cfg);
+  if (clock) out.push(clock);
   const pl = planLine(plan, nowMs, win);
   out.push(pl || (w.phase === 'before' || w.open
     ? 'No plan yet for today. Tell me which setups you will take (trend pullback, breakout, range fade, sweep and reclaim, or your own) and the most trades you will take, and I will keep the count.'
@@ -429,14 +468,14 @@ export function formatEdge(rec, costInRisk = 0) {
 const IMAGE_RE = /\.(jpe?g|png|webp|gif)$/i;
 
 /**
- * The newest picture the Claude app uploaded into this container, if it came
- * in within `maxAgeMs`. Uploads land under ~/.claude/uploads/<session>/; a
- * reader subagent cannot see the chat, so this path is how it sees the chart.
+ * Pictures the Claude app uploaded into this container within `maxAgeMs`,
+ * newest first. Uploads land under ~/.claude/uploads/<session>/; a reader
+ * subagent cannot see the chat, so a path is how it sees the chart.
  */
-export function latestUpload(root, nowMs, maxAgeMs = 15 * 60000) {
-  let best = null;
+export function recentUploads(root, nowMs, maxAgeMs = 15 * 60000) {
+  const out = [];
   let dirs = [];
-  try { dirs = readdirSync(root); } catch { return null; }
+  try { dirs = readdirSync(root); } catch { return out; }
   for (const d of dirs) {
     let files = [];
     try { files = readdirSync(join(root, d)); } catch { continue; }
@@ -445,10 +484,14 @@ export function latestUpload(root, nowMs, maxAgeMs = 15 * 60000) {
       const p = join(root, d, f);
       let st;
       try { st = statSync(p); } catch { continue; }
-      if (!st.isFile()) continue;
-      if (!best || st.mtimeMs > best.mtimeMs) best = { path: p, mtimeMs: st.mtimeMs };
+      if (!st.isFile() || nowMs - st.mtimeMs > maxAgeMs) continue;
+      out.push({ path: p, ageMs: Math.max(0, nowMs - st.mtimeMs), mtimeMs: st.mtimeMs });
     }
   }
-  if (!best || nowMs - best.mtimeMs > maxAgeMs) return null;
-  return { path: best.path, ageMs: Math.max(0, nowMs - best.mtimeMs) };
+  return out.sort((a, b) => b.mtimeMs - a.mtimeMs);
+}
+
+/** The newest recent picture, or null. */
+export function latestUpload(root, nowMs, maxAgeMs = 15 * 60000) {
+  return recentUploads(root, nowMs, maxAgeMs)[0] || null;
 }

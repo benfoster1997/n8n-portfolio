@@ -312,15 +312,27 @@ export function checkPlan(plan, readings = [], ctx = {}) {
   if (!plan || typeof plan !== 'object' || Array.isArray(plan)) {
     return { decision: 'no_trade', problems: ['The analysis came back empty.'], reasons: [], against: [], summary: '', agreement: null };
   }
-  const decision = plan.decision === 'buy' || plan.decision === 'sell' ? plan.decision : 'no_trade';
-  const agree = good.filter((r) => r.view === decision).length;
+  // Models write "Buy", "long" or "SELL" as readily as "buy". Anything that is
+  // not plainly buy, sell or no trade is rejected, never shown: an unrecognised
+  // decision used to fall through as a plain No trade, summary and all, which
+  // put a direction on screen with none of the checks run.
+  const decided = decisionOf(plan.decision);
+  const decision = decided || 'no_trade';
+  const agree = good.filter((r) => viewOf(r.view) === (decision === 'no_trade' ? 'none' : decision)).length;
+  const conf = String(plan.confidence ?? '').trim().toLowerCase();
   const base = {
     reasons: listOf(plan.reasons), against: listOf(plan.against),
-    confidence: ['low', 'moderate', 'high'].includes(plan.confidence) ? plan.confidence : 'low',
+    confidence: ['low', 'moderate', 'high'].includes(conf) ? conf : 'low',
     summary: typeof plan.summary === 'string' ? plan.summary : '',
     invalidatedIf: typeof plan.invalidated_if === 'string' ? plan.invalidated_if : '',
     priceNow: priceNow > 0 ? round(priceNow, digits) : null,
   };
+  if (!decided) {
+    return {
+      decision: 'no_trade', rejected: true, problems: ['The analysis did not say buy, sell or no trade.'], priceNow: base.priceNow,
+      reasons: [], against: [], summary: '', invalidatedIf: '', confidence: base.confidence, agreement: agreementOf(agree),
+    };
+  }
   if (decision === 'no_trade') return { ...base, decision, problems: [], agreement: agreementOf(agree) };
 
   // From here, a buy or sell that must earn its way onto the screen.
@@ -387,6 +399,21 @@ export function checkPlan(plan, readings = [], ctx = {}) {
     takeProfit2: Number.isFinite(tp2) && tp2 > 0 ? round(tp2, digits) : null,
     stopDistance: round(stopDist, digits), netR: +netR.toFixed(2), cost,
   };
+}
+
+/** A plan's decision as written → 'buy', 'sell', 'no_trade', or null when it is none of them. */
+export function decisionOf(x) {
+  const d = String(x ?? '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+  if (d === 'buy' || d === 'long') return 'buy';
+  if (d === 'sell' || d === 'short') return 'sell';
+  if (d === 'no_trade' || d === 'none' || d === 'notrade') return 'no_trade';
+  return null;
+}
+
+/** An analyst's view as written → 'buy', 'sell', 'none', or null. */
+function viewOf(x) {
+  const d = decisionOf(x);
+  return d === 'no_trade' ? 'none' : d;
 }
 
 function listOf(x) {

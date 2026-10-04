@@ -13,7 +13,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   withDefaults, pairOf, gateFor, formatIdea, formatBlocked, forChat, cautionAfter, latestUpload,
-  sizeFor, contextFor, formatNow, formatBrief, phaseWords,
+  sizeFor, contextFor, formatNow, formatBrief, phaseWords, serverOffsetFor, clockCheckLine,
 } from '../desk/lib.mjs';
 import { checkPlan } from '../src/shot.js';
 
@@ -283,7 +283,7 @@ test('the plan: set, count, and refuse without a max', () => {
 });
 test('size: a typed stop on a fresh idea moves the ticket stop; with no idea, lots only', () => {
   const d = deskEnv('2026-10-05T13:00:00Z', { config: { account: { shadowBalance: 10000, sizeFrom: 'shadow' } } });
-  assert.match(d.run(['size', '--stop', '5', '--pair', 'gold']), /Volume for your 5\.00 stop: \*\*0\.26 lots\*\*/);
+  assert.match(d.run(['size', '--stop', '5', '--pair', 'gold']), /Gold: volume for your 5\.00 stop is \*\*0\.26 lots\*\*/);
   const id = runId(d.run(['gate', '--pair', 'gold', '--price', '4400', '--mode', 'fast']));
   writeFileSync(join(d.home, 'runs', id, 'plan.json'), JSON.stringify(goodPlan));
   d.run(['check', '--run', id]);
@@ -299,6 +299,112 @@ test('config: changes are written and shown; unknown keys are refused', () => {
 test('edge: no verdict before the committed sample', () => {
   const d = deskEnv('2026-10-05T13:00:00Z');
   assert.match(d.run(['edge', '--trades', '40', '--wins', '26', '--planned', '200']), /Collecting — 20% of the way/);
+});
+
+console.log('\nwhat the review found (4 Oct 2026)');
+const sh = (d, args, at) => { try { return d.run(args, at); } catch (e) { return `EXIT ${e.status}\n${e.stdout}`; } };
+test('the broker clock follows New York + 7: UTC+3 now, UTC+2 from 1 November, and asks in the week they disagree', () => {
+  assert.equal(serverOffsetFor(T('2026-10-04T21:00:00Z'), cfg), 3);
+  assert.equal(serverOffsetFor(T('2026-11-03T10:00:00Z'), cfg), 2);
+  assert.equal(serverOffsetFor(T('2026-11-03T10:00:00Z'), withDefaults({ broker: { serverOffset: 3 } })), 3);
+  assert.match(clockCheckLine(T('2026-10-27T10:00:00Z'), cfg), /MT5 chart read about \*\*13:00\*\*/);
+  assert.equal(clockCheckLine(T('2026-10-20T10:00:00Z'), cfg), '');
+  // Gold reopens at 01:02 server = 23:02 UTC in November; at 22:30 UTC it is still in its break.
+  assert.equal(gateFor('XAUUSD', T('2026-11-03T22:30:00Z'), cfg).state, 'closed');
+  assert.equal(gateFor('XAUUSD', T('2026-11-03T23:10:00Z'), cfg).allowed, true);
+});
+test('a check more than 15 minutes after the gate keeps the levels and the warning but gives no ticket', () => {
+  const d = deskEnv('2026-10-05T13:00:00Z');
+  const id = runId(d.run(['gate', '--pair', 'gold', '--price', '4400', '--mode', 'fast']));
+  writeFileSync(join(d.home, 'runs', id, 'plan.json'), JSON.stringify(goodPlan));
+  const r = replyOf(d.run(['check', '--run', id], '2026-10-05T13:20:00Z'));
+  assert.match(r, /over 15 minutes old/);
+  assert.doesNotMatch(r, /MT5 ticket|Volume/);
+});
+test('a discarded run stays discarded when checked again after the blackout ends', () => {
+  const d = deskEnv('2026-10-02T12:00:00Z');
+  const id = runId(d.run(['gate', '--pair', 'gold', '--price', '4400', '--mode', 'fast']));
+  writeFileSync(join(d.home, 'runs', id, 'plan.json'), JSON.stringify(goodPlan));
+  assert.match(d.run(['check', '--run', id], '2026-10-02T12:20:00Z'), /STATUS: discarded/);
+  const again = d.run(['check', '--run', id], '2026-10-02T13:30:00Z');
+  assert.match(again, /STATUS: discarded/);
+  assert.doesNotMatch(again, /MT5 ticket/);
+});
+test('size during a gold blackout leads with the stand-aside; it names the instrument; it will not guess one', () => {
+  const d = deskEnv('2026-10-02T12:35:00Z');
+  const r = d.run(['size', '--stop', '8', '--pair', 'gold']);
+  assert.match(r, /■ Stand aside · Gold[\s\S]*Non-Farm Payrolls[\s\S]*Gold: volume for your 8\.00 stop/);
+  assert.match(sh(d, ['size', '--stop', '8']), /EXIT 2[\s\S]*Which instrument/);
+});
+test('size uses a spread the user typed, so a wide one sizes smaller', () => {
+  const d = deskEnv('2026-10-04T21:20:00Z');
+  const usual = d.run(['size', '--stop', '300', '--pair', 'btc']).match(/\*\*([\d,.]+) lots\*\*/)[1];
+  const wide = d.run(['size', '--stop', '300', '--pair', 'btc', '--spread', '60']).match(/\*\*([\d,.]+) lots\*\*/)[1];
+  assert.ok(Number(wide.replace(/,/g, '')) < Number(usual.replace(/,/g, '')), `${wide} < ${usual}`);
+});
+test('the gate runs before the price is asked for; a missing price and spread are asked for together', () => {
+  const d = deskEnv('2026-10-04T21:20:00Z');
+  assert.match(d.run(['gate', '--pair', 'gold']), /STATUS: blocked/);
+  const r = d.run(['gate', '--pair', 'btc']);
+  assert.match(r, /STATUS: need-price/);
+  assert.match(r, /price now in MT5[\s\S]*And the spread/);
+});
+test('the spread example matches the instrument', () => {
+  const d = deskEnv('2026-10-05T17:30:00Z');   // Monday 18:30 London: outside the window
+  assert.match(d.run(['gate', '--pair', 'btc', '--price', '84400']), /84,400\.00 and 84,406\.00 is 6\.00/);
+});
+test('two pictures sent together: the session is asked which is the chart; --image picks one', () => {
+  const d = deskEnv('2026-10-05T13:00:00Z');
+  const a = d.upload();
+  const b = join(dirname(a), 'second-image.jpg');
+  writeFileSync(b, 'jpg');
+  const t = new Date(Date.parse('2026-10-05T13:00:00Z') - 10e3);
+  utimesSync(b, t, t);
+  const out = d.run(['gate', '--pair', 'gold', '--price', '4400']);
+  assert.match(out, /STATUS: need-image/);
+  assert.ok(out.includes(a) && out.includes(b));
+  assert.doesNotMatch(out, /--- reply ---/);
+  const go = d.run(['gate', '--pair', 'gold', '--price', '4400', '--image', b]);
+  assert.match(go, /STATUS: go · thorough/);
+  assert.ok(go.includes(`open the image ${b}`));
+});
+test('an unreadable plan gives the session a note and the user nothing technical', () => {
+  const d = deskEnv('2026-10-05T13:00:00Z');
+  const id = runId(d.run(['gate', '--pair', 'gold', '--price', '4400', '--mode', 'fast']));
+  const out = d.run(['check', '--run', id]);
+  assert.match(out, /STATUS: error/);
+  assert.doesNotMatch(out, /--- reply ---/);
+});
+test('config refuses nonsense and leaves the file alone; a corrupt file stops the desk instead of being overwritten', () => {
+  const d = deskEnv('2026-10-05T13:00:00Z');
+  for (const bad of ['leverage', 'leverage=7', 'risk=50', 'balance=abc', 'serveroffset=', 'sizefrom=demo']) {
+    assert.match(sh(d, ['config', bad]), /EXIT 2/, bad);
+  }
+  const cfgPath = join(d.home, 'config.json');
+  assert.equal(readFileSync(cfgPath, 'utf8'), '{}');
+  writeFileSync(cfgPath, '{"account": {"balance": 10');
+  assert.match(sh(d, ['config', 'risk=0.5']), /EXIT 1[\s\S]*not valid JSON/);
+  assert.equal(readFileSync(cfgPath, 'utf8'), '{"account": {"balance": 10');
+});
+test('--key=value works like --key value', () => {
+  const d = deskEnv('2026-10-04T21:20:00Z');
+  assert.match(d.run(['gate', '--pair=btc', '--price=84400', '--spread=12', '--mode=fast']), /STATUS: go · fast/);
+});
+test('edge refuses an impossible record and saves nothing', () => {
+  const d = deskEnv('2026-10-05T13:00:00Z');
+  assert.match(d.run(['edge', '--trades', '10', '--wins', '12']), /STATUS: need-input[\s\S]*Winners cannot be more than trades/);
+  assert.equal(readFileSync(join(d.home, 'config.json'), 'utf8'), '{}');
+  assert.match(sh(d, ['edge', '--pair', 'eurusd']), /EXIT 2/);
+});
+test('a plan can be set with the count so far, so a lost count is restored', () => {
+  const d = deskEnv('2026-10-05T10:00:00Z');
+  assert.match(d.run(['plan', 'set', '--setups', 'Breakout', '--max', '4', '--taken', '2']), /2 of 4 trades/);
+});
+test('a brief with an overnight range and no instrument named keeps both instruments', () => {
+  const d = deskEnv('2026-10-05T06:30:00Z');
+  const r = d.run(['brief', '--high', '84700', '--low', '83900', '--now', '84650']);
+  assert.match(r, /\*\*Gold\*\*/);
+  assert.match(r, /\*\*Bitcoin\*\*[\s\S]*Overnight 83,900\.00–84,700\.00: price is near the overnight high/);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

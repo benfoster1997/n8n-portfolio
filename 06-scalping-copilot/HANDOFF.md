@@ -30,7 +30,7 @@ refuse a plain publish and would otherwise create a *second* page. Do this:
 
 ```
 node build.mjs            # inline src/*.js into index.html; refuses on name collisions
-node test/run-all.mjs     # 332 assertions across 10 suites — unit level only
+node test/run-all.mjs     # 349 assertions across 10 suites — unit level only
 node desk/desk.mjs now    # the in-chat desk; see .claude/skills/scalp-desk/SKILL.md
 node test/smoke.mjs       # real browser, 7 frozen moments x both views, fills in the brief; fails on page errors, overflow, "undefined"/"NaN"
 ```
@@ -48,10 +48,14 @@ and stayed fully green twice while the page was broken.
   a browser: they send MT5 screenshots into a Claude Code session from the Claude app. The
   session runs `desk/desk.mjs` by the rules in `.claude/skills/scalp-desk/SKILL.md`. This is
   now the main way the tool is used. The page below still works and is left published.
-- Tested: 332 unit assertions (the desk's 28 included), and one full Thorough run with real
+- Tested: 349 unit assertions (the desk's 42 included), and one full Thorough run with real
   reader agents on a stand-in MT5 chart image (they read the price and axis correctly, all
-  called it "none", and the head trader and check agreed). **Not yet run on a real screenshot
-  from the user.**
+  called it "none", and the head trader and check agreed, in about 1½ minutes). An independent
+  review (4 lenses, each finding put to a skeptic) confirmed 30 findings, about a dozen once
+  de-duplicated, all fixed and under test. The one that mattered most was in `checkPlan()`,
+  so the page had it too: a decision written "Buy" or "long" skipped every check and showed as
+  a No trade with its direction in the summary. Now normalised, and anything unrecognised is
+  rejected. The page was rebuilt for it. **Not yet run on a real screenshot from the user.**
 - **Next step:** wait for the user's first screenshot. If Thorough says no picture was found
   on disk, check where the Claude app put it (`~/.claude/uploads/<session>/` held earlier
   uploads) and fix `latestUpload()`.
@@ -384,6 +388,17 @@ A fresh session is likely to "fix" some of these. Don't, without reading why.
       and die with the container; the session restores the plan from the
       conversation. Account settings and the trade record are in
       `desk/config.json`, committed, so they survive.
+    - **The ticket is sized with the spread the analysis used** (typed, or the
+      confirmed usual one); the page sizes with 0 until a live spread is typed.
+      Leaving it out undercounts the cost (decision 15), so the desk keeps it.
+    - **No ticket on an idea over 15 minutes old, and none in a gate stop.** The
+      levels and the warning stay; `size` leads with the gate's words.
+    - **The server clock is `auto`: New York + 7**, from the gold-break evidence
+      above — UTC+3 to 1 Nov, UTC+2 after. In 25 Oct – 1 Nov the desk asks the
+      user what their MT5 clock reads; a number in `desk/config.json` overrides.
+      The page still has its own fixed setting (Setup → MT5 server clock).
+    - **Pictures sent together are not guessed at**: the gate stops with
+      `need-image` and the session names each chart by path.
 
 ---
 
