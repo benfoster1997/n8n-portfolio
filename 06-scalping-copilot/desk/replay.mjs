@@ -5,7 +5,8 @@
  * Why this exists. The engine had never been tested against outcomes. Before
  * the user relies on live alerts, this replays a stretch of history through
  * exactly what the watcher does (desk/live.mjs liveRead: gate, engine,
- * checkPlan, the alert cooldown) at every bar close inside the trading
+ * checkPlan; shouldAlert: no new alert while the last one on the instrument
+ * is still running, and the cooldown) at every bar close inside the trading
  * window, and follows each alert forward on the same bars:
  *   - a buy fills at the ask (bid + spread); its stop and target trigger on
  *     the bid. A sell fills at the bid; its stop and target trigger on the ask.
@@ -27,7 +28,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { spawnSync } from 'node:child_process';
-import { liveRead, shouldAlert, COOLDOWN_BARS } from './live.mjs';
+import { liveRead, shouldAlert, alertState, COOLDOWN_BARS } from './live.mjs';
 import { withDefaults, pairOf, costFor } from './lib.mjs';
 import { windowState } from '../src/sessions.js';
 import { tfInfo } from '../src/timeframes.js';
@@ -118,11 +119,12 @@ for (const rule of rules) {
     const w = windowState(closeMs, cfg.window);
     if (!w.open || w.phase === 'weekend') continue;
     polls++;
-    const r = liveRead({ pair, bars: bars.slice(Math.max(0, k - 999), k + 1), nowMs: closeMs + 20000, cfg, targetRule: rule });
+    const seen = bars.slice(Math.max(0, k - 999), k + 1);
+    const r = liveRead({ pair, bars: seen, nowMs: closeMs + 20000, cfg, targetRule: rule });
     kinds[r.kind] = (kinds[r.kind] || 0) + 1;
-    if (r.kind !== 'idea' || !shouldAlert(state, r)) continue;
-    state.lastAlert[pair] = { side: r.result.decision, barCloseMs: r.barCloseMs };
+    if (r.kind !== 'idea' || !shouldAlert(state, r, seen, cfg)) continue;
     const res = r.result;
+    state.lastAlert[pair] = alertState({ side: res.decision, barCloseMs: r.barCloseMs, refPrice: res.entry, stopDist: res.stopDistance, tp1Dist: Math.abs(res.takeProfit1 - res.entry) });
     const rec = { side: res.decision, stopDist: res.stopDistance, tp1Dist: Math.abs(res.takeProfit1 - res.entry), barCloseMs: r.barCloseMs };
     const o = outcome(bars, k, rec, spread, comm);
     if (o) trades.push({ at: new Date(closeMs).toISOString().slice(0, 16), side: rec.side, conf: res.confidence, netR: res.netR, ...o });
@@ -137,6 +139,12 @@ for (const rule of rules) {
   if (n) {
     console.log(`   outcome: ${JSON.stringify(by((t) => t.how))} · sides ${JSON.stringify(by((t) => t.side))}`);
     console.log(`   average ${mean >= 0 ? '+' : ''}${mean.toFixed(3)}R a trade, 95% range ${(mean - 1.96 * sd / Math.sqrt(n)).toFixed(3)} to ${(mean + 1.96 * sd / Math.sqrt(n)).toFixed(3)} · total ${trades.reduce((s, t) => s + t.r, 0).toFixed(1)}R`);
+    // Trades on the same day share the same market, so they are not independent:
+    // the range is also given with the uncertainty clustered by day.
+    const days = new Map();
+    for (const t of trades) { const d = t.at.slice(0, 10); days.set(d, (days.get(d) || 0) + (t.r - mean)); }
+    const seDay = Math.sqrt([...days.values()].reduce((s2, x) => s2 + x * x, 0)) / n;
+    console.log(`   clustered by day: 95% range ${(mean - 1.96 * seDay).toFixed(3)} to ${(mean + 1.96 * seDay).toFixed(3)} · spread of results ${sd.toFixed(2)}R · trades for the range to clear zero at this average: about ${mean > 0 ? Math.round((1.96 * seDay * Math.sqrt(n) / mean) ** 2) : '—'}`);
     // The same average in each half of the stretch: a real effect should not live in one half only.
     const half = Math.floor(n / 2);
     const avg = (xs) => (xs.length ? xs.reduce((s, t) => s + t.r, 0) / xs.length : 0);

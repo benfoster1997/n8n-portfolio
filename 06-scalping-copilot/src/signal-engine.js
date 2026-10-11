@@ -369,6 +369,18 @@ function higherTimeframeBias(bars, tf) {
   return out;
 }
 
+/**
+ * Relative volume needs earlier days of the same slot. The watcher's M15
+ * window of 300 bars holds about three days — too few once weekdays are
+ * compared only with weekdays — so when a longer history ending on the same
+ * bar is given (`htfBars`), the baseline comes from that. The page's M5 engine
+ * gets no longer history and abstains, as decision 19 intends.
+ */
+function relVolFor(bars, htfBars) {
+  const long = htfBars && htfBars.length > bars.length && htfBars[htfBars.length - 1].t === bars[bars.length - 1].t;
+  return long ? relativeVolume(htfBars, 5).slice(-bars.length) : relativeVolume(bars, 5);
+}
+
 /* ------------------------------------------------------------- the read */
 
 /**
@@ -423,7 +435,7 @@ export function analyse({
     bb: bollingerBands(cs, 20, 2), adx: adx(bars, 14),
     supertrend: supertrend(bars, 10, 3), stoch: stochastic(bars, 14, 3, 3),
     vwap: sessionVwap(bars, inst.vwapReset ?? 0, [1, 2]),
-    relVol: relativeVolume(bars, 5),
+    relVol: relVolFor(bars, htfBars),
     structure: marketStructure(bars, 3),
     pivots: swingPivots(bars, 3),
   };

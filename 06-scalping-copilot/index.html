@@ -1637,10 +1637,16 @@ function detectLiquiditySweep(bars, opts = {}) {
 }
 
 /**
- * Relative volume: this bar against the mean of the SAME five-minute slot on
+ * Relative volume: this bar against the mean of the SAME time-of-day slot on
  * previous days. Comparing against a flat rolling average instead would flag
  * every London open as unusual, which is useless — the London open is
  * supposed to be busy.
+ *
+ * Like with like: weekdays are compared with weekdays and weekend days with
+ * weekend days. Bitcoin trades all week, and its weekend volume is about a
+ * third of a weekday's, so a Monday measured against Saturday and Sunday read
+ * "1.8x normal" on an ordinary morning (found in review, 11 Oct 2026). Gold
+ * has no weekend bars, so nothing changes for it.
  */
 function relativeVolume(bars, daysBack = 5) {
   const n = bars.length;
@@ -1648,7 +1654,8 @@ function relativeVolume(bars, daysBack = 5) {
   const bySlot = new Map();
   for (let i = 0; i < n; i++) {
     const d = new Date(bars[i].t);
-    const slot = d.getUTCHours() * 60 + d.getUTCMinutes();
+    const weekend = d.getUTCDay() === 0 || d.getUTCDay() === 6;
+    const slot = (weekend ? 'e' : 'd') + (d.getUTCHours() * 60 + d.getUTCMinutes());
     if (!bySlot.has(slot)) bySlot.set(slot, []);
     bySlot.get(slot).push({ i, v: bars[i].v || 0 });
   }
@@ -3648,7 +3655,7 @@ const XAU_SOURCES = [
  * Try each source in order. Returns the bars plus a full account of what was
  * attempted, so the UI can name the source and show what failed.
  */
-async function loadBars(pair, { keys = {}, limit = 300, preferred = null, allowProxy = false, minutes = 5 } = {}) {
+async function loadBars(pair, { keys = {}, limit = 300, preferred = null, allowProxy = false, minutes = 5, minBars = 1 } = {}) {
   const all = pair === 'BTCUSD' ? BTC_SOURCES : XAU_SOURCES;
   let sources = allowProxy ? all : all.filter((s) => !s.proxy);
   if (preferred) {
@@ -3665,6 +3672,9 @@ async function loadBars(pair, { keys = {}, limit = 300, preferred = null, allowP
     try {
       const bars = await src.fetch(limit, keys[src.id], minutes);
       if (!bars.length) throw new Error('returned no usable bars');
+      // A source capped at 300 bars cannot feed a four-hour trend (the watcher
+      // asks for enough), so it is passed over rather than quietly read short.
+      if (bars.length < minBars) throw new Error(`returned only ${bars.length} bars; ${minBars} needed`);
       attempts.push({ id: src.id, label: src.label, ok: true, bars: bars.length });
       return {
         ok: true, bars, source: src, attempts,
@@ -4108,6 +4118,18 @@ function higherTimeframeBias(bars, tf) {
   return out;
 }
 
+/**
+ * Relative volume needs earlier days of the same slot. The watcher's M15
+ * window of 300 bars holds about three days — too few once weekdays are
+ * compared only with weekdays — so when a longer history ending on the same
+ * bar is given (`htfBars`), the baseline comes from that. The page's M5 engine
+ * gets no longer history and abstains, as decision 19 intends.
+ */
+function relVolFor(bars, htfBars) {
+  const long = htfBars && htfBars.length > bars.length && htfBars[htfBars.length - 1].t === bars[bars.length - 1].t;
+  return long ? relativeVolume(htfBars, 5).slice(-bars.length) : relativeVolume(bars, 5);
+}
+
 /* ------------------------------------------------------------- the read */
 
 /**
@@ -4162,7 +4184,7 @@ function analyse({
     bb: bollingerBands(cs, 20, 2), adx: adx(bars, 14),
     supertrend: supertrend(bars, 10, 3), stoch: stochastic(bars, 14, 3, 3),
     vwap: sessionVwap(bars, inst.vwapReset ?? 0, [1, 2]),
-    relVol: relativeVolume(bars, 5),
+    relVol: relVolFor(bars, htfBars),
     structure: marketStructure(bars, 3),
     pivots: swingPivots(bars, 3),
   };

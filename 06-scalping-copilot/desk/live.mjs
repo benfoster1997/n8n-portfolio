@@ -41,6 +41,13 @@ import {
 export const ENGINE_BARS = 300;
 export const FETCH_BARS = 1000;
 
+/**
+ * Bars a feed must give for the read the replay measured: 30 closed bars of
+ * the higher of the two bias timeframes (H4 on M15 = 480), and some to spare.
+ * Coinbase and OKX stop at 300, so they are passed over for one that does not.
+ */
+export const minHistory = (tf) => Math.ceil((30 * tfInfo(tf).htf[1].minutes) / tfInfo(tf).minutes) + 20;
+
 /** No second alert for the same instrument and side within this many bars. */
 export const COOLDOWN_BARS = 4;
 
@@ -62,12 +69,13 @@ const CONF = { firm: 'high', moderate: 'moderate', low: 'low' };
  * A level closer than that is never skipped: it is where the move may stop.
  *
  * '1.5R' is the user's choice (11 Oct 2026), after desk/replay.mjs over
- * bitcoin's 2026 (1 Jan – 11 Oct, London window, $6 spread): 'level' 57
- * alerts, +0.10R a trade (95% range −0.33 to +0.53); '1.5R' 175 alerts,
- * +0.08R (−0.09 to +0.24); '2R' the same 175, +0.10R (−0.07 to +0.27). No
- * rule showed an edge; 1.5R was chosen for alerts about once a trading day
- * (a demo record that grows faster) and reaching its target more often than
- * 2R. It is not evidence that the alerts make money.
+ * bitcoin's 2026 (1 Jan – 11 Oct, London window, $6 spread). With this
+ * file's alert rules as they now are: 'level' 50 alerts, +0.04R a trade
+ * (95% range, clustered by day, −0.35 to +0.43); '1.5R' 120 alerts, +0.03R
+ * (−0.17 to +0.23); '2R' 117, +0.04R (−0.17 to +0.25). Roughly break-even
+ * after the spread: no rule shows an edge. 1.5R gives about three alerts a
+ * week for a demo record and reaches its target more often than 2R. It is
+ * not evidence that the alerts make money.
  */
 export const TARGET_RULE = '1.5R';
 export function clearPathTarget(a, rule = TARGET_RULE) {
@@ -134,7 +142,7 @@ export function liveRead({ pair, bars, nowMs, cfg, plan = null, source = null, t
   const inst = INSTRUMENTS[pair];
   const closed = closedBars(bars || [], tf.minutes, nowMs);
   const base = { pair, tf: tf.id, nowMs, source };
-  if (closed.length < MIN_BARS) return { ...base, kind: 'no-data', reason: `only ${closed.length} closed ${tf.id} bars from the feed` };
+  if (closed.length < Math.max(MIN_BARS, minHistory(tf.id) - 1)) return { ...base, kind: 'no-data', reason: `only ${closed.length} closed ${tf.id} bars from the feed, too few for the ${tf.htf[1].id} trend` };
   const last = closed[closed.length - 1];
   const lastCloseMs = last.t + tf.minutes * 60000;
   if (nowMs - lastCloseMs > 2 * tf.minutes * 60000) {
@@ -164,22 +172,56 @@ export function liveRead({ pair, bars, nowMs, cfg, plan = null, source = null, t
   if (a.state !== 'read' || (a.bias !== 'long' && a.bias !== 'short')) return { ...out, kind: 'none' };
 
   const p = toPlan(a, pair, window, tf.id, targetRule);
+  // lastStretch is false here on purpose: the engine has already marked the
+  // read down for the final stretch (×0.6). checkPlan's own step-down is for
+  // screenshots, which have no engine; doing both turned every 15:30 and
+  // 15:45 alert into a "low" that `take` then had to refuse.
   const result = checkPlan(p, [], {
     priceNow: a.price, cost, digits: digitsOf(pair), pair, minStopPct: inst.minStopPct,
-    asked: 0, lastStretch, timeframe: tf.id,
+    asked: 0, lastStretch: false, timeframe: tf.id,
   });
   if (result.decision !== 'buy' && result.decision !== 'sell') return { ...out, kind: 'rejected', result };
   return { ...out, kind: 'idea', result, plan };
 }
 
-/** Has this instrument already had an alert on this side within the cooldown? */
-export function shouldAlert(state, r) {
+/**
+ * Is an earlier alert on this instrument still running on the feed — neither
+ * its stop nor its target touched since, and its day's window not yet closed?
+ * Bars are the feed's closed bars; a sell's levels trigger on the ask.
+ */
+export function stillRunning(prev, bars, nowMs, cfg, spread = 0) {
+  if (!prev || !(prev.stopDist > 0) || !(prev.refPrice > 0)) return false;
+  if (nowMs >= windowState(prev.barCloseMs, cfg.window).closesAtMs) return false;
+  const buy = prev.side === 'buy';
+  const sl = buy ? prev.refPrice - prev.stopDist : prev.refPrice + prev.stopDist;
+  const tp = prev.tp1Dist > 0 ? (buy ? prev.refPrice + prev.tp1Dist : prev.refPrice - prev.tp1Dist) : null;
+  for (const b of bars) {
+    if (b.t < prev.barCloseMs) continue;
+    const lo = buy ? b.l : b.l + spread, hi = buy ? b.h : b.h + spread;
+    if (buy ? lo <= sl : hi >= sl) return false;
+    if (tp !== null && (buy ? hi >= tp : lo <= tp)) return false;
+  }
+  return true;
+}
+
+/**
+ * Should this idea be sent? Not for a bar already alerted; not on the same
+ * side within the cooldown; and not while an earlier alert on this instrument
+ * is still running on the feed — four overlapping alerts, each saying "1% of
+ * the account", were 3-4% on one move (found in review, 11 Oct 2026). `bars`
+ * are the closed bars the read was taken from.
+ */
+export function shouldAlert(state, r, bars = [], cfg = null) {
   const prev = state && state.lastAlert && state.lastAlert[r.pair];
   if (!prev) return true;
   if (prev.barCloseMs === r.barCloseMs) return false;
+  if (cfg && stillRunning(prev, bars, r.nowMs, cfg, r.spreadNum || 0)) return false;
   const cooldownMs = COOLDOWN_BARS * tfInfo(r.tf).minutes * 60000;
   return !(prev.side === r.result.decision && r.barCloseMs - prev.barCloseMs < cooldownMs);
 }
+
+/** What the alert state keeps of an alert: enough to tell when it has run its course. */
+export const alertState = (rec) => ({ side: rec.side, barCloseMs: rec.barCloseMs, refPrice: rec.refPrice, stopDist: rec.stopDist, tp1Dist: rec.tp1Dist });
 
 /** What is kept of an alert so `take` can turn it into a ticket from the user's own price. */
 export function ideaRecord(r) {
@@ -222,7 +264,7 @@ export function formatLiveIdea(rec, cfg, nowMs, plan = null) {
   } else if (sized.r.ok) {
     out.push('At this balance and risk the stop comes to less than the minimum lot, so there is no volume to give.');
   }
-  out.push(`**To take it, send me your MT5 price now** and I'll give you the exact stop loss and take profit. It is good until ${formatHM(rec.validUntilMs, tz)} London, and only while the price stays within ${fmt(rec.stopDist * DRIFT_SHARE, d)} of where it was read. Confidence: **${rec.confidence}**.`);
+  out.push(`**To take it, send me your MT5 price now** and I'll give you the exact stop loss and take profit. It is good until ${formatHM(rec.validUntilMs, tz)} London, and only while the price stays within ${fmt(rec.stopDist * DRIFT_SHARE, d)} of where it was read. Confidence: **${rec.confidence}**.${rec.lastStretch ? ' Final stretch — confidence is marked down.' : ''}`);
   const why = [];
   if (rec.reasons.length) why.push(`**For it:** ${rec.reasons.join('; ')}.`);
   if (rec.against.length) why.push(`**Against it:** ${rec.against.join(' ')}`);

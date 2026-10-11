@@ -103,9 +103,10 @@ only when an idea passes every check; the session sends it and starts watching a
 
 **What the history says.** `node desk/replay.mjs --pair bitcoin --from 2026-01-01` runs the
 watcher over past bars and follows each alert to its stop, its target or 16:00. Over 2026 to
-11 October it gave 175 bitcoin alerts in the London window (about four a week), averaging
-+0.08R a trade with a 95% range of −0.09R to +0.24R, much the same in each half of the
-year: **no evidence of an edge, and none against.** Telling an edge that small from zero would take about 600 trades.
+11 October it gave 120 bitcoin alerts in the London window (about three a week), averaging
++0.03R a trade with a 95% range of −0.17R to +0.23R (clustered by day), slightly negative in
+the first half of the year and positive in the second: **roughly break-even after the
+spread — no evidence of an edge.** Treat the alerts as demo practice.
 
 **What the watcher does not do.** It cannot see the broker's price, spread or fills. It has
 no track record: `desk/replay.mjs` replays history through it with outcomes, and that is the

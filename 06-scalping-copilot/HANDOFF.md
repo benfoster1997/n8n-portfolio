@@ -62,6 +62,18 @@ their iPhone. **On resume:** `node -e "console.log(!!process.env.TWELVEDATA_API_
   `test/live.test.mjs` on 10 days of recorded Binance bars (`test/fixtures/btc-m15.json`).
 - **Target rule: decided — 1.5R when no level is in the way** (the user's choice, see
   decision 26). The replay over 2026 is in decision 26.
+- **A review of the watcher (3 lenses, 17 findings, 13 confirmed ≈ 8 distinct) is fixed in
+  code, but its fixes have no tests of their own yet**: the double final-stretch markdown
+  (`liveRead` now passes `lastStretch: false` — the engine already applied ×0.6), the
+  restart loop before the window (it now sleeps in real time), one feed's failures
+  stopping both instruments (`STATUS: dropped`), stacked alerts (`stillRunning`; replay
+  applies it too and clusters its range by day), weekday/weekend volume
+  (`relativeVolume` like for like, from `htfBars`), 300-bar feeds (`minBars`), the key
+  message (`KEY_HOW`), `take` choosing the instrument by price, scan/watch overwriting each
+  other (`recordAlerts`). **Next session: write those tests** (e.g. a real final-stretch
+  read at fixture bar 586, 2026-10-07T14:30:20Z, must `take` ok), update SKILL.md for
+  `dropped`, `need-key` and the `WATCHING:` line, rerun the smoke test (the engine
+  changed), then republish the page.
 - Done since: the SKILL.md section for watching and the README section. **Next:** an
   independent review of the watcher (it has had none), then start it for the user when
   they ask ("watch") — weekdays 08:00–16:00 London; it cannot be pre-armed (outside the
@@ -533,15 +545,17 @@ A fresh session is likely to "fix" some of these. Don't, without reading why.
       Over 1 Jan – 11 Oct 2026 (6,464 checks in the window):
       | rule | alerts | a week | target / stop / 16:00 | average | 95% range |
       |---|---|---|---|---|---|
-      | next level only | 57 | 1.4 | 18 / 33 / 6 | +0.10R | −0.33 to +0.53 |
-      | 1.5R when clear | 175 | 4.3 | 33 / 52 / 90 | +0.08R | −0.09 to +0.24 |
-      | 2R when clear | 175 | 4.3 | 26 / 52 / 97 | +0.10R | −0.07 to +0.27 |
-      (After charging sells the spread once, not twice. Halves of the stretch: next level
-      +0.20R then −0.00R; 1.5R +0.08R and +0.08R; 2R +0.08R and +0.11R. The user saw the first
-      run's figures, about 0.01–0.02R lower, when choosing.) **No rule shows an edge**; telling +0.08R
-      from zero needs ~600 trades. The user chose 1.5R knowing that, for about one alert a
-      trading day on the demo; they were advised to commit to a sample (~150) in "Is it
-      working yet?" first. Do not describe the alerts as profitable.
+      | next level only | 50 | 1.2 | 16 / 29 / 5 | +0.04R | −0.35 to +0.43 |
+      | 1.5R when clear | 120 | 3.0 | 24 / 41 / 55 | +0.03R | −0.17 to +0.23 |
+      | 2R when clear | 117 | 2.9 | 18 / 41 / 58 | +0.04R | −0.17 to +0.25 |
+      (Ranges clustered by day. These are after the watcher review's fixes: no new alert
+      while the last one on the instrument is still running, and volume compared weekday
+      with weekday over the full 1,000 bars. Halves of the stretch for 1.5R: −0.04R to
+      21 May, +0.09R after. The user chose 1.5R on the FIRST run's figures — 175 alerts,
+      +0.07R — which overlapping alerts had flattered; they were told the corrected result
+      the same night: roughly break-even after the spread.) **No rule shows an edge.** The
+      user was advised to treat the alerts as demo practice and to commit to a sample (~150)
+      in "Is it working yet?" first. Do not describe the alerts as profitable.
     - **The engine reads M15 with its own table** (`src/timeframes.js`): "the last hour" is 4
       bars, the bias is H1 and H4 from a longer `htfBars` history (the window stays 300 bars),
       and its minimum stop is scaled by √3 so its stop always clears the desk's floor.

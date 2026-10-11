@@ -259,10 +259,12 @@ test('a bucket with no data abstains instead of inflating the others', () => {
 
 test('abstention lowers confidence rather than being silently absorbed', () => {
   // Same price path, but spanning several days so volume has real history.
+  // From a Monday, so the last bar (Wednesday) has two earlier weekdays to
+  // compare with: volume is compared weekday with weekday.
   const many = [];
   for (let i = 0; i < 600; i++) {
     many.push({
-      t: Date.UTC(2026, 8, 10) + i * 300000,
+      t: Date.UTC(2026, 8, 14) + i * 300000,
       o: 3900 + i * 0.4, h: 3900 + i * 0.4 + 1, l: 3900 + i * 0.4 - 1,
       c: 3900 + i * 0.4 + Math.sin(i / 3) * 0.5, v: 1000 + (i % 7) * 50,
     });

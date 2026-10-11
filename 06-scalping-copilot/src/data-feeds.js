@@ -202,7 +202,7 @@ export const XAU_SOURCES = [
  * Try each source in order. Returns the bars plus a full account of what was
  * attempted, so the UI can name the source and show what failed.
  */
-export async function loadBars(pair, { keys = {}, limit = 300, preferred = null, allowProxy = false, minutes = 5 } = {}) {
+export async function loadBars(pair, { keys = {}, limit = 300, preferred = null, allowProxy = false, minutes = 5, minBars = 1 } = {}) {
   const all = pair === 'BTCUSD' ? BTC_SOURCES : XAU_SOURCES;
   let sources = allowProxy ? all : all.filter((s) => !s.proxy);
   if (preferred) {
@@ -219,6 +219,9 @@ export async function loadBars(pair, { keys = {}, limit = 300, preferred = null,
     try {
       const bars = await src.fetch(limit, keys[src.id], minutes);
       if (!bars.length) throw new Error('returned no usable bars');
+      // A source capped at 300 bars cannot feed a four-hour trend (the watcher
+      // asks for enough), so it is passed over rather than quietly read short.
+      if (bars.length < minBars) throw new Error(`returned only ${bars.length} bars; ${minBars} needed`);
       attempts.push({ id: src.id, label: src.label, ok: true, bars: bars.length });
       return {
         ok: true, bars, source: src, attempts,

@@ -59,6 +59,7 @@ import { loadBars } from '../src/data-feeds.js';
 import { windowState } from '../src/sessions.js';
 import {
   FETCH_BARS, liveRead, shouldAlert, ideaRecord, formatLiveIdea, formatLiveNone, takeIdea, nextPollMs, inWatchHours,
+  minHistory, alertState,
 } from './live.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -198,13 +199,24 @@ async function liveBars(pair, tf, preferred = null) {
     return bars.length ? { ok: true, bars, source: { id: 'test', label: 'test bars' } } : { ok: false, reason: 'no test bars' };
   }
   if (pair === 'XAUUSD' && !goldKey()) return { ok: false, noKey: true, reason: 'no Twelve Data key ($TWELVEDATA_API_KEY)' };
-  const r = await loadBars(pair, { keys: { twelvedata: goldKey() }, limit: FETCH_BARS, minutes: tfInfo(tf).minutes, allowProxy: false, preferred });
+  const r = await loadBars(pair, { keys: { twelvedata: goldKey() }, limit: FETCH_BARS, minutes: tfInfo(tf).minutes, allowProxy: false, preferred, minBars: minHistory(tf) });
   return r.ok
     ? { ok: true, bars: r.bars, source: { id: r.source.id, label: r.source.label } }
     : { ok: false, reason: r.attempts.map((x) => `${x.label}: ${x.reason}`).join('; ') };
 }
 
 const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+
+/** Record alerts: re-read both files just before writing, so a scan and the watcher never undo each other. */
+function recordAlerts(recs) {
+  const ideas = readJson(watchPath('ideas.json'), {});
+  const state = readJson(watchPath('state.json'), { lastAlert: {} });
+  for (const rec of recs) { ideas[rec.pair] = rec; state.lastAlert[rec.pair] = alertState(rec); }
+  writeJson(watchPath('ideas.json'), ideas);
+  writeJson(watchPath('state.json'), state);
+}
+
+const KEY_HOW = 'Gold needs a free key from twelvedata.com (sign up, then API Keys). Add it in this session\'s cloud environment settings (title bar → environment → Edit) as an environment variable named TWELVEDATA_API_KEY — not in this chat — then start a new session. Bitcoin needs nothing.';
 
 /* ---------------------------------------------------------------- commands */
 
@@ -504,26 +516,22 @@ const cmds = {
     const tf = timeframeFor(cfg);
     const pairs = a.pair ? [pairOf(a.pair)] : ['XAUUSD', 'BTCUSD'];
     if (pairs.includes(null)) usage('Which instrument? --pair gold or --pair bitcoin');
-    const replies = [], notes = [];
-    const state = readJson(watchPath('state.json'), { lastAlert: {} });
-    const ideas = readJson(watchPath('ideas.json'), {});
+    const replies = [], notes = [], recs = [];
     for (const pair of pairs) {
       const lb = await liveBars(pair, tf);
       if (!lb.ok) {
-        if (lb.noKey) { if (a.pair) replies.push(`**${label(pair)}** needs a Twelve Data key before I can read its live chart.`); else notes.push(`NOTE: ${pair} skipped — ${lb.reason}.`); }
+        if (lb.noKey) { if (a.pair) replies.push(KEY_HOW); else notes.push(`NOTE: ${pair} skipped — ${lb.reason}.`); }
         else replies.push(`**${label(pair)}:** the live feed is not answering just now. Send a screenshot instead.`), notes.push(`NOTE: ${pair} feeds — ${lb.reason}`);
         continue;
       }
       const r = liveRead({ pair, bars: lb.bars, nowMs: clock(), cfg, plan: loadPlan(), source: lb.source });
       if (r.kind === 'idea') {
         const rec = ideaRecord(r);
-        ideas[pair] = rec;
-        state.lastAlert[pair] = { side: rec.side, barCloseMs: rec.barCloseMs };
+        recs.push(rec);
         replies.push(formatLiveIdea(rec, cfg, clock(), loadPlan()));
       } else replies.push(formatLiveNone(r, cfg));
     }
-    writeJson(watchPath('ideas.json'), ideas);
-    writeJson(watchPath('state.json'), state);
+    if (recs.length) recordAlerts(recs);
     say('info', replies.join('\n\n'), notes);
   },
 
@@ -547,13 +555,14 @@ const cmds = {
     if (!goldAvailable() && pairs.includes('XAUUSD')) {
       pairs = pairs.filter((p) => p !== 'XAUUSD');
       notes.push('NOTE: gold is not watched — no Twelve Data key ($TWELVEDATA_API_KEY) in this session.');
-      if (!pairs.length) return say('need-key', 'I need your Twelve Data key before I can watch gold (see how to add it above). Bitcoin needs nothing.', notes);
+      if (!pairs.length) return say('need-key', KEY_HOW, notes);
     }
     mkdirSync(watchPath(''), { recursive: true });
     writeFileSync(pidFile, String(process.pid));
     const started = Date.now();
     const errors = {};
     const status = { startedAtMs: clock(), pairs, tf, polls: 0, last: {} };
+    console.log(`WATCHING: ${pairs.map((p) => label(p)).join(' and ')} on ${tfInfo(tf).id}${anytime ? ', at any hour' : ', in the window'}.`);
     const finish = (st, reply, extra = []) => {
       rmSync(pidFile, { force: true });
       writeJson(watchPath('status.json'), { ...status, endedAtMs: clock(), ended: st });
@@ -566,11 +575,14 @@ const cmds = {
       const now = clock();
       if (!inWatchHours(now, cfg, anytime)) {
         const w = windowState(now, cfg.window);
-        if (w.phase === 'before' && !a.once && Date.now() - started + (w.opensAtMs - now) < maxMs) {
-          await sleep(w.opensAtMs - now + 20000);
+        if (w.phase === 'before' && !a.once) {
+          // Wait for the open — in real time, up to the cap. An instant exit here
+          // had the session restarting it in a tight loop before 06:00.
+          const left = maxMs - (Date.now() - started);
+          if (left <= 60000) finish('timeout', null, ['NOTE: the window has not opened yet; start the watch again (no message to the user).']);
+          await sleep(Math.min(w.opensAtMs - now + 20000, left - 30000));
           continue;
         }
-        if (w.phase === 'before' && !a.once) finish('timeout', null, ['NOTE: the window has not opened yet; run watch again.']);
         finish('stopped', null, [`NOTE: outside the watch hours (${w.phase}). Tell the user the watch has stopped for today, in one line.`]);
       }
       const alerts = [];
@@ -580,7 +592,10 @@ const cmds = {
           errors[pair] = (errors[pair] || 0) + 1;
           status.last[pair] = { kind: 'feed-error', atMs: now, reason: lb.reason };
           if (errors[pair] >= 3) {
-            finish('error', `The live ${label(pair).toLowerCase()} feed has stopped answering, so I have stopped watching. Send screenshots meanwhile, or tell me to start watching again.`, [`NOTE: ${lb.reason}`]);
+            const rest = pairs.filter((p) => p !== pair);
+            if (!rest.length) finish('error', `The live ${label(pair).toLowerCase()} feed has stopped answering, so I have stopped watching. Send screenshots meanwhile, or tell me to start watching again.`, [`NOTE: ${lb.reason}`]);
+            finish('dropped', `The live ${label(pair).toLowerCase()} feed has stopped answering, so I have stopped watching ${label(pair).toLowerCase()}. Still watching ${rest.map((p) => label(p).toLowerCase()).join(' and ')}.`,
+              [`NOTE: ${lb.reason}`, `NOTE: send the reply, then start the watch again with: watch --pair ${rest.map((p) => (p === 'XAUUSD' ? 'gold' : 'bitcoin')).join(' ')}`]);
           }
           continue;
         }
@@ -588,22 +603,14 @@ const cmds = {
         const r = liveRead({ pair, bars: lb.bars, nowMs: now, cfg, plan: loadPlan(), source: lb.source });
         status.last[pair] = { kind: r.kind, atMs: now, price: r.price ?? null, source: lb.source.label, barCloseMs: r.barCloseMs ?? null };
         const state = readJson(watchPath('state.json'), { lastAlert: {} });
-        if (r.kind === 'idea' && shouldAlert(state, r)) alerts.push(r);
+        if (r.kind === 'idea' && shouldAlert(state, r, lb.bars, cfg)) alerts.push(r);
       }
       status.polls += 1;
       writeJson(watchPath('status.json'), status);
       if (alerts.length) {
-        const ideas = readJson(watchPath('ideas.json'), {});
-        const state = readJson(watchPath('state.json'), { lastAlert: {} });
-        const replies = alerts.map((r) => {
-          const rec = ideaRecord(r);
-          ideas[r.pair] = rec;
-          state.lastAlert[r.pair] = { side: rec.side, barCloseMs: rec.barCloseMs };
-          return formatLiveIdea(rec, cfg, now, loadPlan());
-        });
-        writeJson(watchPath('ideas.json'), ideas);
-        writeJson(watchPath('state.json'), state);
-        finish('alert', replies.join('\n\n'), ['NOTE: send the reply, push a one-line notification, then start the watch again.']);
+        const recs = alerts.map((r) => ideaRecord(r));
+        recordAlerts(recs);
+        finish('alert', recs.map((rec) => formatLiveIdea(rec, cfg, now, loadPlan())).join('\n\n'), ['NOTE: send the reply, push a one-line notification, then start the watch again.']);
       }
       if (a.once) finish('quiet', null, pairs.map((p) => `NOTE: ${p} ${status.last[p] ? status.last[p].kind : 'not read'}`));
       const next = nextPollMs(clock(), tf);
@@ -616,7 +623,12 @@ const cmds = {
     const price = num(a.price);
     if (!(price > 0)) usage('take --price N, the price on MT5\'s Quotes tab now.');
     const ideas = readJson(watchPath('ideas.json'), {});
-    const pair = a.pair ? pairOf(a.pair) : Object.values(ideas).sort((x, y) => y.barCloseMs - x.barCloseMs)[0]?.pair;
+    // The instrument named; else the alerts still in date, and if both are, the one
+    // whose price the typed one is near (gold ~4,000 and bitcoin ~84,000 cannot be confused).
+    const live = Object.values(ideas).filter((x) => clock() <= x.validUntilMs);
+    const near = (x) => Math.abs(Math.log(price / x.refPrice));
+    const pair = a.pair ? pairOf(a.pair)
+      : (live.length ? live.sort((x, y) => near(x) - near(y))[0] : Object.values(ideas).sort((x, y) => y.barCloseMs - x.barCloseMs)[0])?.pair;
     const rec = pair ? ideas[pair] : null;
     if (!rec) return say('need-input', 'There is no live idea to take. Wait for an alert, or send a screenshot and the price.');
     const typed = num(a.spread);

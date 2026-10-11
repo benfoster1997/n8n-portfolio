@@ -677,10 +677,16 @@ export function detectLiquiditySweep(bars, opts = {}) {
 }
 
 /**
- * Relative volume: this bar against the mean of the SAME five-minute slot on
+ * Relative volume: this bar against the mean of the SAME time-of-day slot on
  * previous days. Comparing against a flat rolling average instead would flag
  * every London open as unusual, which is useless — the London open is
  * supposed to be busy.
+ *
+ * Like with like: weekdays are compared with weekdays and weekend days with
+ * weekend days. Bitcoin trades all week, and its weekend volume is about a
+ * third of a weekday's, so a Monday measured against Saturday and Sunday read
+ * "1.8x normal" on an ordinary morning (found in review, 11 Oct 2026). Gold
+ * has no weekend bars, so nothing changes for it.
  */
 export function relativeVolume(bars, daysBack = 5) {
   const n = bars.length;
@@ -688,7 +694,8 @@ export function relativeVolume(bars, daysBack = 5) {
   const bySlot = new Map();
   for (let i = 0; i < n; i++) {
     const d = new Date(bars[i].t);
-    const slot = d.getUTCHours() * 60 + d.getUTCMinutes();
+    const weekend = d.getUTCDay() === 0 || d.getUTCDay() === 6;
+    const slot = (weekend ? 'e' : 'd') + (d.getUTCHours() * 60 + d.getUTCMinutes());
     if (!bySlot.has(slot)) bySlot.set(slot, []);
     bySlot.get(slot).push({ i, v: bars[i].v || 0 });
   }
