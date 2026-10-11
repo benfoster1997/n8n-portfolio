@@ -25,7 +25,9 @@ instead of the page. That is now the main way it is used; see the next section.
 
 **Since 11 October 2026 screenshots are read on the fifteen-minute chart (M15)** by
 default, with M5 kept as a setting — see [The chart timeframe](#the-chart-timeframe-m15-by-default).
-The live engine described further down still reads five-minute bars.
+The same day the desk gained a watcher that reads the live chart on that timeframe — see
+[Watching the live chart](#watching-the-live-chart-in-the-chat). The page's own live engine
+still reads five-minute bars.
 
 ---
 
@@ -72,6 +74,36 @@ Account settings and the trade record are in `desk/config.json`, which is commit
 server clock is taken as New York + 7 (what the broker's gold break showed): UTC+3 until
 1 November, UTC+2 after; in the one week the conventions disagree, the desk asks the user to
 check the clock on their MT5 chart.
+
+---
+
+## Watching the live chart (in the chat)
+
+Since 11 October 2026 the cloud environment may reach the price feeds, so the desk can read
+the live chart itself. `desk.mjs watch` wakes 20 seconds after every bar close inside the
+user's window, fetches the last 1,000 bars, and runs them through the same engine, gate and
+`checkPlan()` as everything else (`desk/live.mjs`). It stops and hands the session an alert
+only when an idea passes every check; the session sends it and starts watching again.
+`scan` is one such read on request.
+
+- **Distances, not levels.** Bitcoin comes from Binance (BTCUSDT), then Coinbase or Kraken;
+  gold from Twelve Data with the user's free key. None is IC Markets' quote — they sat
+  $100–135 apart from each other on the day this was built. So an alert says "stop 150 above
+  your entry", and the user replies with their MT5 price; `take` then builds the ticket.
+- **One bar, a quarter of the stop.** `take` refuses an alert once the next bar has closed,
+  once the feed has moved more than a quarter of the stop since, when the typed price is more
+  than 1.5% from the feed's (a typo, or the other instrument), or when the gate now says no.
+- **Quiet when it cannot check the cost.** Wherever the screenshot gate would ask for the
+  spread — weekend, outside the window, a bitcoin release blackout — the watcher sends
+  nothing. Gold's dead zone and blackouts stop it as they stop a screenshot.
+- **One alert per side per hour** for each instrument.
+
+**What the watcher does not do.** It cannot see the broker's price, spread or fills. It has
+no track record: `desk/replay.mjs` replays history through it with outcomes, and that is the
+only evidence there is. It does not run unless the session keeps it running — a cloud session
+can pause, and a background command is capped at two hours, so the session restarts it; if
+the container is reclaimed the watch ends without notice. It can push to a phone only when
+Remote Control is connected from a computer; otherwise its alerts are chat messages.
 
 ---
 
@@ -387,9 +419,10 @@ with the safe areas handled.
   MT5 before entering.
 - **In a chat, it cannot see MT5.** The desk knows only the price, spread and trades the
   user types; it never sees an order, a fill or a balance.
-- **The timeframe setting does not reach the live engine.** It governs screenshot reads, on
-  the page and in the chat. The engine that reads live bars still reads five-minute bars
-  (with M15 and H1 for its bias) — and inside claude.ai it never runs. Nor does the tool
+- **The timeframe setting does not reach the page's live engine.** It governs screenshot
+  reads on the page and everything in the chat, the watcher included. The page's engine
+  still reads five-minute bars (with M15 and H1 for its bias) — and inside claude.ai it
+  never runs. Nor does the tool
   switch timeframe for you: a chart on the other one is turned down, and the reply says how
   to switch.
 

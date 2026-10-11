@@ -1,6 +1,6 @@
 ---
 name: scalp-desk
-description: The user's scalp desk for XAUUSD (gold) and BTCUSD (bitcoin) on the MT5 M15 chart (M5 if they switch), run inside this chat. Use whenever the user sends an MetaTrader 5 chart screenshot or asks for a trade idea, the pre-session brief, today's news, whether they can trade now, a lot size for a stop, says they took a trade, sets a plan for the day, or changes their account settings or trade record.
+description: The user's scalp desk for XAUUSD (gold) and BTCUSD (bitcoin) on the MT5 M15 chart (M5 if they switch), run inside this chat. Use whenever the user sends an MetaTrader 5 chart screenshot or asks for a trade idea, the pre-session brief, today's news, whether they can trade now, a lot size for a stop, says they took a trade, sets a plan for the day, asks to watch the live chart or be alerted, replies to an alert with a price, or changes their account settings or trade record.
 ---
 
 # Scalp desk — in the chat
@@ -32,7 +32,8 @@ technical: never show them commands, file paths, JSON or STATUS lines.
      from the picture: the readers check the chart against it.
 2. `gate --pair <gold|bitcoin> --price <n> [--spread <s>] [--mode fast|thorough] [--tf M5|M15]`
    When they answer a `need-price` or `need-spread` question, run the gate again with the
-   answer — they do not need to send the picture again.
+   answer, keeping any `--tf`, `--mode` and `--spread` from before — they do not need to send
+   the picture again.
 3. By STATUS:
    - `need-price`, `need-spread`, `blocked` → send the reply, nothing else. Do not look at
      or describe the chart: a direction on screen gets traded.
@@ -66,9 +67,36 @@ technical: never show them commands, file paths, JSON or STATUS lines.
 | "took it", "I took a trade" / "undo that" | `plan took` / `plan undo`. If there is no plan yet, it asks for one; once it is set, run `plan took` for the trade they mentioned. |
 | "breakout and range fade, max 4 trades" | `plan set --setups "Breakout, Range fade" --max 4` (anything not one of the four named setups goes in as their own words) |
 | "risk 0.5%", "shadow balance 10k", "size from shadow", "always fast" | `config risk=0.5`, `config shadow=10000 sizefrom=shadow`, `config mode=fast` — then commit and push `06-scalping-copilot/desk/config.json` |
-| "switch to M5", "I'm back on the five-minute", "use M15 again" | `config timeframe=M5` (or `M15`) — then commit and push the config |
+| "switch to M5", "I'm back on the five-minute", "use M15 again" | `config timeframe=M5` (or `M15`) — then commit and push the config, and ask them to send the chart and price again |
 | "I've done 40 trades, 22 winners" | `edge --trades 40 --wins 22` — **totals so far, from MT5's History tab, not since last time** (`--rr`, `--planned`, `--stop` for a typical stop) — then commit and push the config |
 | "my MT5 clock says 12:00" (the clocks-change week asks) | `config serveroffset=<the offset that makes it right>`, e.g. 2 — then commit and push |
+
+## Watching the live chart
+
+The desk can read the live chart itself at every bar close (`desk/live.mjs`): the same engine,
+gate and checks, and an alert only when an idea passes them all. The feeds are not the broker's
+price, so an alert gives the stop and target as **distances**; the user's own MT5 price turns
+it into a ticket. Gold needs `TWELVEDATA_API_KEY` in the environment; without it only bitcoin
+is watched (the command says so).
+
+| The user says | Run |
+|---|---|
+| "watch", "alert me", "start watching" | `watch` with the Bash tool's `run_in_background` and a timeout of 7200000. Tell them in one line what is watched and that you will message when an idea passes every check. Do not say until when. |
+| "what does the live chart say?" | `scan` (`--pair` for one) — send the reply |
+| a price, or "take it", after an alert | `take --price N` (`--spread S` if they gave one) — send the reply |
+| "stop watching" | `watch --stop` |
+
+When the background `watch` ends, read its output and act on the STATUS:
+- `alert` → send the reply as it is, call PushNotification with one line ("Bitcoin sell idea —
+  reply with your MT5 price for the ticket"), then start `watch` again.
+- `timeout` → start `watch` again; say nothing.
+- `stopped` → the window has closed or it is the weekend: one line, e.g. "Watch stopped for today."
+- `error` → send the reply; do not restart unless they ask.
+- `already` → one is running; nothing to do.
+
+An alert is good for one bar: after that, or once the price has moved a quarter of the stop,
+`take` refuses it. Never restate an alert's levels as prices from the feed, and never give a
+direction the watcher did not print.
 
 Today's plan and the last spread live in `~/.scalp-desk/` and are lost if the container is
 reclaimed. If `plan show` says there is none but the conversation shows one set today, set it
