@@ -63,8 +63,8 @@ const CONF = { firm: 'high', moderate: 'moderate', low: 'low' };
  *
  * '1.5R' is the user's choice (11 Oct 2026), after desk/replay.mjs over
  * bitcoin's 2026 (1 Jan – 11 Oct, London window, $6 spread): 'level' 57
- * alerts, +0.08R a trade (95% range −0.34 to +0.50); '1.5R' 175 alerts,
- * +0.07R (−0.10 to +0.23); '2R' the same 175, +0.09R (−0.08 to +0.26). No
+ * alerts, +0.10R a trade (95% range −0.33 to +0.53); '1.5R' 175 alerts,
+ * +0.08R (−0.09 to +0.24); '2R' the same 175, +0.10R (−0.07 to +0.27). No
  * rule showed an edge; 1.5R was chosen for alerts about once a trading day
  * (a demo record that grows faster) and reaching its target more often than
  * 2R. It is not evidence that the alerts make money.

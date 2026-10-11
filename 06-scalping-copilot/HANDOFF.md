@@ -533,11 +533,12 @@ A fresh session is likely to "fix" some of these. Don't, without reading why.
       Over 1 Jan – 11 Oct 2026 (6,464 checks in the window):
       | rule | alerts | a week | target / stop / 16:00 | average | 95% range |
       |---|---|---|---|---|---|
-      | next level only | 57 | 1.4 | 18 / 33 / 6 | +0.08R | −0.34 to +0.50 |
-      | 1.5R when clear | 175 | 4.3 | 33 / 52 / 90 | +0.07R | −0.10 to +0.23 |
-      | 2R when clear | 175 | 4.3 | 26 / 52 / 97 | +0.09R | −0.08 to +0.26 |
-      (First run; a fix for sells being charged the spread twice moves these by about
-      0.01R — rerun before quoting exact figures.) **No rule shows an edge**; telling +0.08R
+      | next level only | 57 | 1.4 | 18 / 33 / 6 | +0.10R | −0.33 to +0.53 |
+      | 1.5R when clear | 175 | 4.3 | 33 / 52 / 90 | +0.08R | −0.09 to +0.24 |
+      | 2R when clear | 175 | 4.3 | 26 / 52 / 97 | +0.10R | −0.07 to +0.27 |
+      (After charging sells the spread once, not twice. Halves of the stretch: next level
+      +0.20R then −0.00R; 1.5R +0.08R and +0.08R; 2R +0.08R and +0.11R. The user saw the first
+      run's figures, about 0.01–0.02R lower, when choosing.) **No rule shows an edge**; telling +0.08R
       from zero needs ~600 trades. The user chose 1.5R knowing that, for about one alert a
       trading day on the demo; they were advised to commit to a sample (~150) in "Is it
       working yet?" first. Do not describe the alerts as profitable.
