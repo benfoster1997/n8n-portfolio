@@ -42,7 +42,7 @@ container it uses the preinstalled headless_shell under `/opt/pw-browsers`.
 **Run the smoke test after any UI change.** The unit suites do not touch the DOM
 and stayed fully green twice while the page was broken.
 
-### Where we stopped (4 Oct 2026, late) — read this first
+### Where we stopped (11 Oct 2026) — read this first
 
 - **The tool now runs inside the Claude chat** (decision 24). The user asked for it not to need
   a browser: they send MT5 screenshots into a Claude Code session from the Claude app. The
@@ -56,10 +56,17 @@ and stayed fully green twice while the page was broken.
   so the page had it too: a decision written "Buy" or "long" skipped every check and showed as
   a No trade with its direction in the summary. Now normalised, and anything unrecognised is
   rejected. The page was rebuilt for it, smoke-tested (7/7) and **published as live version 20**.
-  **Not yet run on a real screenshot from the user.**
-- **Next step:** wait for the user's first screenshot. If Thorough says no picture was found
-  on disk, check where the Claude app put it (`~/.claude/uploads/<session>/` held earlier
-  uploads) and fix `latestUpload()`.
+- **First real run, 5 Oct 2026 (~22:45 London, Monday, BTCUSD M5 screenshot):** worked end
+  to end. The user sent the chart with no words; the gate asked for the price and spread;
+  they answered with a screenshot of MT5's Quotes screen (bid 85,959.92 / ask 85,965.92, so
+  spread 6.00) — taken as their answer, since it comes from the Quotes tab, not the chart.
+  Because the Quotes screenshot arrived after the chart, the gate was run with `--image`
+  pointing at the chart upload explicitly. Thorough: all three readers read the chart bid as
+  85,944.40 and the axis correctly, all said "none"; head trader no_trade; `check` printed
+  the No trade reply, sent as is. Run time about 2 minutes.
+- **Next step:** nothing pending. On "resume", wait for the next screenshot or request and use
+  the `scalp-desk` skill. If two pictures arrive (chart + quotes), pass the chart with
+  `--image`.
 
 ### Before that (4 Oct 2026)
 
@@ -543,6 +550,15 @@ the commit messages are the durable record.
   If the live account is with a UK FCA firm, gold is capped at 1:20 and BTC CFDs are
   not offered to UK retail at all — find out which entity first.
 - "How do I use it each day?" — the answer is now the how-to card on the Setup tab.
+- "Is it worth using Jev with the tool?" (11 Oct) — **no, not as it works now.** Jev (TypeSafe
+  AI, per one promotional article and social posts; no official page found) is a fast,
+  cheap structured-decision model people wire to live price feeds and order APIs for fully
+  automatic bots. Here the bottleneck is the human screenshot-and-type loop, not decision
+  speed; there is no live feed inside claude.ai; nothing showed it reads chart images; MT5
+  on an iPhone cannot execute a bot (it would need desktop MT5/a VPS or a broker bridge —
+  a separate, riskier project outside the desk's checks); and faster deciding means more
+  trades paying the $6 BTC spread. Advised proving an edge first with the pre-declared
+  sample in "Is it working yet?", then revisiting automation as its own project.
 
 ## Conventions
 
