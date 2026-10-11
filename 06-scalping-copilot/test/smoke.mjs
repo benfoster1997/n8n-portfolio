@@ -107,9 +107,17 @@ const mockClaude = `{
     const mode = window.__mode || 'ok';
     if (mode === 'not_granted') throw { code: 'not_granted', message: 'declined' };
     const v = px(prompt);
-    const tf = window.__tfSeen || ((prompt.match(/MetaTrader 5, (M\\d+) \\(/) || [])[1]) || 'none';
+    const asked = (prompt.match(/MetaTrader 5, (M\\d+) \\(/) || [])[1];
+    const tf = window.__tfSeen || asked || 'none';
     const seen = { instrument_seen: v.sym, timeframe_seen: tf, price_now: v.now, axis_low: v.lo, axis_high: v.hi };
     const levels = { stop_loss: v.sl, take_profit_1: v.t1, take_profit_2: v.t2 };
+    // Readers follow rule 1: a chart on another timeframe is unreadable (analysts)
+    // or a no_trade (one reader), with the timeframe they saw. __tfLax breaks the
+    // rule, to test the check that catches a reader who does not follow it.
+    if (window.__tfSeen && asked && window.__tfSeen !== asked && !window.__tfLax) {
+      if (/You are one of three/.test(prompt)) return { readable: false, view: 'none', ...seen };
+      return { decision: 'no_trade', confidence: 'low', summary: 'The chart is not on the timeframe asked for.', reasons: [], against: [], ...seen, stop_loss: null, take_profit_1: null };
+    }
     if (/You are one of three/.test(prompt)) {
       if (mode === 'one_bad' && /Your lens is trend/.test(prompt)) throw { code: 'invalid_json', message: 'bad', text: 'nope' };
       return { readable: true, view: 'buy', confidence: 0.6, reasons: ['Higher lows'], against: ['Near resistance'], ...seen, ...levels };
@@ -358,7 +366,18 @@ const checks = [];
   await p.setInputFiles('#shot-file', { name: 'chart.png', mimeType: 'image/png', buffer: PNG });
   await p.waitForTimeout(700);
   const wrong = await p.evaluate(() => document.getElementById('shot').innerText);
-  checks.push(['timeframe: an M5 chart on M15 is No trade, offering the switch', /No trade/.test(wrong) && /not on M15/.test(wrong) && /Chart timeframe to M5/.test(wrong) && !/Buy idea/.test(wrong)]);
+  checks.push(['timeframe: analysts who turn down an M5 chart on M15 get it named, with the switch', /saw an M5 chart/.test(wrong) && /Chart timeframe to M5/.test(wrong) && !/price scale showing/.test(wrong)]);
+  await p.evaluate(() => { window.__tfLax = true; });
+  await p.setInputFiles('#shot-file', { name: 'chart.png', mimeType: 'image/png', buffer: PNG });
+  await p.waitForTimeout(700);
+  const lax = await p.evaluate(() => document.getElementById('shot').innerText);
+  checks.push(['timeframe: readers who ignore the rule still get No trade, offering the switch', /No trade/.test(lax) && /not on M15/.test(lax) && /Chart timeframe to M5/.test(lax) && !/Buy idea/.test(lax)]);
+  await p.evaluate(() => { window.__tfLax = false; const b = document.querySelector('[data-shot="mode"][data-v="fast"]'); if (b) b.click(); });
+  await p.setInputFiles('#shot-file', { name: 'chart.png', mimeType: 'image/png', buffer: PNG });
+  await p.waitForTimeout(700);
+  const fast = await p.evaluate(() => document.getElementById('shot').innerText);
+  checks.push(['timeframe: a Fast reader that turns down an M5 chart is No trade, offering the switch', /No trade/.test(fast) && /on M5, not M15/.test(fast) && /Chart timeframe to M5/.test(fast)]);
+  await p.evaluate(() => { const b = document.querySelector('[data-shot="mode"][data-v="thorough"]'); if (b) b.click(); });
   await p.evaluate(() => { const e = document.getElementById('chart-tf'); e.value = 'M5'; e.dispatchEvent(new Event('change')); });
   await p.waitForTimeout(200);
   const switched = await p.evaluate(() => document.getElementById('shot').innerText);

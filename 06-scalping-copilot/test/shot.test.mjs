@@ -9,8 +9,9 @@ import assert from 'node:assert/strict';
 import {
   shotGate, checkPlan, analystPrompt, headPrompt, fastPrompt, contextLines,
   LENSES, median, shotIsFresh, shotMaxAgeMs, marketOpenNow, seesInstrument, stopFloor,
-  chatPrompt, parseReply, TIMEFRAMES, DEFAULT_TIMEFRAME, timeframeOf, tfInfo, seesTimeframe, otherTimeframeSeen,
+  chatPrompt, parseReply, seesTimeframe, otherTimeframeSeen, knownTf, timeframeMismatch,
 } from '../src/shot.js';
+import { TIMEFRAMES, DEFAULT_TIMEFRAME, timeframeOf, tfInfo } from '../src/timeframes.js';
 import { DEFAULT_WINDOW } from '../src/sessions.js';
 import { INSTRUMENTS } from '../src/instruments.js';
 
@@ -343,6 +344,33 @@ test('the format examples do not suggest the timeframe the trader expects', () =
       assert.ok(!/"timeframe_seen": "[^"]*\bM1?5\b/.test(p), `${tf}: the example names M5 or M15`);
     }
   }
+});
+
+console.log('\nwhat the review of the timeframe change found (11 Oct 2026)');
+test('"unknown", "not visible" and "N/A" name no timeframe, so they are not held against the chart', () => {
+  for (const x of ['unknown', 'Unknown', 'not visible', 'N/A', 'none', 'unclear', 'cannot read']) {
+    assert.ok(!knownTf(x), x); assert.ok(seesTimeframe(x, 'M15'), x);
+  }
+  for (const x of ['H1', 'hourly', 'XAUUSD, M5', '5m', '15 min', 'fifteen-minute', 'D1', 5, 15]) assert.ok(knownTf(x), String(x));
+  assert.equal(checkPlan(plan({ timeframe_seen: 'unknown' }), three({ timeframe_seen: 'not visible' }), { ...CTX, timeframe: 'M15' }).decision, 'buy');
+});
+test('a number is read as minutes: 5 is M5, so it is turned down on M15', () => {
+  assert.ok(!seesTimeframe(5, 'M15')); assert.ok(seesTimeframe(15, 'M15')); assert.ok(seesTimeframe(5, 'M5'));
+  assert.ok(has(checkPlan(plan({ timeframe_seen: 5 }), [], { ...CTX, timeframe: 'M15', asked: 0 }), /not on M15/));
+});
+test('a reader told to answer no_trade for the other timeframe gets the switch offered too', () => {
+  const nt = { decision: 'no_trade', timeframe_seen: 'M5', stop_loss: null, take_profit_1: null, summary: 'Not M15.' };
+  const r = checkPlan(plan(nt), [], { ...CTX, timeframe: 'M15', asked: 0 });
+  assert.equal(r.decision, 'no_trade'); assert.equal(r.rejected, undefined);
+  assert.ok(has(r, /on M5, not M15[\s\S]*set Chart timeframe to M5/));
+  assert.deepEqual(checkPlan(plan({ ...nt, timeframe_seen: 'M15' }), [], { ...CTX, timeframe: 'M15', asked: 0 }).problems, []);
+  assert.deepEqual(checkPlan(plan({ ...nt, timeframe_seen: 'unknown' }), [], { ...CTX, timeframe: 'M15', asked: 0 }).problems, []);
+});
+test('timeframeMismatch: the shared test the page and the desk word their replies from', () => {
+  assert.deepEqual(timeframeMismatch(['M5', 'XAUUSD, M5', 'M15'], 'M15', 2), { other: 'M5' });
+  assert.deepEqual(timeframeMismatch(['H1', 'H1'], 'M15', 2), { other: null });
+  assert.equal(timeframeMismatch(['unknown', 'not visible', 'M15'], 'M15', 2), null);
+  assert.equal(timeframeMismatch(['M5', null, 'M15'], 'M15', 2), null);
 });
 
 console.log('\nodds and ends');

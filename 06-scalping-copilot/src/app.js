@@ -752,6 +752,7 @@ const SHOT_PERMANENT = ['not_granted', 'sampling_disabled', 'not_declared', 'cap
 
 function shotErrorText(e) {
   const code = e && e.code;
+  if (code === 'timeframe') return e.text;
   return ({
     not_granted: 'This page was not allowed to use Claude. Close the page and open it again to be asked again.',
     sampling_disabled: 'Claude is not available to this page on your account.',
@@ -805,6 +806,13 @@ async function runShot(file) {
         ? { ...x.value, lens: LENSES[k].name } : null)).filter(Boolean);
       // Two usable readings or no head-trader call: it would spend usage on a certain No trade.
       if (readings.filter((r) => r.readable !== false).length < 2) {
+        // Readers turn down a chart on another timeframe, and say which. Name it,
+        // with the switch, rather than blaming the price scale (shared with the desk).
+        const m = timeframeMismatch(readings.map((r) => r.timeframe_seen), c.tf, 2);
+        if (m) {
+          const t = tfInfo(c.tf);
+          throw { code: 'timeframe', text: `The analysts saw ${m.other ? `an ${m.other} chart` : 'a chart on another timeframe'}, but Chart timeframe is ${t.id}. Take a screenshot of the ${t.words} chart${m.other ? `, or set Chart timeframe to ${m.other} in Setup` : ''}.` };
+        }
         const rejected = settled.find((x) => x.status === 'rejected');
         throw rejected ? rejected.reason : { code: 'unreadable' };
       }

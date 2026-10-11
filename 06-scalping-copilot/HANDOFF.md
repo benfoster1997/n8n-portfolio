@@ -42,7 +42,44 @@ container it uses the preinstalled headless_shell under `/opt/pw-browsers`.
 **Run the smoke test after any UI change.** The unit suites do not touch the DOM
 and stayed fully green twice while the page was broken.
 
-### Where we stopped (11 Oct 2026, latest) — read this first
+### Where we stopped (11 Oct 2026, ~22:00 London, latest) — read this first
+
+**The price sites are open** (the user allowed them; curl 200 for Binance, Coinbase, Kraken;
+Twelve Data 401 without a key). Node needs `NODE_USE_ENV_PROXY=1`; the desk's network
+commands re-run themselves with it. **Gold needs the user's Twelve Data key** as the
+environment variable `TWELVEDATA_API_KEY` (cloud environment → Edit → environment
+variables); they were adding it when this was written, then moving to a new session on
+their iPhone. **On resume:** `node -e "console.log(!!process.env.TWELVEDATA_API_KEY)"`, then
+`node desk/desk.mjs scan --pair gold` to see whether the free plan serves 15-minute XAU/USD.
+
+**The watcher is built but not finished** (committed so the next session has it):
+- Done: `desk/live.mjs` (liveRead → engine on M15 → checkPlan; alert text with distances,
+  because no feed is IC Markets' price; `take` rebuilds the ticket from the user's MT5
+  price, refusing after one bar, after a drift of a quarter of the stop, or on a typo);
+  `desk.mjs scan | watch | take`; the engine and feeds take a timeframe
+  (`src/timeframes.js`, `analyse({timeframe, htfBars})`, `resample(…, baseMinutes)`,
+  feeds' `minutes`, `closedBars`); `desk/replay.mjs` (history replay with outcomes);
+  `test/live.test.mjs` on 10 days of recorded Binance bars (`test/fixtures/btc-m15.json`).
+- **Open decision for the user — the target rule.** With the engine's targets as they are
+  (`TARGET_RULE = 'level'`), no idea passed in the recorded 10 days: when no level stands
+  ahead the engine's target is exactly 1R, which can never pay 1R after costs. '1.5R' / '2R'
+  (aim that far only when no level is in the way) gave two or three alerts that week.
+  `node desk/replay.mjs --pair bitcoin --from 2026-01-01` compares the three over 2026 with
+  outcomes; it was running when the session ended — rerun it, show the user the alerts a
+  week and the average R with its range, recommend, and let them choose. Do not pick a rule
+  by which number looks best without saying so: three rules on one sample is a mild
+  multiple-comparison problem.
+- Not done: SKILL.md section for watching (start `watch` with Bash run_in_background,
+  timeout 7200000; on `STATUS: alert` send the reply, PushNotification, restart; on
+  `timeout` restart silently; on `stopped` one line; `watch --stop` on "stop watching";
+  "take it"/a price after an alert → `take --price`); README; an independent review of the
+  watcher; then start it for the user. Phone pushes from this cloud session need Remote
+  Control on their Mac; otherwise alerts are chat messages.
+- The timeframe review (8 findings confirmed, 2 refuted) is fixed and tested: `knownTf`
+  (placeholders like "unknown" name no timeframe), `timeframeMismatch` shared by the page
+  and the desk, the one-off `--tf` wording, the upload window following `staleChartMin`,
+  `config` reporting "unchanged". Units 381 + the watcher suite; smoke green before the
+  watcher's engine changes were rebuilt into the page — rerun it.
 
 **Resumed 11 Oct (evening).** The price hosts were still refused (CONNECT 403 on all four), so
 the user was given the network steps again (below). They then answered both open questions:

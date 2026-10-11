@@ -37,9 +37,21 @@ import {
 } from './indicators.js';
 import { breakEvenWinRate, rMultiple } from './risk.js';
 import { minStop } from './instruments.js';
+import { TIMEFRAMES } from './timeframes.js';
 
-/** Bars of M5 history below which the engine simply declines to read. */
+/** Bars of history below which the engine simply declines to read. */
 export const MIN_BARS = 60;
+
+/*
+ * The engine reads M5 bars on the page and M15 bars in the in-chat watcher
+ * (`timeframe` in analyse). What depends on the candle comes from
+ * TIMEFRAMES: "the last hour" in bars, the eight-hour Bollinger history, the
+ * two higher timeframes for the bias, and the noise part of the minimum stop
+ * (minStopPct is M5-sized; on M15 it is scaled by √3, as in shot.js's floor,
+ * so a stop the engine proposes clears the floor the desk checks it against).
+ * Counts in bars (swing lookbacks, CHoCH recency, sweeps) stay in bars: market
+ * structure is read in candles on any chart.
+ */
 
 /* ------------------------------------------------------------- regime */
 
@@ -67,14 +79,14 @@ export function efficiencyRatio(values, period = 20) {
  * quietly down-weighting them, the engine says out loud that it is discarding
  * them.
  */
-export function detectRegime(bars, ind) {
+export function detectRegime(bars, ind, tf = TIMEFRAMES.M5) {
   const cs = closes(bars);
   const er = efficiencyRatio(cs, 20);
   const adxVal = lastOf(ind.adx.adx);
   const bbw = lastOf(ind.bb.width);
 
   // Where does current Bollinger width sit within its own recent history?
-  const widthHist = ind.bb.width.filter((x) => x !== null).slice(-96);
+  const widthHist = ind.bb.width.filter((x) => x !== null).slice(-tf.widthLookbackBars);
   let widthPct = null;
   if (widthHist.length > 20 && bbw !== null) {
     widthPct = widthHist.filter((w) => w < bbw).length / widthHist.length;
@@ -279,10 +291,10 @@ function locationBucket(bars, ind) {
  * all, not which way to go, so it returns a magnitude that modulates
  * confidence rather than a signed direction.
  */
-function volatilityBucket(bars, ind, inst) {
+function volatilityBucket(bars, ind, inst, tf) {
   const reasons = [];
   const a = lastOf(ind.atr);
-  const aPrev = valueAt(ind.atr, 12);
+  const aPrev = valueAt(ind.atr, tf.barsPerHour);
   let quality = 0;
 
   if (a && aPrev) {
@@ -293,8 +305,8 @@ function volatilityBucket(bars, ind, inst) {
   }
 
   if (a) {
-    reasons.push(`M5 ATR ${a.toFixed(inst.decimalsForDisplay)}`);
-    if (a < minStop(inst, bars[bars.length - 1].c) * 0.6) {
+    reasons.push(`${tf.id} ATR ${a.toFixed(inst.decimalsForDisplay)}`);
+    if (a < minStop(inst, bars[bars.length - 1].c) * tf.noiseScale * 0.6) {
       quality -= 0.8;
       reasons.push('ATR is small relative to the spread — thin conditions, costs dominate');
     }
@@ -328,14 +340,18 @@ function volumeBucket(bars, ind) {
 /* ------------------------------------------------- higher-timeframe bias */
 
 /**
- * Bias from M15 and H1, using only CLOSED bars. `resample` drops the forming
- * bar, so a half-built H1 candle can never leak into the read.
+ * Bias from the next two timeframes up (M15 and H1 for M5 bars, H1 and H4 for
+ * M15), using only CLOSED bars. `resample` drops the forming bar, so a
+ * half-built H1 candle can never leak into the read. The result is keyed by
+ * timeframe (`m15`, `h1`, `h4`), with the two ids in `ids`.
  */
-function higherTimeframeBias(bars) {
-  const out = { m15: null, h1: null, agree: false, notes: [] };
+function higherTimeframeBias(bars, tf) {
+  const [lo, hi] = tf.htf;
+  const k1 = lo.id.toLowerCase(), k2 = hi.id.toLowerCase();
+  const out = { [k1]: null, [k2]: null, ids: [lo.id, hi.id], agree: false, notes: [] };
 
-  for (const [key, mins, need] of [['m15', 15, 30], ['h1', 60, 30]]) {
-    const htf = resample(bars, mins, true);
+  for (const [key, mins, need] of [[k1, lo.minutes, 30], [k2, hi.minutes, 30]]) {
+    const htf = resample(bars, mins, true, tf.minutes);
     if (htf.length < need) { out.notes.push(`not enough closed ${key.toUpperCase()} bars yet`); continue; }
     const cs = closes(htf);
     const e21 = lastOf(ema(cs, 21));
@@ -349,7 +365,7 @@ function higherTimeframeBias(bars) {
     out.notes.push(`${key.toUpperCase()} ${out[key].bias} (last closed bar only)`);
   }
 
-  if (out.m15 && out.h1) out.agree = out.m15.bias === out.h1.bias && out.m15.bias !== 'flat';
+  if (out[k1] && out[k2]) out.agree = out[k1].bias === out[k2].bias && out[k1].bias !== 'flat';
   return out;
 }
 
@@ -375,8 +391,15 @@ export function analyse({
   nowMs = null,
   minSpreadMultiple = 3,
   atrStopMultiple = 1.2,
+  timeframe = 'M5',
+  htfBars = null,
 }) {
   const inst = instrument;
+  // The page's feed is M5; the watcher passes 'M15', and a longer `htfBars`
+  // history so the H4 bias has its 30 closed bars without widening the window
+  // every other reading is taken over.
+  const tf = TIMEFRAMES[timeframe] || TIMEFRAMES.M5;
+  const noiseStop = (p) => minStop(inst, p) * tf.noiseScale;
   const dp = inst.decimalsForDisplay;
   const fmt = (x) => (x === null || x === undefined ? '—' : Number(x).toFixed(dp));
 
@@ -385,7 +408,7 @@ export function analyse({
       ok: false,
       state: 'insufficient-data',
       headline: 'Not enough history to read the chart',
-      detail: `Need at least ${MIN_BARS} five-minute bars, have ${bars ? bars.length : 0}.`,
+      detail: `Need at least ${MIN_BARS} ${tf.words} bars, have ${bars ? bars.length : 0}.`,
       bias: 'none', confidence: 0, invalidation: null, whyNot: [], reasons: [],
     };
   }
@@ -409,15 +432,15 @@ export function analyse({
   ind.fvgs = findFVGs(bars, atrNow, { minAtr: 0.25 });
   ind.sweeps = detectLiquiditySweep(bars, { lookback: 3, withinBars: 6, atrValue: atrNow });
 
-  const regime = detectRegime(bars, ind);
-  const htf = higherTimeframeBias(bars);
+  const regime = detectRegime(bars, ind, tf);
+  const htf = higherTimeframeBias(htfBars && htfBars.length > bars.length ? htfBars : bars, tf);
 
   const buckets = {
     trend: trendBucket(bars, ind),
     momentum: momentumBucket(bars, ind),
     structure: structureBucket(bars, ind),
     location: locationBucket(bars, ind),
-    volatility: volatilityBucket(bars, ind, inst),
+    volatility: volatilityBucket(bars, ind, inst, tf),
     volume: volumeBucket(bars, ind),
   };
 
@@ -479,15 +502,15 @@ export function analyse({
         : Math.min(...recent.map((p) => p.price));
       const pad = atrNow * 0.25;
       const candidate = bias === 'long' ? chosen - pad : chosen + pad;
-      if (Math.abs(price - candidate) >= minStop(inst, price) * 0.5) {
+      if (Math.abs(price - candidate) >= noiseStop(price) * 0.5) {
         invalidation = candidate;
         invalidationBasis = `beyond the last confirmed swing ${bias === 'long' ? 'low' : 'high'} at ${fmt(chosen)}, plus a quarter-ATR of room`;
       }
     }
     if (invalidation === null) {
-      const d = Math.max(atrNow * atrStopMultiple, minStop(inst, price));
+      const d = Math.max(atrNow * atrStopMultiple, noiseStop(price));
       invalidation = bias === 'long' ? price - d : price + d;
-      invalidationBasis = `${atrStopMultiple} x M5 ATR — no usable swing level nearby, so this is a volatility stop, not a structural one`;
+      invalidationBasis = `${atrStopMultiple} x ${tf.id} ATR — no usable swing level nearby, so this is a volatility stop, not a structural one`;
     }
   }
 
@@ -560,7 +583,7 @@ export function analyse({
   }
   if (regime.regime === 'mixed') whyNot.push('Neither trending nor ranging cleanly — historically the least tradeable state, and the one where a confluence score is least meaningful.');
   if (regime.regime === 'compressed') whyNot.push('Volatility is compressed. The break can come either way, and compression alone says nothing about which.');
-  if (!htf.agree) whyNot.push(`M15 and H1 do not agree (${htf.notes.join('; ')}) — a scalp against the higher timeframe needs to be quicker and smaller.`);
+  if (!htf.agree) whyNot.push(`${htf.ids[0]} and ${htf.ids[1]} do not agree (${htf.notes.join('; ')}) — a scalp against the higher timeframe needs to be quicker and smaller.`);
   for (const [name, b] of directional) {
     if (Math.sign(b.score) !== Math.sign(net) && Math.abs(b.score) > 0.3) {
       whyNot.push(`${name} argues the other way: ${b.reasons[0] || 'opposed'}.`);

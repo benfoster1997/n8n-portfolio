@@ -31,10 +31,8 @@ import { sizeBothModels, mt5Ticket, orderSplit, fillRisk, marginPosture } from '
 import { getUpcomingEvents, getActiveBlackout, brokerChartTime, dstMisalignment } from '../src/news-calendar.js';
 import { DEFAULT_WINDOW, windowState, sessionQuality, remainingBands, insideWindow } from '../src/sessions.js';
 import { dayKey, todaysPrints, dayShape, planStatus, whereInRange } from '../src/brief.js';
-import {
-  shotGate, marketOpenNow, stopFloor, shotMaxAgeMs, tfInfo, timeframeOf, seesTimeframe, otherTimeframeSeen,
-  DEFAULT_TIMEFRAME,
-} from '../src/shot.js';
+import { shotGate, marketOpenNow, stopFloor, shotMaxAgeMs, timeframeMismatch } from '../src/shot.js';
+import { tfInfo, timeframeOf, DEFAULT_TIMEFRAME } from '../src/timeframes.js';
 import { assessRecord, breakEvenRate, tradesNeeded, timeToSample } from '../src/edge-test.js';
 
 /** What the desk assumes until the user says otherwise. Mirrors the page's defaults. */
@@ -266,7 +264,7 @@ export function sizeFor({ pair, cfg, stop, entry, spreadNum = 0, side = null, st
 }
 
 /** The warnings that follow a lot size: margin, order splitting, partial fills. */
-function sizeWarnings({ split, fill, posture }) {
+export function sizeWarnings({ split, fill, posture }) {
   const out = [];
   if (posture && posture.state === 'binding') out.push(`⚠ ${posture.headline}: this position takes most of the account in margin.`);
   if (split && split.needsSplit) {
@@ -277,7 +275,7 @@ function sizeWarnings({ split, fill, posture }) {
   return out;
 }
 
-const riskLine = (s, cfg) =>
+export const riskLine = (s, cfg) =>
   `Risking ${cfg.account.currency} ${fmt(s.r.cfd.actualRisk, 2)} · ${cfg.account.riskPct}%${s.usingShadow ? ' of your shadow balance' : ' of the account'}.`;
 
 /** The ticket lines of a reply. */
@@ -315,7 +313,7 @@ export function lotsOnlyLines(s, stop, cfg, pair) {
  * The reply for a checked plan. A rejected idea shows only the reasons it
  * failed — never its direction, summary or levels (decision 22).
  */
-export function formatIdea({ result, pair, ctx, cfg, mode, atMs, nowMs, sized = null, readings = [] }) {
+export function formatIdea({ result, pair, ctx, cfg, mode, atMs, nowMs, sized = null, readings = [], deskTf = null }) {
   const r = result;
   const digits = ctx.digits;
   const trade = r.decision === 'buy' || r.decision === 'sell';
@@ -344,13 +342,15 @@ export function formatIdea({ result, pair, ctx, cfg, mode, atMs, nowMs, sized = 
     if (why.length) out.push(why.join('\n'));
     out.push(`_Read from your screenshot at ${formatHM(atMs, cfg.window.tz)} London (${how}). Levels can be a little off: check them on your MT5 chart before you enter. If MT5's price is now more than ${fmt(r.stopDistance / 4, digits)} from ${fmt(r.entry, digits)}, send a new screenshot — the risk would no longer match. It has no track record, and the decision is yours._`);
   } else if (r.rejected) {
-    out.push(`An idea was suggested, but it failed these checks (${how}${ag}):\n${r.problems.map((p) => `- ${forChat(p)}`).join('\n')}`);
+    out.push(`An idea was suggested, but it failed these checks (${how}${ag}):\n${r.problems.map((p) => `- ${forRun(p, ctx.tf, deskTf)}`).join('\n')}`);
   } else {
     // A plain No trade gives its reasons, not its "against" list: against a
     // no-trade is the case FOR a trade, and in a chat nothing sits behind a
     // tap the way the page's Why? does. A direction on screen gets traded.
     if (r.summary) out.push(r.summary);
     if (r.reasons.length) out.push(r.reasons.map((x) => `- ${x}`).join('\n'));
+    // A chart on the other timeframe: the switch, offered (checkPlan words it).
+    for (const p of r.problems || []) out.push(forRun(p, ctx.tf, deskTf));
     const seen = readings.filter((x) => x && x.readable !== false);
     const none = seen.filter((x) => x.view === 'none').length;
     out.push(`_${how}${r.agreement ? ` · ${none} of ${r.agreement.asked} readers saw no trade${r.agreement.asked > seen.length ? ` (${r.agreement.asked - seen.length} could not read it)` : ''}` : ''}._`);
@@ -364,16 +364,31 @@ export function formatIdea({ result, pair, ctx, cfg, mode, atMs, nowMs, sized = 
  * other timeframe — an M5 out of habit, with the desk on M15 — is named,
  * with the switch offered, instead of a vague "could not read it".
  */
-export function formatUnreadable(pair, readings, tf) {
+export function formatUnreadable(pair, readings, tf, deskTf = tf) {
   const t = tfInfo(tf);
   const head = `**■ No trade · ${label(pair)}**`;
-  const frames = readings.map((r) => r && r.timeframe_seen);
-  const wrong = frames.filter((s) => typeof s === 'string' && s.trim() && !/^</.test(s) && !seesTimeframe(s, t.id));
-  if (wrong.length >= 2) {
-    const other = otherTimeframeSeen(wrong, t.id, 2);
-    return `${head}\n\nThe readers saw ${other ? `an ${other} chart` : 'a chart on another timeframe'}, but the desk is set to ${t.id}. Send a screenshot of the ${t.id} (${t.words}) chart with the price${other ? `, or tell me to switch the desk to ${other}` : ''}.`;
+  const m = timeframeMismatch(readings.map((r) => r && r.timeframe_seen), t.id, 2);
+  if (m) {
+    // A one-off read (gate --tf) on a chart that is really on the desk's own setting.
+    if (m.other && t.id !== deskTf && m.other === deskTf) {
+      return `${head}\n\nYou called it ${t.id}, but the readers saw an ${m.other} chart — the desk's own setting. Send me the price again and I'll read it on ${m.other}.`;
+    }
+    const where = t.id === deskTf ? `the desk is set to ${t.id}` : `you asked for ${t.id}`;
+    return `${head}\n\nThe readers saw ${m.other ? `an ${m.other} chart` : 'a chart on another timeframe'}, but ${where}. Send a screenshot of the ${t.id} (${t.words}) chart with the price${m.other && m.other !== deskTf ? `, or tell me to switch the desk to ${m.other}` : ''}.`;
   }
   return `${head}\n\nFewer than two of the three readers could read the chart. Send a new screenshot of the ${t.id} chart with the price scale on the right showing, and the price.`;
+}
+
+/**
+ * A check's words about switching, for a read on a timeframe the user named
+ * for that one chart: the switch the page offers is the desk's own setting,
+ * so offer to read it on that instead.
+ */
+export function forRun(text, tf, deskTf) {
+  const s = forChat(text);
+  return tf && deskTf && tf !== deskTf
+    ? s.replace(`, or tell me to switch the desk to ${deskTf}`, `, or send me the price again and I'll read it on ${deskTf}, the desk's setting`)
+    : s;
 }
 
 /** "Plan: 2 of 5 trades" for today, or ''. */

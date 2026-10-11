@@ -17,6 +17,12 @@
  *   plan  set --setups "a, b" --max N [--other "..."] [--taken N] | took | undo | show | clear
  *   config [key=value ...]                show or change the account settings
  *   edge  [--trades N --wins W --rr R --planned P --perday D --stop S]   totals, not increments
+ *   scan  [--pair P]                      one read of the live chart now (desk/live.mjs)
+ *   watch [--pair P] [--hours H] [--anytime] [--once] | --stop
+ *                                         read the live chart at every bar close; exits with
+ *                                         STATUS: alert (and the reply) when an idea passes
+ *   take  --price N [--pair P] [--spread S]
+ *                                         the last alert, as a ticket from the user's MT5 price
  *
  * Output: a STATUS line for the session, maybe NOTE lines for the session
  * only, then the text to send the user between "--- reply ---" and
@@ -24,22 +30,36 @@
  * direction, a level or a time to the close.
  *
  * State lives in $SCALP_DESK_HOME (default ~/.scalp-desk): runs, today's plan,
- * the last spread typed. The account settings live in desk/config.json, which
- * is committed so they survive the container being reclaimed.
+ * the last spread typed, the watcher's alerts and status. The account settings
+ * live in desk/config.json, which is committed so they survive the container
+ * being reclaimed. The gold feed's key is read from $TWELVEDATA_API_KEY, set in
+ * the cloud environment's settings — never in the repo or the chat.
+ *
+ * Network commands re-run themselves with NODE_USE_ENV_PROXY=1 when the
+ * environment has a proxy and it is not set: Node's fetch ignores HTTPS_PROXY
+ * otherwise, and every request fails with ENOTFOUND. $SCALP_DESK_BARS (a JSON
+ * file of bars per instrument) stands in for the feeds under test.
  */
-import { readFileSync, writeFileSync, mkdirSync, renameSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, renameSync, existsSync, rmSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
 import {
   withDefaults, pairOf, label, digitsOf, gateFor, gateWord, contextFor, formatBlocked, formatIdea,
   formatNow, formatBrief, formatNews, formatEdge, sizeFor, lotsOnlyLines, ticketLines,
   planLine, nextNewsLine, recentUploads, forChat, fmt, costFor, formatUnreadable, timeframeFor,
 } from './lib.mjs';
 import { INSTRUMENTS } from '../src/instruments.js';
-import { LENSES, analystPrompt, headPrompt, fastPrompt, checkPlan, parseReply, shotMaxAgeMs, tfInfo, timeframeOf } from '../src/shot.js';
+import { LENSES, analystPrompt, headPrompt, fastPrompt, checkPlan, parseReply, shotMaxAgeMs } from '../src/shot.js';
+import { tfInfo, timeframeOf } from '../src/timeframes.js';
 import { SETUPS, planProblem, planStatus, dayKey } from '../src/brief.js';
 import { formatHM } from '../src/timezone.js';
+import { loadBars } from '../src/data-feeds.js';
+import { windowState } from '../src/sessions.js';
+import {
+  FETCH_BARS, liveRead, shouldAlert, ideaRecord, formatLiveIdea, formatLiveNone, takeIdea, nextPollMs, inWatchHours,
+} from './live.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const HOME = process.env.SCALP_DESK_HOME || join(homedir(), '.scalp-desk');
@@ -156,6 +176,36 @@ function imagesAlreadyRead() {
   return c && c.image ? [c.image] : [];
 }
 
+/* ------------------------------------------------------------ live prices */
+
+const NET_CMDS = ['scan', 'watch', 'take'];
+const clock = () => (process.env.SCALP_DESK_NOW ? NOW : Date.now());
+const watchPath = (f) => join(HOME, 'watch', f);
+const goldKey = () => process.env.TWELVEDATA_API_KEY || '';
+/** Can gold be read at all here: its key, or (under test) bars for it. */
+const goldAvailable = () => (process.env.SCALP_DESK_BARS ? !!(readJson(process.env.SCALP_DESK_BARS, {}).XAUUSD || []).length : !!goldKey());
+
+/**
+ * Live bars for one instrument: the feeds, or $SCALP_DESK_BARS under test.
+ * `preferred` asks for one source first — `take` compares prices only within
+ * the source the alert was read from, since the feeds sit tens of dollars apart.
+ */
+async function liveBars(pair, tf, preferred = null) {
+  const fixture = process.env.SCALP_DESK_BARS;
+  if (fixture) {
+    const f = readJson(fixture, {});
+    const bars = f[pair] || [];
+    return bars.length ? { ok: true, bars, source: { id: 'test', label: 'test bars' } } : { ok: false, reason: 'no test bars' };
+  }
+  if (pair === 'XAUUSD' && !goldKey()) return { ok: false, noKey: true, reason: 'no Twelve Data key ($TWELVEDATA_API_KEY)' };
+  const r = await loadBars(pair, { keys: { twelvedata: goldKey() }, limit: FETCH_BARS, minutes: tfInfo(tf).minutes, allowProxy: false, preferred });
+  return r.ok
+    ? { ok: true, bars: r.bars, source: { id: r.source.id, label: r.source.label } }
+    : { ok: false, reason: r.attempts.map((x) => `${x.label}: ${x.reason}`).join('; ') };
+}
+
+const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+
 /* ---------------------------------------------------------------- commands */
 
 const cmds = {
@@ -216,7 +266,8 @@ const cmds = {
       if (!existsSync(a.image)) usage(`No picture at ${a.image}.`);
       image = { path: String(a.image), ageMs: 0 };
     } else if (mode === 'thorough') {
-      const recent = recentUploads(UPLOADS, NOW);
+      // As old as the readers would still accept (15 minutes on M5, 30 on M15).
+      const recent = recentUploads(UPLOADS, NOW, tfInfo(tf).staleChartMin * 60000);
       const batch = recent.filter((x) => recent[0].mtimeMs - x.mtimeMs <= BURST_MS);
       if (batch.length > 1) {
         // Two or more pictures sent together: the session must say which is this instrument's chart.
@@ -231,14 +282,14 @@ const cmds = {
       }
       if (!image) {
         mode = 'fast';
-        notes.push('NOTE: no uploaded picture found on disk in the last 15 minutes, so the three readers cannot open it. Fast mode: read it yourself. Tell the user it was a Fast read and why.');
+        notes.push(`NOTE: no uploaded picture found on disk in the last ${tfInfo(tf).staleChartMin} minutes, so the three readers cannot open it. Fast mode: read it yourself. Tell the user it was a Fast read and why.`);
       }
     }
 
     const c = contextFor({ nowMs: NOW, pair, gate: g, priceNow, spreadNum: sp.spreadNum, spreadTyped: sp.spreadTyped, cfg, plan: loadPlan(), tf });
     const id = newRunId(pair);
     const dir = runDir(id);
-    writeJson(join(dir, 'ctx.json'), { c, pair, mode, tf, atMs: NOW, spreadNum: sp.spreadNum, image: image ? image.path : null, minStopPct: INSTRUMENTS[pair].minStopPct });
+    writeJson(join(dir, 'ctx.json'), { c, pair, mode, tf, deskTf: timeframeFor(cfg), atMs: NOW, spreadNum: sp.spreadNum, image: image ? image.path : null, minStopPct: INSTRUMENTS[pair].minStopPct });
     writeFileSync(join(HOME, 'last-run.txt'), id + '\n');
     if (sp.note) notes.push(`TELL THE USER: ${sp.note}`);
     if (tf !== timeframeFor(cfg)) notes.push(`NOTE: this one read is on ${tf}, as the user named it; the desk's setting stays ${timeframeFor(cfg)}.`);
@@ -266,7 +317,10 @@ const cmds = {
     const { id, dir, ctx } = loadRun(a.run);
     const readings = readingsOf(dir);
     if (readings.filter((r) => r.readable !== false).length < 2) {
-      return say('unreadable', formatUnreadable(ctx.pair, readings, runTf(ctx)));
+      const deskTf = ctx.deskTf || runTf(ctx);
+      const named = runTf(ctx) !== deskTf;
+      return say('unreadable', formatUnreadable(ctx.pair, readings, runTf(ctx), deskTf),
+        named ? [`NOTE: this was a one-off ${runTf(ctx)} read. If the readers saw ${deskTf} and the user sends the price, run the gate again WITHOUT --tf, with --image ${ctx.image}.`] : []);
     }
     writeFileSync(join(dir, 'head.txt'), headPrompt(readings, { ...ctx.c, tf: runTf(ctx) }));
     console.log(`STATUS: go · head · run ${id}`);
@@ -311,7 +365,7 @@ const cmds = {
     }) : null;
     writeJson(join(dir, 'result.json'), { result, checkedAtMs: NOW });
     const tail = [nextNewsLine(NOW, pair, cfg.window), planLine(loadPlan(), NOW, cfg.window)].filter(Boolean).join('\n');
-    const reply = formatIdea({ result, pair, ctx: c, cfg, mode: ctx.mode, atMs: ctx.atMs, nowMs: NOW, sized, readings }) + (tail ? `\n\n${tail}` : '');
+    const reply = formatIdea({ result, pair, ctx: c, cfg, mode: ctx.mode, atMs: ctx.atMs, nowMs: NOW, sized, readings, deskTf: ctx.deskTf || tf }) + (tail ? `\n\n${tail}` : '');
     say(`done · ${result.decision}${result.rejected ? ' (rejected)' : ''}`, reply,
       result.rejected ? ['RULE: a rejected idea\'s direction and levels are never passed on — not in your own words either.'] : []);
   },
@@ -407,10 +461,12 @@ const cmds = {
       if (section) file[section] = { ...(file[section] || {}), [key]: val };
       else file[key] = val;
     }
-    if (sets.length) writeJson(CONFIG, file);
+    // A setting given its current value changes nothing, and needs no commit.
+    const changed = sets.length > 0 && JSON.stringify(file) !== JSON.stringify(configFile);
+    if (changed) writeJson(CONFIG, file);
     const c = withDefaults(file);
     const ac = c.account;
-    say(sets.length ? 'changed · commit desk/config.json' : 'info', [
+    say(changed ? 'changed · commit desk/config.json' : sets.length ? 'unchanged' : 'info', [
       '**Desk settings**',
       `- Balance ${ac.currency} ${fmt(ac.balance, 2)} · risk ${ac.riskPct}% a trade`,
       `- Shadow balance ${ac.shadowBalance ? `${ac.currency} ${fmt(ac.shadowBalance, 2)}` : 'not set'} · sizing from **${ac.sizeFrom === 'shadow' && ac.shadowBalance ? 'the shadow balance' : 'the account balance'}**`,
@@ -443,10 +499,145 @@ const cmds = {
     const costInRisk = rec.typicalStop > 0 ? cost / rec.typicalStop : 0;
     say(changed ? 'changed · commit desk/config.json' : 'info', formatEdge(rec, costInRisk));
   },
+
+  async scan(a) {
+    const tf = timeframeFor(cfg);
+    const pairs = a.pair ? [pairOf(a.pair)] : ['XAUUSD', 'BTCUSD'];
+    if (pairs.includes(null)) usage('Which instrument? --pair gold or --pair bitcoin');
+    const replies = [], notes = [];
+    const state = readJson(watchPath('state.json'), { lastAlert: {} });
+    const ideas = readJson(watchPath('ideas.json'), {});
+    for (const pair of pairs) {
+      const lb = await liveBars(pair, tf);
+      if (!lb.ok) {
+        if (lb.noKey) { if (a.pair) replies.push(`**${label(pair)}** needs a Twelve Data key before I can read its live chart.`); else notes.push(`NOTE: ${pair} skipped — ${lb.reason}.`); }
+        else replies.push(`**${label(pair)}:** the live feed is not answering just now. Send a screenshot instead.`), notes.push(`NOTE: ${pair} feeds — ${lb.reason}`);
+        continue;
+      }
+      const r = liveRead({ pair, bars: lb.bars, nowMs: clock(), cfg, plan: loadPlan(), source: lb.source });
+      if (r.kind === 'idea') {
+        const rec = ideaRecord(r);
+        ideas[pair] = rec;
+        state.lastAlert[pair] = { side: rec.side, barCloseMs: rec.barCloseMs };
+        replies.push(formatLiveIdea(rec, cfg, clock(), loadPlan()));
+      } else replies.push(formatLiveNone(r, cfg));
+    }
+    writeJson(watchPath('ideas.json'), ideas);
+    writeJson(watchPath('state.json'), state);
+    say('info', replies.join('\n\n'), notes);
+  },
+
+  async watch(a) {
+    const pidFile = watchPath('watch.pid');
+    const running = Number(readText(pidFile)) || 0;
+    if (a.stop) {
+      if (running && alive(running) && running !== process.pid) process.kill(running);
+      rmSync(pidFile, { force: true });
+      return say('stopped', running ? 'Stopped watching.' : 'I was not watching.');
+    }
+    if (running && running !== process.pid && alive(running)) {
+      return say('already', null, [`NOTE: a watcher is already running (pid ${running}). Stop it first with: watch --stop`]);
+    }
+    const tf = timeframeFor(cfg);
+    const anytime = !!a.anytime;
+    const maxMs = (num(a.hours) || 1.9) * 3600e3;
+    let pairs = a.pair ? [pairOf(a.pair)] : ['XAUUSD', 'BTCUSD'];
+    if (pairs.includes(null)) usage('Which instrument? --pair gold or --pair bitcoin');
+    const notes = [];
+    if (!goldAvailable() && pairs.includes('XAUUSD')) {
+      pairs = pairs.filter((p) => p !== 'XAUUSD');
+      notes.push('NOTE: gold is not watched — no Twelve Data key ($TWELVEDATA_API_KEY) in this session.');
+      if (!pairs.length) return say('need-key', 'I need your Twelve Data key before I can watch gold (see how to add it above). Bitcoin needs nothing.', notes);
+    }
+    mkdirSync(watchPath(''), { recursive: true });
+    writeFileSync(pidFile, String(process.pid));
+    const started = Date.now();
+    const errors = {};
+    const status = { startedAtMs: clock(), pairs, tf, polls: 0, last: {} };
+    const finish = (st, reply, extra = []) => {
+      rmSync(pidFile, { force: true });
+      writeJson(watchPath('status.json'), { ...status, endedAtMs: clock(), ended: st });
+      say(st, reply, [...notes, ...extra]);
+      process.exit(0);
+    };
+    const sleep = (ms) => new Promise((res) => setTimeout(res, Math.max(0, ms)));
+
+    for (;;) {
+      const now = clock();
+      if (!inWatchHours(now, cfg, anytime)) {
+        const w = windowState(now, cfg.window);
+        if (w.phase === 'before' && !a.once && Date.now() - started + (w.opensAtMs - now) < maxMs) {
+          await sleep(w.opensAtMs - now + 20000);
+          continue;
+        }
+        if (w.phase === 'before' && !a.once) finish('timeout', null, ['NOTE: the window has not opened yet; run watch again.']);
+        finish('stopped', null, [`NOTE: outside the watch hours (${w.phase}). Tell the user the watch has stopped for today, in one line.`]);
+      }
+      const alerts = [];
+      for (const pair of pairs) {
+        const lb = await liveBars(pair, tf);
+        if (!lb.ok) {
+          errors[pair] = (errors[pair] || 0) + 1;
+          status.last[pair] = { kind: 'feed-error', atMs: now, reason: lb.reason };
+          if (errors[pair] >= 3) {
+            finish('error', `The live ${label(pair).toLowerCase()} feed has stopped answering, so I have stopped watching. Send screenshots meanwhile, or tell me to start watching again.`, [`NOTE: ${lb.reason}`]);
+          }
+          continue;
+        }
+        errors[pair] = 0;
+        const r = liveRead({ pair, bars: lb.bars, nowMs: now, cfg, plan: loadPlan(), source: lb.source });
+        status.last[pair] = { kind: r.kind, atMs: now, price: r.price ?? null, source: lb.source.label, barCloseMs: r.barCloseMs ?? null };
+        const state = readJson(watchPath('state.json'), { lastAlert: {} });
+        if (r.kind === 'idea' && shouldAlert(state, r)) alerts.push(r);
+      }
+      status.polls += 1;
+      writeJson(watchPath('status.json'), status);
+      if (alerts.length) {
+        const ideas = readJson(watchPath('ideas.json'), {});
+        const state = readJson(watchPath('state.json'), { lastAlert: {} });
+        const replies = alerts.map((r) => {
+          const rec = ideaRecord(r);
+          ideas[r.pair] = rec;
+          state.lastAlert[r.pair] = { side: rec.side, barCloseMs: rec.barCloseMs };
+          return formatLiveIdea(rec, cfg, now, loadPlan());
+        });
+        writeJson(watchPath('ideas.json'), ideas);
+        writeJson(watchPath('state.json'), state);
+        finish('alert', replies.join('\n\n'), ['NOTE: send the reply, push a one-line notification, then start the watch again.']);
+      }
+      if (a.once) finish('quiet', null, pairs.map((p) => `NOTE: ${p} ${status.last[p] ? status.last[p].kind : 'not read'}`));
+      const next = nextPollMs(clock(), tf);
+      if (Date.now() - started + (next - clock()) > maxMs) finish('timeout', null, ['NOTE: the watch reached its time limit; start it again (no message to the user).']);
+      await sleep(next - clock());
+    }
+  },
+
+  async take(a) {
+    const price = num(a.price);
+    if (!(price > 0)) usage('take --price N, the price on MT5\'s Quotes tab now.');
+    const ideas = readJson(watchPath('ideas.json'), {});
+    const pair = a.pair ? pairOf(a.pair) : Object.values(ideas).sort((x, y) => y.barCloseMs - x.barCloseMs)[0]?.pair;
+    const rec = pair ? ideas[pair] : null;
+    if (!rec) return say('need-input', 'There is no live idea to take. Wait for an alert, or send a screenshot and the price.');
+    const typed = num(a.spread);
+    if (typed !== null && !(typed > 0)) usage('--spread must be a positive number.');
+    const sp = spreadFor(pair, typed);
+    const lb = await liveBars(pair, rec.tf, rec.sourceId);
+    // Only a price from the same feed as the alert says whether it has moved.
+    const livePrice = lb.ok && (lb.source.id === rec.sourceId || rec.sourceId === null) ? lb.bars[lb.bars.length - 1].c : null;
+    const res = takeIdea({ rec, priceNow: price, livePrice, nowMs: clock(), cfg, spreadNum: sp.spreadNum, typedSpread: sp.spreadTyped });
+    say(res.ok ? 'done · ticket' : res.needSpread ? 'need-spread' : 'refused', res.text, lb.ok ? [] : [`NOTE: feeds — ${lb.reason}`]);
+  },
 };
 
 const args = parseArgs(process.argv.slice(2));
 const cmd = cmds[args._[0]];
 if (!cmd) usage(`Commands: ${Object.keys(cmds).join(', ')}`);
+if (NET_CMDS.includes(args._[0]) && !process.env.SCALP_DESK_BARS && (process.env.HTTPS_PROXY || process.env.https_proxy) && !process.env.NODE_USE_ENV_PROXY) {
+  const r = spawnSync(process.execPath, [...process.execArgv, ...process.argv.slice(1)], {
+    stdio: 'inherit', env: { ...process.env, NODE_USE_ENV_PROXY: '1', NODE_NO_WARNINGS: '1' },
+  });
+  process.exit(r.status ?? 1);
+}
 mkdirSync(HOME, { recursive: true });
-cmd(args);
+await cmd(args);

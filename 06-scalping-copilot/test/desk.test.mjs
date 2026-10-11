@@ -517,5 +517,60 @@ test('size keeps using an M15 idea for 30 minutes', () => {
   assert.match(d.run(['size', '--stop', '6', '--pair', 'gold'], '2026-10-05T13:31:00Z'), /over 30 minutes old/);
 });
 
+console.log('\nwhat the review of the timeframe change found (11 Oct 2026)');
+test('readers who could not see the label are not reported as a wrong timeframe', () => {
+  const saw = (tf) => ({ readable: false, instrument_seen: 'XAUUSD', timeframe_seen: tf });
+  for (const set of [['unknown', 'not visible', 'M15'], ['N/A', 'unknown', null], ['unknown', 'unknown', 'H1']]) {
+    const t = formatUnreadable('XAUUSD', set.map(saw), 'M15');
+    assert.match(t, /Fewer than two[\s\S]*price scale on the right/, set.join());
+    assert.doesNotMatch(t, /another timeframe/);
+  }
+});
+test('a one-off --tf M5 read on a chart that is really M15 says so, and never claims the desk is on M5', () => {
+  const saw = (tf) => ({ readable: false, instrument_seen: 'XAUUSD', timeframe_seen: tf });
+  const t = formatUnreadable('XAUUSD', [saw('M15'), saw('M15'), saw('M15')], 'M5', 'M15');
+  assert.match(t, /You called it M5, but the readers saw an M15 chart — the desk's own setting/);
+  assert.doesNotMatch(t, /desk is set to M5|switch the desk/);
+  const d = deskEnv('2026-10-05T13:00:00Z');
+  d.upload();
+  const id = runId(d.run(['gate', '--pair', 'gold', '--price', '4400', '--tf', 'M5']));
+  const dir = join(d.home, 'runs', id);
+  for (const k of [1, 2, 3]) writeFileSync(join(dir, `reading-${k}.json`), JSON.stringify(saw('M15')));
+  const h = d.run(['head', '--run', id]);
+  assert.match(replyOf(h), /You called it M5/); assert.match(h, /NOTE: this was a one-off M5 read[\s\S]*WITHOUT --tf/);
+  // The check path: readers read it, the plan is turned down for not being M5.
+  const id2 = runId(d.run(['gate', '--pair', 'gold', '--price', '4400', '--tf', 'M5', '--mode', 'fast']));
+  writeFileSync(join(d.home, 'runs', id2, 'plan.json'), JSON.stringify(goodPlan));
+  const r = replyOf(d.run(['check', '--run', id2]));
+  assert.match(r, /not on M5/); assert.match(r, /send me the price again and I'll read it on M15, the desk's setting/);
+  assert.doesNotMatch(r, /switch the desk to M15/);
+});
+test('on M15 a 20-minute-old upload is still read by three readers; on M5 it is too old', () => {
+  const mk = (config) => {
+    const d = deskEnv('2026-10-05T13:00:00Z', { config });
+    const p = d.upload();
+    const t = new Date(Date.parse('2026-10-05T13:00:00Z') - 20 * 60000);
+    utimesSync(p, t, t);
+    return d.run(['gate', '--pair', 'gold', '--price', '4400']);
+  };
+  assert.match(mk({}), /STATUS: go · thorough/);
+  const m5 = mk({ timeframe: 'M5' });
+  assert.match(m5, /STATUS: go · fast/); assert.match(m5, /in the last 15 minutes/);
+});
+test('setting the timeframe it already has changes nothing and asks for no commit', () => {
+  const d = deskEnv('2026-10-05T13:00:00Z', { config: { timeframe: 'M15' } });
+  const out = d.run(['config', 'timeframe=M15']);
+  assert.match(out, /STATUS: unchanged/); assert.doesNotMatch(out, /commit/);
+  assert.match(d.run(['config', 'timeframe=M5']), /STATUS: changed · commit/);
+});
+test('a Fast no-trade on the other timeframe offers the switch in chat words', () => {
+  const d = deskEnv('2026-10-05T13:00:00Z');
+  const id = runId(d.run(['gate', '--pair', 'gold', '--price', '4400', '--mode', 'fast']));
+  writeFileSync(join(d.home, 'runs', id, 'plan.json'), JSON.stringify({ ...goodPlan, decision: 'no_trade', timeframe_seen: 'M5', stop_loss: null, take_profit_1: null, summary: 'This is an M5 chart.' }));
+  const r = replyOf(d.run(['check', '--run', id]));
+  assert.match(r, /on M5, not M15[\s\S]*tell me to switch the desk to M5/);
+  assert.doesNotMatch(r, /Setup/);
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

@@ -752,14 +752,16 @@ export function volumeProfile(bars, buckets = 40) {
 /* ---------------------------------------------------------- resampling */
 
 /**
- * Resample M5 bars up to a higher timeframe.
+ * Resample bars up to a higher timeframe. `baseMinutes` is the length of the
+ * bars given (5 for the page's M5 feed, 15 for the watcher's M15 bars): it
+ * decides how many make a complete higher bar.
  *
  * `dropPartial` defaults to true and should almost never be turned off. The
  * newest higher-timeframe bar is still forming; treating it as closed is
  * look-ahead bias in the only direction that flatters a backtest. When we take
  * a bias from H1 we must take it from the last CLOSED H1 bar.
  */
-export function resample(bars, minutes, dropPartial = true) {
+export function resample(bars, minutes, dropPartial = true, baseMinutes = 5) {
   if (!bars.length) return [];
   const ms = minutes * 60000;
   const out = [];
@@ -780,7 +782,7 @@ export function resample(bars, minutes, dropPartial = true) {
   if (cur) out.push(cur);
 
   if (dropPartial && out.length) {
-    const expected = minutes / 5;
+    const expected = minutes / baseMinutes;
     if (out[out.length - 1].count < expected) out.pop();
   }
   return out;

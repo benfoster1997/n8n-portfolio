@@ -31,50 +31,9 @@
  * answer whenever the reading is not clean.
  */
 import { formatHM } from './timezone.js';
+import { TIMEFRAMES, DEFAULT_TIMEFRAME, tfInfo } from './timeframes.js';
 
-/**
- * The chart timeframes a screenshot is read on, and what changes with them.
- *
- * M15 is the default from 11 Oct 2026, at the user's choice; M5 is kept. A
- * Thorough read takes about two minutes, plus the screenshot and the typing:
- * close to half of a five-minute candle, a small part of a fifteen-minute
- * one. And a wider stop makes bitcoin's fixed $6 spread a smaller share of
- * each trade. What scales with the candle, and why:
- *  - noiseScale  the noise part of the stop floor. Over a random walk a
- *                candle's range grows with the square root of its length, so
- *                an M15 candle is about √3 ≈ 1.7× an M5 one.
- *  - maxAgeMin   how long an analysis may feed a ticket: three M5 candles,
- *                but two M15 candles, not three. 45 minutes would match M5's
- *                drift against the stop, but the structure the readers saw
- *                changes too, and a two-minute read does not need the time.
- *  - staleChartMin  a screenshot whose last candle is this far behind the
- *                chart clock is an old one.
- *  - newsSoonMin a major release this close is a caution: a trade opened now
- *                may still be open when it lands, and M15 trades last longer.
- *  - newsAheadMin how far ahead the readers are told about releases.
- * Deliberately not scaled: the cost part of the floor (a trade costs the
- * same on any chart), the price tolerance and the drift warning (already
- * fractions of the stop), the gate's clock rules, and the final stretch
- * (decision 1 is about the session's end, not the candle).
- */
-export const TIMEFRAMES = {
-  M5: { id: 'M5', minutes: 5, words: 'five-minute', noiseScale: 1, maxAgeMin: 15, staleChartMin: 15, newsSoonMin: 30, newsAheadMin: 90 },
-  M15: { id: 'M15', minutes: 15, words: 'fifteen-minute', noiseScale: Math.sqrt(3), maxAgeMin: 30, staleChartMin: 30, newsSoonMin: 60, newsAheadMin: 180 },
-};
-export const DEFAULT_TIMEFRAME = 'M15';
-
-/** A timeframe as typed — "M15", "m5", "15", "5m", "5 min" — → 'M5' / 'M15', or null for anything else. */
-export function timeframeOf(x) {
-  const s = String(x ?? '').trim().toUpperCase().replace(/\s+/g, '');
-  const m = s.match(/^M?(\d+)(M|MIN|MINS|MINUTE|MINUTES)?$/);
-  const id = m ? `M${Number(m[1])}` : null;
-  return id && TIMEFRAMES[id] ? id : null;
-}
-
-/** A timeframe's settings; anything unrecognised gets the default's. */
-export const tfInfo = (tf) => TIMEFRAMES[timeframeOf(tf)] || TIMEFRAMES[DEFAULT_TIMEFRAME];
-
-/** How old an analysis on this timeframe may be before the ticket stops using it. */
+/** How old an analysis on this timeframe may be before the ticket stops using it (TIMEFRAMES in timeframes.js). */
 export const shotMaxAgeMs = (tf) => tfInfo(tf).maxAgeMin * 60000;
 
 const spanText = (min) => (min >= 120 && min % 60 === 0 ? `${min / 60} hours` : `${min} minutes`);
@@ -340,7 +299,22 @@ export function seesInstrument(seen, pair) {
   return keys.some((k) => s.includes(k));
 }
 
-const knownTf = (seen) => typeof seen === 'string' && seen.trim() !== '' && !/^</.test(seen);
+/**
+ * Does a printed value name SOME timeframe? Readers who cannot see the label
+ * write "unknown", "not visible" or "N/A"; those name none, and count as
+ * unknown — which, as for the instrument, is not held against the chart.
+ * "H1", "hourly" and "5m" do name one. A bare number is read as minutes.
+ */
+export function knownTf(seen) {
+  if (typeof seen === 'number' && Number.isFinite(seen)) seen = String(seen);
+  if (typeof seen !== 'string' || !seen.trim() || /^</.test(seen)) return false;
+  const s = seen.toLowerCase();
+  return /(^|[^a-z0-9])(m|h|d|w|mn)\s?\d{1,3}(?![0-9])/.test(s)
+    || /(^|[^0-9.])\d{1,3}\s*-?\s*(m|min|mins|minute|minutes|h|hr|hour|hours)(?![a-z])/.test(s)
+    || /^\s*\d{1,3}\s*$/.test(s)
+    || /\b(hourly|daily|weekly|monthly)\b/.test(s)
+    || /\b(one|five|fifteen|thirty)[\s-]?minute/.test(s);
+}
 
 /**
  * Does a timeframe as printed on the chart name this one? "M15", "XAUUSD, M15",
@@ -350,7 +324,7 @@ const knownTf = (seen) => typeof seen === 'string' && seen.trim() !== '' && !/^<
 export function seesTimeframe(seen, tf) {
   if (!knownTf(seen)) return true;
   const { minutes: n, words } = tfInfo(tf);
-  const s = seen.toLowerCase();
+  const s = String(seen).toLowerCase();
   return new RegExp(`(^|[^a-z0-9])m\\s?${n}(?![0-9])`).test(s)
     || new RegExp(`(^|[^0-9.])${n}\\s*-?\\s*(m|min|mins|minute|minutes)(?![a-z])`).test(s)
     || s.trim() === String(n)
@@ -364,6 +338,18 @@ export function seesTimeframe(seen, tf) {
 export function otherTimeframeSeen(seen, tf, need = 1) {
   const known = seen.filter(knownTf);
   return Object.keys(TIMEFRAMES).find((k) => k !== tfInfo(tf).id && known.filter((s) => seesTimeframe(s, k)).length >= need) || null;
+}
+
+/**
+ * Did at least `need` of these printed timeframes positively name one other
+ * than `tf`? Null if not; else { other } — the other supported timeframe they
+ * named, or null for one this tool does not offer (H1, say). The page and the
+ * desk both word their "wrong timeframe" replies from this, so they agree.
+ */
+export function timeframeMismatch(seen, tf, need = 1) {
+  const id = tfInfo(tf).id;
+  const wrong = seen.filter((s) => knownTf(s) && !seesTimeframe(s, id));
+  return wrong.length >= need ? { other: otherTimeframeSeen(wrong, id, need) } : null;
 }
 
 /**
@@ -415,7 +401,13 @@ export function checkPlan(plan, readings = [], ctx = {}) {
       reasons: [], against: [], summary: '', invalidatedIf: '', confidence: base.confidence, agreement: agreementOf(agree),
     };
   }
-  if (decision === 'no_trade') return { ...base, decision, problems: [], agreement: agreementOf(agree) };
+  if (decision === 'no_trade') {
+    // A reader told to answer no_trade for a chart on the other timeframe
+    // (fast, chat) says so in its timeframe_seen; offer the switch here too.
+    const m = timeframeMismatch([...readings.map((r) => r && r.timeframe_seen), plan.timeframe_seen], tf.id, asked ? 2 : 1);
+    const problems = m && m.other ? [`The chart is on ${m.other}, not ${tf.id}. Switch MT5 to the ${tf.words} chart and take a new screenshot, or set Chart timeframe to ${m.other} in Setup.`] : [];
+    return { ...base, decision, problems, agreement: agreementOf(agree) };
+  }
 
   // From here, a buy or sell that must earn its way onto the screen.
   const reject = () => ({

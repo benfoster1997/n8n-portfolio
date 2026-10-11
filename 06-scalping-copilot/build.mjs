@@ -20,6 +20,7 @@ const src = (f) => join(here, 'src', f);
 // valid topological order of the import graph.
 const MODULES = [
   'timezone.js',
+  'timeframes.js',
   'indicators.js',
   'instruments.js',
   'risk.js',

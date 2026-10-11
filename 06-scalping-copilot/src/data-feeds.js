@@ -47,7 +47,13 @@ async function fetchJson(url, { timeout = TIMEOUT_MS } = {}) {
   }
 }
 
-/** Every adapter normalises to this shape. Timestamps are epoch MILLISECONDS. */
+/**
+ * Every adapter normalises to this shape. Timestamps are epoch MILLISECONDS,
+ * and `t` is the bar's OPEN time. `fetch(limit, key, minutes)` takes the bar
+ * length in minutes: 5 for the page, 15 for the in-chat watcher. The newest
+ * bar each source returns is usually still forming; callers that need closed
+ * bars only drop it (closedBars below).
+ */
 const bar = (t, o, h, l, c, v) => ({
   t: Number(t), o: Number(o), h: Number(h), l: Number(l), c: Number(c), v: Number(v) || 0,
 });
@@ -67,8 +73,8 @@ export const BTC_SOURCES = [
     instrument: 'BTCUSDT — tether-quoted, not BTCUSD',
     needsKey: false,
     note: 'The public market-data host, intended for exactly this kind of unauthenticated use.',
-    async fetch(limit = 300) {
-      const d = await fetchJson(`https://data-api.binance.vision/api/v3/klines?symbol=BTCUSDT&interval=5m&limit=${limit}`);
+    async fetch(limit = 300, _key, minutes = 5) {
+      const d = await fetchJson(`https://data-api.binance.vision/api/v3/klines?symbol=BTCUSDT&interval=${minutes}m&limit=${Math.min(1000, limit)}`);
       return sane(d.map((k) => bar(k[0], k[1], k[2], k[3], k[4], k[5])));
     },
   },
@@ -78,8 +84,8 @@ export const BTC_SOURCES = [
     instrument: 'BTCUSDT — tether-quoted, not BTCUSD',
     needsKey: false,
     note: 'Same data, the main API host.',
-    async fetch(limit = 300) {
-      const d = await fetchJson(`https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=5m&limit=${limit}`);
+    async fetch(limit = 300, _key, minutes = 5) {
+      const d = await fetchJson(`https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=${minutes}m&limit=${Math.min(1000, limit)}`);
       return sane(d.map((k) => bar(k[0], k[1], k[2], k[3], k[4], k[5])));
     },
   },
@@ -89,8 +95,8 @@ export const BTC_SOURCES = [
     instrument: 'true BTC/USD',
     needsKey: false,
     note: 'Genuine dollar pricing rather than tether. Returns newest first, capped at 300 candles.',
-    async fetch() {
-      const d = await fetchJson('https://api.exchange.coinbase.com/products/BTC-USD/candles?granularity=300');
+    async fetch(_limit, _key, minutes = 5) {
+      const d = await fetchJson(`https://api.exchange.coinbase.com/products/BTC-USD/candles?granularity=${minutes * 60}`);
       // [ time(s), low, high, open, close, volume ]
       return sane(d.map((k) => bar(k[0] * 1000, k[3], k[2], k[1], k[4], k[5])));
     },
@@ -101,8 +107,8 @@ export const BTC_SOURCES = [
     instrument: 'true BTC/USD',
     needsKey: false,
     note: 'Genuine dollar pricing.',
-    async fetch() {
-      const d = await fetchJson('https://api.kraken.com/0/public/OHLC?pair=XBTUSD&interval=5');
+    async fetch(_limit, _key, minutes = 5) {
+      const d = await fetchJson(`https://api.kraken.com/0/public/OHLC?pair=XBTUSD&interval=${minutes}`);
       if (d.error && d.error.length) throw new Error(d.error.join(', '));
       const key = Object.keys(d.result).find((k) => k !== 'last');
       return sane(d.result[key].map((k) => bar(k[0] * 1000, k[1], k[2], k[3], k[4], k[6])));
@@ -114,8 +120,8 @@ export const BTC_SOURCES = [
     instrument: 'BTCUSDT — tether-quoted',
     needsKey: false,
     note: 'Newest first.',
-    async fetch(limit = 300) {
-      const d = await fetchJson(`https://www.okx.com/api/v5/market/candles?instId=BTC-USDT&bar=5m&limit=${Math.min(300, limit)}`);
+    async fetch(limit = 300, _key, minutes = 5) {
+      const d = await fetchJson(`https://www.okx.com/api/v5/market/candles?instId=BTC-USDT&bar=${minutes}m&limit=${Math.min(300, limit)}`);
       if (d.code !== '0') throw new Error(d.msg || 'OKX error');
       return sane(d.data.map((k) => bar(k[0], k[1], k[2], k[3], k[4], k[5])));
     },
@@ -126,8 +132,8 @@ export const BTC_SOURCES = [
     instrument: 'true BTC/USD',
     needsKey: false,
     note: 'Genuine dollar pricing.',
-    async fetch(limit = 300) {
-      const d = await fetchJson(`https://www.bitstamp.net/api/v2/ohlc/btcusd/?step=300&limit=${Math.min(1000, limit)}`);
+    async fetch(limit = 300, _key, minutes = 5) {
+      const d = await fetchJson(`https://www.bitstamp.net/api/v2/ohlc/btcusd/?step=${minutes * 60}&limit=${Math.min(1000, limit)}`);
       return sane(d.data.ohlc.map((k) => bar(k.timestamp * 1000, k.open, k.high, k.low, k.close, k.volume)));
     },
   },
@@ -147,9 +153,10 @@ export const XAU_SOURCES = [
     needsKey: true,
     keyUrl: 'https://twelvedata.com/pricing',
     note: 'Free tier is rate-limited per minute and per day. At one poll a minute a single session can exhaust a day\'s allowance, so the tool polls conservatively and backs off on a 429.',
-    async fetch(limit = 300, key) {
+    async fetch(limit = 300, key, minutes = 5) {
       if (!key) throw new Error('needs an API key');
-      const d = await fetchJson(`https://api.twelvedata.com/time_series?symbol=XAU/USD&interval=5min&outputsize=${limit}&apikey=${encodeURIComponent(key)}`);
+      // timezone=UTC: without it the datetimes come back in the exchange's own zone.
+      const d = await fetchJson(`https://api.twelvedata.com/time_series?symbol=XAU/USD&interval=${minutes}min&outputsize=${limit}&timezone=UTC&apikey=${encodeURIComponent(key)}`);
       if (d.status === 'error') throw new Error(d.message || 'Twelve Data error');
       if (!d.values) throw new Error('no values returned');
       return sane(d.values.map((v) => bar(
@@ -164,10 +171,10 @@ export const XAU_SOURCES = [
     needsKey: true,
     keyUrl: 'https://www.alphavantage.co/support/#api-key',
     note: 'Free tier is very tightly rate-limited. Intraday FX coverage of XAU/USD is inconsistent — verify before relying on it.',
-    async fetch(limit = 300, key) {
+    async fetch(limit = 300, key, minutes = 5) {
       if (!key) throw new Error('needs an API key');
-      const d = await fetchJson(`https://www.alphavantage.co/query?function=FX_INTRADAY&from_symbol=XAU&to_symbol=USD&interval=5min&outputsize=full&apikey=${encodeURIComponent(key)}`);
-      const series = d['Time Series FX (5min)'];
+      const d = await fetchJson(`https://www.alphavantage.co/query?function=FX_INTRADAY&from_symbol=XAU&to_symbol=USD&interval=${minutes}min&outputsize=full&apikey=${encodeURIComponent(key)}`);
+      const series = d[`Time Series FX (${minutes}min)`];
       if (!series) throw new Error(d.Note || d['Error Message'] || 'no series returned');
       return sane(Object.entries(series).slice(0, limit).map(([ts, v]) => bar(
         new Date(ts.replace(' ', 'T') + 'Z').getTime(),
@@ -182,8 +189,8 @@ export const XAU_SOURCES = [
     needsKey: false,
     proxy: true,
     note: 'NOT GOLD. PAXG is a token redeemable for gold; it tracks spot loosely but carries its own premium, its own liquidity and its own spread. Usable to see shape and rough structure when nothing else is available. Never size a position from it.',
-    async fetch() {
-      const d = await fetchJson('https://api.kraken.com/0/public/OHLC?pair=PAXGUSD&interval=5');
+    async fetch(_limit, _key, minutes = 5) {
+      const d = await fetchJson(`https://api.kraken.com/0/public/OHLC?pair=PAXGUSD&interval=${minutes}`);
       if (d.error && d.error.length) throw new Error(d.error.join(', '));
       const key = Object.keys(d.result).find((k) => k !== 'last');
       return sane(d.result[key].map((k) => bar(k[0] * 1000, k[1], k[2], k[3], k[4], k[6])));
@@ -195,7 +202,7 @@ export const XAU_SOURCES = [
  * Try each source in order. Returns the bars plus a full account of what was
  * attempted, so the UI can name the source and show what failed.
  */
-export async function loadBars(pair, { keys = {}, limit = 300, preferred = null, allowProxy = false } = {}) {
+export async function loadBars(pair, { keys = {}, limit = 300, preferred = null, allowProxy = false, minutes = 5 } = {}) {
   const all = pair === 'BTCUSD' ? BTC_SOURCES : XAU_SOURCES;
   let sources = allowProxy ? all : all.filter((s) => !s.proxy);
   if (preferred) {
@@ -210,7 +217,7 @@ export async function loadBars(pair, { keys = {}, limit = 300, preferred = null,
       continue;
     }
     try {
-      const bars = await src.fetch(limit, keys[src.id]);
+      const bars = await src.fetch(limit, keys[src.id], minutes);
       if (!bars.length) throw new Error('returned no usable bars');
       attempts.push({ id: src.id, label: src.label, ok: true, bars: bars.length });
       return {
@@ -226,6 +233,14 @@ export async function loadBars(pair, { keys = {}, limit = 300, preferred = null,
     ok: false, bars: [], source: null, attempts,
     reason: 'No data source answered. This is expected if the endpoints are blocked on your network, or if gold needs an API key you have not entered yet. Manual mode below works without any of them.',
   };
+}
+
+/**
+ * Only the bars that have closed by `nowMs`. Every source also returns the
+ * bar still forming, and a read taken from it changes until the bar closes.
+ */
+export function closedBars(bars, minutes, nowMs) {
+  return bars.filter((b) => b.t + minutes * 60000 <= nowMs);
 }
 
 /**
