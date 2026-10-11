@@ -42,7 +42,39 @@ container it uses the preinstalled headless_shell under `/opt/pw-browsers`.
 **Run the smoke test after any UI change.** The unit suites do not touch the DOM
 and stayed fully green twice while the page was broken.
 
-### Where we stopped (11 Oct 2026) — read this first
+### Where we stopped (11 Oct 2026, latest) — read this first
+
+**Open decision with the user: live alerts, and a longer timeframe.** Asked how they could get
+alerts rather than screenshotting, they were offered four routes (TradingView alerts ~$13–15
+a month with a Pine script I'd write; an MT5 alert robot ~$15 a month plus a computer; Claude
+watching in the chat; not yet). They chose **Claude watches in the chat**. Their setup: a Mac
+they could leave on, but **MT5 only runs properly on their iPhone**, so MT5 stays there.
+
+They then asked two things, answered but **not yet acted on**:
+1. *Is it worth moving off M5 to give Claude and them more time?* — Answered **yes, M15**: the
+   ~2-minute Thorough read plus screenshot/typing goes stale on M5, and wider M15 stops make the
+   $6 BTC spread a smaller share of each trade with fewer trades paying it; fewer setups and
+   smaller lots for the same risk are the trade-off, and it does not by itself create an edge.
+   Offered to make the timeframe **a setting (M15 default, M5 kept)** and retune the checks
+   (`checkPlan` rejects non-M5 today; prompts say M5; the 15-minute freshness window; stop
+   floors and tolerances are M5-sized). **Waiting for their yes.**
+2. *How to unblock the price sites, or can I do it?* — I cannot; the cloud environment's
+   network policy is theirs. Steps given: session title bar → cloud environment menu → Edit →
+   Network access → Limited → Allowed domains: `data-api.binance.vision`,
+   `api.exchange.coinbase.com`, `api.kraken.com`, `api.twelvedata.com` (gold; needs their free
+   key), with "Allow package managers" left ticked; docs
+   https://code.claude.com/docs/en/cloud-environments#network-access. If it does not take
+   effect in the running session, a new session with "resume" will pick it up.
+
+**On resume:** first check whether the hosts are reachable now
+(`curl -sS -m 10 -o /dev/null -w '%{http_code}' 'https://data-api.binance.vision/api/v3/klines?symbol=BTCUSDT&interval=5m&limit=2'`
+— 200 means unblocked). Then, with their go-ahead: (a) the M15 setting; (b) the watcher —
+live bars from those hosts into the existing engine (`src/signal-engine.js`, `src/data-feeds.js`)
+and the desk's gate and checks, polling on the bar close, alerting the phone (check what
+the session offers: PushNotification / Routines, and how long a cloud session can keep a
+loop running before promising anything). Not yet built; nothing promised beyond that.
+
+### Earlier on 11 Oct
 
 - **The tool now runs inside the Claude chat** (decision 24). The user asked for it not to need
   a browser: they send MT5 screenshots into a Claude Code session from the Claude app. The
