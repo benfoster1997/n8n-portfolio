@@ -67,6 +67,10 @@ and stayed fully green twice while the page was broken.
 - **Next step:** nothing pending. On "resume", wait for the next screenshot or request and use
   the `scalp-desk` skill. If two pictures arrive (chart + quotes), pass the chart with
   `--image`.
+- **11 Oct 2026:** the user asked for live-price alerts without screenshots. Researched and
+  answered (see "Answers already given in chat", last entry); they were asked to pick a
+  route — TradingView alerts, an MT5 alert robot, Claude watching in the chat, or proving
+  the screenshot route first. **Nothing built yet; wait for their choice.**
 
 ### Before that (4 Oct 2026)
 
@@ -559,6 +563,51 @@ the commit messages are the durable record.
   a separate, riskier project outside the desk's checks); and faster deciding means more
   trades paying the $6 BTC spread. Advised proving an edge first with the pre-declared
   sample in "Is it working yet?", then revisiting automation as its own project.
+- "Can it watch live prices and notify me buy/sell with SL/TP, so I don't miss a scalp —
+  even using Claude desktop?" (11 Oct) — researched (5 strands, each re-checked by a
+  skeptic; most vendor pages were unreachable from the container, so prices and plan
+  limits rest on search extracts). Answer given: **possible, but not reliably from a Claude
+  chat, and the signal it would push is unproven.** The user was asked to choose a route.
+  - *This cloud session:* every market-data host is refused by the environment's network
+    policy (Binance, Coinbase, Kraken, OKX, Bitstamp, Twelve Data, OANDA, gold-api, Yahoo:
+    CONNECT 403). The user can allow domains (environment → Network access → Allowed
+    domains); Node must then run with `NODE_USE_ENV_PROXY=1`. Even then: background jobs
+    cap at 2 h, a Monitor at 30 min, the VM can pause when idle, Routines' floor is 1 hour,
+    and phone push (PushNotification) is documented only via Remote Control. Not a
+    dependable 8-hour alerter. Claude desktop: 1-minute scheduled tasks, but only while the
+    app is open and the computer awake; phone push not guaranteed per event.
+  - *TradingView* (recommended if they want alerts): carries IC Markets' own feed
+    (`ICMARKETS:XAUUSD`, `ICMARKETS:BTCUSD`; match to the demo server unconfirmed); alerts
+    run server-side and push to its iPhone app, typically seconds after bar close. Free
+    Basic has **0 indicator alerts**; Essential (~$13–15/month USD, UK price unconfirmed)
+    has 20, expiring after 2 months. Pine has no live news calendar — blackouts would be
+    written in for the alert's 2-month life. Porting the engine needs custom code for
+    relative volume, level clustering, structure, efficiency ratio, M15/H1 bias and gold's
+    17:00 New York VWAP anchor. TradingView's official MCP (beta, 16 Sep 2026, Essential+)
+    has **delayed** data, so it cannot be Claude's live feed; it can set simple price alerts.
+  - *MT5 Expert Advisor + `SendNotification()`*: the broker's exact bid/ask, pushed into the
+    MT5 app (max 2/s, 10/min; delivery "cannot be guaranteed", delays reported). Needs a
+    terminal running all session: MQL5 Virtual Hosting ~$15/month (longer-term prices
+    conflict), set up and updated only from desktop MT5 (Windows, or Mac via Wine).
+    IC Markets' free VPS needs 15 live lots a month — not on demo. MQL5 cannot be compiled
+    or tested in the container.
+  - *Feeds, if built in the session:* Twelve Data free key for gold (800/day claimed,
+    unconfirmed; free-key XAU/USD 5-min access to be tested; add `&timezone=UTC`), Coinbase
+    candles for BTC (keyless; rows are [time, low, high, open, close, volume]). None is IC
+    Markets' price, so levels must be distances re-anchored to the MT5 bid. MetaApi reads
+    the user's own MT5 account but needs their login and is paid (calls `*.agiliumtrade.ai`).
+  - *Code reuse:* `analyse()` already returns side, stop and targets from bars, and the
+    gate, `checkPlan()` and sizing apply. A `watch` command is ~150–200 lines plus tests.
+    Before building: drop the still-forming bar (`data-feeds.js` keeps it); pass
+    `allowProxy: false` (the PAXG stand-in can otherwise print a gold ticket); pass the
+    cost (no spread = no cost check); gate on `gateFor()` (outside 08:00–16:00 the engine
+    still reads); settle bitcoin, where `sessionQuality()` stands down 08:00–12:00 and all
+    weekend but decision 23 allows it at any hour; and set a shadow balance (sizing from
+    £9.8m at 1% is meaningless).
+  - *The catch:* the engine has never been tested against outcomes. On 2,000 random-walk
+    series it still gave a direction ~70% of the time, and 0.3–1.4% of snapshots passed
+    every check; its nearest target sat under 1R in 51% (gold) / 62% (BTC) of reads, which
+    `checkPlan()` rejects. `desk/config.json` has 0 trades and no planned sample.
 
 ## Conventions
 
