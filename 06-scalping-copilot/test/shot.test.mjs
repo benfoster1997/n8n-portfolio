@@ -8,8 +8,8 @@
 import assert from 'node:assert/strict';
 import {
   shotGate, checkPlan, analystPrompt, headPrompt, fastPrompt, contextLines,
-  LENSES, median, shotIsFresh, SHOT_MAX_AGE_MS, marketOpenNow, seesInstrument, stopFloor,
-  chatPrompt, parseReply,
+  LENSES, median, shotIsFresh, shotMaxAgeMs, marketOpenNow, seesInstrument, stopFloor,
+  chatPrompt, parseReply, TIMEFRAMES, DEFAULT_TIMEFRAME, timeframeOf, tfInfo, seesTimeframe, otherTimeframeSeen,
 } from '../src/shot.js';
 import { DEFAULT_WINDOW } from '../src/sessions.js';
 import { INSTRUMENTS } from '../src/instruments.js';
@@ -33,8 +33,9 @@ const plan = (over = {}) => ({
   against: ['Near resistance'], invalidated_if: 'Price closes below 4386.5.', ...over,
 });
 const three = (over = {}) => [reading(over), reading(over), reading(over)];
-// Gold: $0.05 spread + $0.074 commission; minimum stop 0.05% of price.
-const CTX = { priceNow: 4391.2, cost: 0.124, digits: 2, pair: 'XAUUSD', minStopPct: 0.0005, asked: 3 };
+// Gold: $0.05 spread + $0.074 commission; minimum stop 0.05% of price. The
+// cases below were written for M5 and run on it; M15 has its own section.
+const CTX = { priceNow: 4391.2, cost: 0.124, digits: 2, pair: 'XAUUSD', minStopPct: 0.0005, asked: 3, timeframe: 'M5' };
 const has = (r, re) => r.problems.some((p) => re.test(p));
 
 console.log('\nis the market open (broker server time, UTC+3)');
@@ -86,6 +87,14 @@ test('a major release within 30 minutes is a caution, not a block', () => {
   const now = Date.UTC(2026, 6, 2, 12, 0);
   const g = gate({ nowMs: now, nextMajor: { short: 'NFP', ts: now + 20 * 60000 } });
   assert.equal(g.state, 'caution'); assert.match(g.message, /NFP/); assert.equal(g.needsSpread, false);
+});
+test('on M15 the caution starts an hour before a major release; on M5, half an hour', () => {
+  const now = Date.UTC(2026, 6, 2, 12, 0);
+  const nfp = { short: 'NFP', ts: now + 45 * 60000 };
+  assert.equal(gate({ nowMs: now, nextMajor: nfp, timeframe: 'M15' }).state, 'caution');
+  assert.equal(gate({ nowMs: now, nextMajor: nfp }).state, 'caution', 'M15 is the default');
+  assert.equal(gate({ nowMs: now, nextMajor: nfp, timeframe: 'M5' }).state, 'ok');
+  assert.equal(gate({ nowMs: now, nextMajor: { ...nfp, ts: now + 61 * 60000 }, timeframe: 'M15' }).state, 'ok');
 });
 test('bitcoin is analysed at any hour: its quiet hours do not stop it (user request, 4 Oct)', () => {
   const g = gate({ pair: 'BTCUSD', band: 'dead', insideWindow: true });
@@ -267,11 +276,86 @@ test('a pasted plan gets every check a page analysis gets', () => {
   assert.equal(checkPlan(parseReply(JSON.stringify(plan({ stop_loss: 4395 }))), [], F).decision, 'no_trade');
 });
 
+console.log('\nthe chart timeframe (M15 by default from 11 Oct 2026; M5 kept)');
+
+const M15 = { ...CTX, timeframe: 'M15' };
+test('M15 is the default, and only M5 and M15 are offered', () => {
+  assert.equal(DEFAULT_TIMEFRAME, 'M15');
+  assert.deepEqual(Object.keys(TIMEFRAMES).sort(), ['M15', 'M5']);
+  assert.equal(tfInfo(undefined).id, 'M15'); assert.equal(tfInfo('nonsense').id, 'M15');
+});
+test('a timeframe is understood however it is typed, and nothing else is', () => {
+  for (const x of ['M15', 'm15', '15', '15m', '15 min', ' M15 ', '15 minutes']) assert.equal(timeframeOf(x), 'M15', x);
+  for (const x of ['M5', 'm5', '5', '5m', '5 min']) assert.equal(timeframeOf(x), 'M5', x);
+  for (const x of ['H1', 'M1', 'M30', 'M50', '', null, undefined, true, 'fast']) assert.equal(timeframeOf(x), null, String(x));
+});
+test('a timeframe as printed on the chart is matched by its own number, never by a digit inside another', () => {
+  for (const x of ['M15', 'XAUUSD, M15', 'XAUUSD,M15', '15m', '15 min', '15-minute', 'fifteen-minute', 'Fifteen minutes']) assert.ok(seesTimeframe(x, 'M15'), x);
+  for (const x of ['M5', 'M1', 'H1', 'M30', 'M150', '5m', 'XAUUSD, M5']) assert.ok(!seesTimeframe(x, 'M15'), x);
+  for (const x of ['M5', 'XAUUSD, M5', '5m', '5 min', 'five-minute']) assert.ok(seesTimeframe(x, 'M5'), x);
+  for (const x of ['M15', '15m', 'XAUUSD, M15', 'M50', 'H1']) assert.ok(!seesTimeframe(x, 'M5'), x);
+  for (const x of [null, '', '<as printed on the chart, e.g. H1>']) assert.ok(seesTimeframe(x, 'M15'), 'unknown is not held against it');
+});
+test('on M15 an M15 chart passes; an M5 chart is turned down, with the switch offered', () => {
+  const ok = checkPlan(plan({ timeframe_seen: 'M15' }), three({ timeframe_seen: 'M15' }), M15);
+  assert.equal(ok.decision, 'buy');
+  const r = checkPlan(plan(), three(), M15);
+  assert.ok(has(r, /not on M15\. Switch MT5 to the fifteen-minute chart/));
+  assert.ok(has(r, /set Chart timeframe to M5 in Setup/));
+  assert.ok(has(checkPlan(plan(), three(), { ...CTX, timeframe: undefined }), /not on M15/), 'M15 when none is given');
+});
+test('on M5 an M15 chart is turned down the same way; an H1 chart is turned down with no switch offered', () => {
+  const r = checkPlan(plan({ timeframe_seen: 'M15' }), three({ timeframe_seen: 'M15' }), CTX);
+  assert.ok(has(r, /not on M5/)); assert.ok(has(r, /Chart timeframe to M15/));
+  const h = checkPlan(plan({ timeframe_seen: 'H1' }), three({ timeframe_seen: 'H1' }), M15);
+  assert.ok(has(h, /not on M15/)); assert.ok(!has(h, /Chart timeframe to/));
+});
+test('one reader on the wrong timeframe out of three does not sink it; two do', () => {
+  const rs = [reading({ timeframe_seen: 'M15' }), reading({ timeframe_seen: 'M15' }), reading()];
+  assert.equal(checkPlan(plan({ timeframe_seen: 'M15' }), rs, M15).decision, 'buy');
+  assert.equal(otherTimeframeSeen(['M5', 'M15', null], 'M15', 2), null);
+  assert.equal(otherTimeframeSeen(['M5', 'XAUUSD, M5', null], 'M15', 2), 'M5');
+});
+test('a stop that clears M5 noise but not M15 noise is turned down on M15, and says why', () => {
+  // 1.60 from 4,391.20: over M5's 1.24 floor, under M15's 1.90.
+  const p = { timeframe_seen: 'M15', stop_loss: 4389.6, take_profit_1: 4393.5 };
+  assert.equal(checkPlan(plan({ ...p, timeframe_seen: 'M5' }), three({ timeframe_seen: 'M5' }), CTX).decision, 'buy');
+  const r = checkPlan(plan(p), three({ timeframe_seen: 'M15' }), M15);
+  assert.ok(has(r, /needs at least 1\.90 to clear the costs and ordinary fifteen-minute noise/));
+});
+test('the readers are told the timeframe, its noise, its news window and its staleness — and not the other one', () => {
+  const c15 = { ...C, tf: 'M15', news: ['NFP at 13:30 London'] };
+  for (const p of [analystPrompt(LENSES[0], c15), headPrompt([reading({ timeframe_seen: 'M15' })], c15), fastPrompt(c15), chatPrompt(c15)]) {
+    for (const s of ['M15 (fifteen-minute candles)', 'ordinary fifteen-minute noise', 'next 3 hours', 'within 60 minutes']) assert.ok(p.includes(s), `missing "${s}"`);
+    assert.ok(!/five-minute|\bM5\b/.test(p), 'no M5 wording on M15');
+  }
+  assert.match(analystPrompt(LENSES[0], c15), /timeframe is not M15/);
+  assert.match(analystPrompt(LENSES[0], c15), /more than 30 minutes before the chart clock/);
+  const c5 = { ...C, tf: 'M5', news: ['NFP at 13:30 London'] };
+  const p5 = analystPrompt(LENSES[0], c5);
+  for (const s of ['M5 (five-minute candles)', 'ordinary five-minute noise', 'next 90 minutes', 'within 30 minutes', 'timeframe is not M5', 'more than 15 minutes before']) assert.ok(p5.includes(s), `missing "${s}"`);
+  assert.ok(!/fifteen-minute|\bM15\b/.test(p5));
+  assert.match(contextLines({ ...C, tf: 'M15' }).join('\n'), /No scheduled releases in the next 3 hours/);
+});
+test('the format examples do not suggest the timeframe the trader expects', () => {
+  for (const tf of ['M5', 'M15']) {
+    for (const p of [analystPrompt(LENSES[0], { ...C, tf }), headPrompt([], { ...C, tf }), fastPrompt({ ...C, tf })]) {
+      assert.ok(!/"timeframe_seen": "[^"]*\bM1?5\b/.test(p), `${tf}: the example names M5 or M15`);
+    }
+  }
+});
+
 console.log('\nodds and ends');
 
 test('the stop floor is the larger of 10× the cost and half the minimum stop', () => {
-  assert.equal(stopFloor(0.124, 4391.2, 0.0005), 1.24);
-  assert.equal(+stopFloor(6, 84400, 0.0015).toFixed(2), 63.3);
+  assert.equal(stopFloor(0.124, 4391.2, 0.0005, 'M5'), 1.24);
+  assert.equal(+stopFloor(6, 84400, 0.0015, 'M5').toFixed(2), 63.3);
+});
+test('on M15 the noise part grows by √3, the cost part does not', () => {
+  assert.equal(+stopFloor(0.124, 4391.2, 0.0005, 'M15').toFixed(2), 1.9);     // was 1.24, cost-bound
+  assert.equal(+stopFloor(6, 84400, 0.0015, 'M15').toFixed(2), 109.64);      // was 63.30
+  assert.equal(stopFloor(1, 4391.2, 0.0005, 'M15'), 10, 'a dear trade is still cost-bound');
+  assert.equal(stopFloor(0.124, 4391.2, 0.0005), stopFloor(0.124, 4391.2, 0.0005, 'M15'), 'M15 is the default');
 });
 test('symbol names are matched loosely, and an unreadable one is not held against it', () => {
   assert.ok(seesInstrument('XAUUSD.r', 'XAUUSD')); assert.ok(seesInstrument('GOLD', 'XAUUSD'));
@@ -282,11 +366,19 @@ test('median ignores junk', () => {
   assert.equal(median([3, NaN, 1, 2]), 2); assert.equal(median([]), null);
 });
 test('an analysis is used for a ticket only while fresh, on the same instrument, and only for a trade', () => {
-  const shot = { pair: 'XAUUSD', atMs: 0, result: { decision: 'buy' } };
-  assert.equal(shotIsFresh(shot, SHOT_MAX_AGE_MS - 1, 'XAUUSD'), true);
-  assert.equal(shotIsFresh(shot, SHOT_MAX_AGE_MS + 1, 'XAUUSD'), false);
+  const shot = { pair: 'XAUUSD', atMs: 0, result: { decision: 'buy' }, tf: 'M5' };
+  assert.equal(shotIsFresh(shot, shotMaxAgeMs('M5') - 1, 'XAUUSD'), true);
+  assert.equal(shotIsFresh(shot, shotMaxAgeMs('M5') + 1, 'XAUUSD'), false);
   assert.equal(shotIsFresh(shot, 1, 'BTCUSD'), false);
   assert.equal(shotIsFresh({ ...shot, result: { decision: 'no_trade' } }, 1, 'XAUUSD'), false);
+});
+test('fresh for 15 minutes on M5 and 30 on M15, by the analysis\'s own timeframe', () => {
+  assert.equal(shotMaxAgeMs('M5'), 15 * 60000);
+  assert.equal(shotMaxAgeMs('M15'), 30 * 60000);
+  const shot = { pair: 'XAUUSD', atMs: 0, result: { decision: 'buy' } };
+  assert.equal(shotIsFresh({ ...shot, tf: 'M15' }, 20 * 60000, 'XAUUSD'), true);
+  assert.equal(shotIsFresh({ ...shot, tf: 'M5' }, 20 * 60000, 'XAUUSD'), false);
+  assert.equal(shotIsFresh({ ...shot, tf: 'M15' }, 31 * 60000, 'XAUUSD'), false);
 });
 
 console.log('\nhow the decision is written');

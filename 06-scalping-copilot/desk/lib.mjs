@@ -31,7 +31,10 @@ import { sizeBothModels, mt5Ticket, orderSplit, fillRisk, marginPosture } from '
 import { getUpcomingEvents, getActiveBlackout, brokerChartTime, dstMisalignment } from '../src/news-calendar.js';
 import { DEFAULT_WINDOW, windowState, sessionQuality, remainingBands, insideWindow } from '../src/sessions.js';
 import { dayKey, todaysPrints, dayShape, planStatus, whereInRange } from '../src/brief.js';
-import { shotGate, marketOpenNow, stopFloor, SHOT_MAX_AGE_MS } from '../src/shot.js';
+import {
+  shotGate, marketOpenNow, stopFloor, shotMaxAgeMs, tfInfo, timeframeOf, seesTimeframe, otherTimeframeSeen,
+  DEFAULT_TIMEFRAME,
+} from '../src/shot.js';
 import { assessRecord, breakEvenRate, tradesNeeded, timeToSample } from '../src/edge-test.js';
 
 /** What the desk assumes until the user says otherwise. Mirrors the page's defaults. */
@@ -47,6 +50,8 @@ export const DEFAULT_CONFIG = {
   broker: { serverOffset: 'auto', fillMode: 'ioc' },
   window: DEFAULT_WINDOW,
   mode: 'thorough',
+  // The chart screenshots are read on (shot.js TIMEFRAMES). M15 from 11 Oct 2026, at the user's choice.
+  timeframe: DEFAULT_TIMEFRAME,
   record: { trades: 0, wins: 0, rewardRisk: 1, perDay: 5, plannedSample: 0 },
 };
 
@@ -103,21 +108,24 @@ export function clockCheckLine(nowMs, cfg) {
 
 /* ------------------------------------------------------------------ gate */
 
+/** The desk's chart timeframe: one named for this read, else the setting. */
+export const timeframeFor = (cfg, named = null) => timeframeOf(named) || timeframeOf(cfg.timeframe) || DEFAULT_TIMEFRAME;
+
 /** The same gate the page's screenshot card applies (app.js currentShotGate). */
-export function gateFor(pair, nowMs, cfg) {
+export function gateFor(pair, nowMs, cfg, tf = timeframeFor(cfg)) {
   const win = cfg.window;
   const inst = INSTRUMENTS[pair];
   const w = windowState(nowMs, win);
   const q = sessionQuality(nowMs, pair, win);
   const band = remainingBands(nowMs, pair, win).find((b) => b.current);
-  const nextMajor = getUpcomingEvents(nowMs, 1, pair, { includeContext: false })
+  const nextMajor = getUpcomingEvents(nowMs, tfInfo(tf).newsSoonMin / 60 + 1, pair, { includeContext: false })
     .filter((e) => e.tier === 1 && e.ts > nowMs)[0] || null;
   return shotGate({
     pair, weekend: w.phase === 'weekend',
     blackout: getActiveBlackout(nowMs, pair, {}),
     band: q.band, insideWindow: w.open, win,
     marketOpen: marketOpenNow(inst, nowMs, serverOffsetFor(nowMs, cfg)),
-    bandEndsAtMs: band ? band.endsAtMs : null, nextMajor, nowMs,
+    bandEndsAtMs: band ? band.endsAtMs : null, nextMajor, nowMs, timeframe: tf,
   });
 }
 
@@ -133,14 +141,15 @@ export function costFor(pair, spreadNum, cfg) {
  * Everything the readers are told, in the shape shot.js's prompts take — the
  * page's shotContext(), with the account settings coming from the config.
  */
-export function contextFor({ nowMs, pair, gate, priceNow, spreadNum, spreadTyped, cfg, plan = null }) {
+export function contextFor({ nowMs, pair, gate, priceNow, spreadNum, spreadTyped, cfg, plan = null, tf = timeframeFor(cfg) }) {
   const inst = INSTRUMENTS[pair];
+  const t = tfInfo(tf);
   const digits = digitsOf(pair);
   const { comm, cost } = costFor(pair, spreadNum, cfg);
   const ps = planStatus(plan, dayKey(nowMs, cfg.window));
   const chart = brokerChartTime(nowMs, serverOffsetFor(nowMs, cfg));
   return {
-    pair, digits, priceNow,
+    pair, digits, priceNow, tf: t.id,
     nowText: formatHM(nowMs, 'Europe/London'),
     weekday: new Intl.DateTimeFormat('en-GB', { weekday: 'long', timeZone: 'Europe/London' }).format(nowMs),
     chartClock: chart ? chart.text : null,
@@ -148,8 +157,8 @@ export function contextFor({ nowMs, pair, gate, priceNow, spreadNum, spreadTyped
     spread: spreadNum.toFixed(digits), spreadNum,
     spreadSource: spreadTyped ? 'typed in by the trader' : "last read off the trader's MT5",
     commission: comm > 0 ? comm.toFixed(3) : 0, cost: cost.toFixed(3), costNum: cost,
-    stopFloor: stopFloor(cost, priceNow, inst.minStopPct).toFixed(digits),
-    news: getUpcomingEvents(nowMs, 1.5, pair, { includeContext: false })
+    stopFloor: stopFloor(cost, priceNow, inst.minStopPct, t.id).toFixed(digits),
+    news: getUpcomingEvents(nowMs, t.newsAheadMin / 60, pair, { includeContext: false })
       .filter((e) => e.ts > nowMs).map((e) => `${e.short || e.name} at ${formatHM(e.ts, 'Europe/London')} London`),
     caution: gate.state === 'caution' ? gate.message : null,
     planSetups: ps ? ps.setups : [], tradesTaken: ps ? ps.taken : 0, maxTrades: ps ? ps.max : 0,
@@ -168,6 +177,7 @@ export function forChat(text) {
   return String(text)
     .replace('the instrument selected at the top', 'the instrument you named')
     .replace('This page builds market orders only', 'The desk builds market orders only')
+    .replace(/, or set Chart timeframe to (M\d+) in Setup/, ', or tell me to switch the desk to $1')
     .replace('Switch to Bitcoin, or come back on Monday', 'Bitcoin is still open, or come back on Monday')
     .replace('type today\'s spread before you analyse', 'send me today\'s spread from MT5')
     .replace('type the spread from MT5 before you analyse', 'send me the spread from MT5')
@@ -314,7 +324,7 @@ export function formatIdea({ result, pair, ctx, cfg, mode, atMs, nowMs, sized = 
   const ag = r.agreement ? `, ${r.agreement.agree} of ${r.agreement.asked} readings agree${r.agreement.asked > r.agreement.of ? ` (${r.agreement.asked - r.agreement.of} could not read it)` : ''}` : '';
   const out = [`**${head} · ${label(pair)}**`];
   if (ctx.caution && trade) out.push(`⚠ ${cautionAfter(ctx.caution)}`);
-  if (nowMs - atMs > SHOT_MAX_AGE_MS) out.push('⚠ This analysis is over 15 minutes old. Send a new screenshot before trading on it.');
+  if (nowMs - atMs > shotMaxAgeMs(ctx.tf)) out.push(`⚠ This analysis is over ${tfInfo(ctx.tf).maxAgeMin} minutes old. Send a new screenshot before trading on it.`);
 
   if (trade) {
     out.push([
@@ -348,6 +358,24 @@ export function formatIdea({ result, pair, ctx, cfg, mode, atMs, nowMs, sized = 
   return out.join('\n\n');
 }
 
+/**
+ * The reply when fewer than two readers could read the chart. Readers say
+ * which timeframe they saw even when they cannot read it, so a chart on the
+ * other timeframe — an M5 out of habit, with the desk on M15 — is named,
+ * with the switch offered, instead of a vague "could not read it".
+ */
+export function formatUnreadable(pair, readings, tf) {
+  const t = tfInfo(tf);
+  const head = `**■ No trade · ${label(pair)}**`;
+  const frames = readings.map((r) => r && r.timeframe_seen);
+  const wrong = frames.filter((s) => typeof s === 'string' && s.trim() && !/^</.test(s) && !seesTimeframe(s, t.id));
+  if (wrong.length >= 2) {
+    const other = otherTimeframeSeen(wrong, t.id, 2);
+    return `${head}\n\nThe readers saw ${other ? `an ${other} chart` : 'a chart on another timeframe'}, but the desk is set to ${t.id}. Send a screenshot of the ${t.id} (${t.words}) chart with the price${other ? `, or tell me to switch the desk to ${other}` : ''}.`;
+  }
+  return `${head}\n\nFewer than two of the three readers could read the chart. Send a new screenshot of the ${t.id} chart with the price scale on the right showing, and the price.`;
+}
+
 /** "Plan: 2 of 5 trades" for today, or ''. */
 export function planLine(plan, nowMs, win) {
   const ps = planStatus(plan, dayKey(nowMs, win));
@@ -367,6 +395,8 @@ export function formatNow(nowMs, cfg, plan) {
     rows.push(`- ${label(pair)}: **${word}**${g.message ? ` — ${forChat(g.message)}` : ''}`);
   }
   out.push(rows.join('\n'));
+  const tf = tfInfo(timeframeFor(cfg));
+  out.push(`Screenshots are read on the **${tf.id}** (${tf.words}) chart.`);
   const news = nextNewsLine(nowMs, null, win, 24);
   if (news) out.push(news);
   const pl = planLine(plan, nowMs, win);

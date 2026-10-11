@@ -1,4 +1,4 @@
-# M5 Scalp Desk — XAUUSD & BTCUSD
+# Scalp Desk — XAUUSD & BTCUSD
 
 A single-file web dashboard that sits next to MetaTrader 5 on a phone and reads the
 five-minute chart: trend and structure, where the levels are, what the session is
@@ -22,6 +22,10 @@ buy or sell *ideas* from a picture of the MT5 chart, behind checks written in pl
 **Since 4 October 2026 it also runs inside a Claude chat** — the user sends MT5 screenshots
 to a Claude Code session from the Claude app, and the session runs the desk (`desk/`)
 instead of the page. That is now the main way it is used; see the next section.
+
+**Since 11 October 2026 screenshots are read on the fifteen-minute chart (M15)** by
+default, with M5 kept as a setting — see [The chart timeframe](#the-chart-timeframe-m15-by-default).
+The live engine described further down still reads five-minute bars.
 
 ---
 
@@ -53,6 +57,8 @@ the spread); the session runs `desk/desk.mjs` and sends back what it prints.
 - **Also:** the brief, the week's news, "can I trade now", a lot size for a typed stop, the day's
   plan and trade count, and the "is it working yet?" record. The rules for the session are in
   `.claude/skills/scalp-desk/SKILL.md`.
+- **The timeframe** is `timeframe` in `desk/config.json` (M15; "switch to M5" changes it). A
+  chart the user names as the other timeframe is read on that one, for that read only.
 
 **What the desk does not do.** It reads a picture, so a level can be a little off; every idea
 says to check the levels on the MT5 chart. It has no track record. It cannot see MT5: the price
@@ -66,6 +72,37 @@ Account settings and the trade record are in `desk/config.json`, which is commit
 server clock is taken as New York + 7 (what the broker's gold break showed): UTC+3 until
 1 November, UTC+2 after; in the one week the conventions disagree, the desk asks the user to
 check the clock on their MT5 chart.
+
+---
+
+## The chart timeframe: M15 by default
+
+The user moved from M5 to M15 on 11 October 2026, and both the page (Setup → **Chart
+timeframe**) and the desk (`timeframe` in `desk/config.json`) now default to it; M5 is kept.
+Two reasons. A Thorough read takes about two minutes, plus the screenshot and the typing —
+nearly half of a five-minute candle, a small part of a fifteen-minute one. And a wider stop
+makes bitcoin's fixed $6.00 spread a smaller share of each trade, with fewer trades paying
+it. The cost of the change: fewer setups, and smaller lots for the same risk. It does not
+by itself create an edge.
+
+What follows the setting, all from one table (`TIMEFRAMES` in `src/shot.js`):
+
+| | M5 | M15 | Why |
+|---|---|---|---|
+| Chart the readers accept | M5 | M15 | another timeframe is turned down, with the switch offered |
+| Noise part of the stop floor | ½ × minimum stop | × √3 | a candle's range grows with the square root of its length |
+| An idea feeds the ticket for | 15 min | 30 min | three M5 candles; two M15 candles, not three |
+| A screenshot is old when its last candle is behind the chart clock by | 15 min | 30 min | |
+| A major release is a caution within | 30 min | 60 min | an M15 trade is likelier to still be open when it lands |
+| Releases the readers are told about | next 90 min | next 3 h | |
+
+What does **not** follow it, deliberately: the cost part of the floor (10× the all-in cost
+— a trade costs the same on any chart); the price tolerance and the drift warning (already
+fractions of the stop); every clock rule in the gate (the dead zone, blackouts, a shut
+market); and the final stretch, which marks confidence down in the last 30 minutes on
+either timeframe because decision 1 is about the session's end, not the candle. At equal
+drift against the stop, M15's ticket window would be 45 minutes; 30 was chosen because the
+structure the readers saw also changes, and a two-minute read does not need the time.
 
 ---
 
@@ -158,7 +195,7 @@ trading* and *after you have stopped*, because those are different kinds of fact
 Inside claude.ai the page cannot load live prices — claude.ai's security policy blocks
 its connections to every price feed (confirmed on the user's iPhone, 27 September 2026).
 So the Read tab asks for the **current price, typed from MT5**, and a **screenshot of the
-MT5 M5 chart**, and sends the picture to Claude on the user's own account through the
+MT5 chart on the timeframe set** (M15 unless changed to M5), and sends the picture to Claude on the user's own account through the
 artifact `sample` capability. At weekends and outside the window it also asks for the
 spread, which is unmeasured then.
 
@@ -169,16 +206,16 @@ spread, which is unmeasured then.
   order at the typed price, with a stop loss, take profit 1 (and a second level if the
   chart shows one), the reward-to-risk after spread and commission, the readers' own
   confidence, and how many readings agreed. The Size tab's ticket then carries the stop
-  loss and take profit 1, with a lot size from the user's risk settings, for 15 minutes —
-  and drops them at once if a blackout or the dead zone begins.
+  loss and take profit 1, with a lot size from the user's risk settings, for 30 minutes on
+  M15 (15 on M5) — and drops them at once if a blackout or the dead zone begins.
 - **Plain code decides what the model cannot argue with.** No analysis at all — and no
   usage spent — when the broker's market is shut, and for gold in a news blackout or the
   weekday dead zone. **Bitcoin is analysed at any hour its market is open** (the user's
   request, 4 October 2026): its quiet hours and the trading window no longer stop it, and a
   release blackout is shown as a warning, with the spread required, rather than a block. Any plan becomes **No trade**, with the reason shown, if the chart shows a
-  different price from the typed one, it is the wrong instrument or not M5, the price
-  scale cannot be read, the stop is on the wrong side or inside the floor (the larger of
-  10× the all-in cost and half the minimum stop), take profit 1 pays less than the risk
+  different price from the typed one, it is the wrong instrument or not on the timeframe
+  set, the price scale cannot be read, the stop is on the wrong side or inside the floor
+  (the larger of 10× the all-in cost and half the minimum stop, ×√3 on M15), take profit 1 pays less than the risk
   after costs, the readers call it low confidence, it asks for a limit order, or a level is
   off the visible chart — and, on Thorough, if fewer than two readings agree. Fast has one
   reader, so it cannot catch a disagreement.
@@ -350,6 +387,11 @@ with the safe areas handled.
   MT5 before entering.
 - **In a chat, it cannot see MT5.** The desk knows only the price, spread and trades the
   user types; it never sees an order, a fill or a balance.
+- **The timeframe setting does not reach the live engine.** It governs screenshot reads, on
+  the page and in the chat. The engine that reads live bars still reads five-minute bars
+  (with M15 and H1 for its bias) — and inside claude.ai it never runs. Nor does the tool
+  switch timeframe for you: a chart on the other one is turned down, and the reply says how
+  to switch.
 
 ## Knowing whether it works
 

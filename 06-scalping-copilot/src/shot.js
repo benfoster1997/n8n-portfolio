@@ -5,8 +5,8 @@
  * security policy blocks outside connections — confirmed on the user's iPhone,
  * 27 Sep 2026), and the user chose to keep it there. What the page CAN do is
  * send a picture to Claude on the user's own account, through the artifact
- * `sample` capability. So the user screenshots the M5 chart in MT5 and the
- * page asks for a trade idea.
+ * `sample` capability. So the user screenshots the chart in MT5 (M15 by
+ * default, M5 if they choose it) and the page asks for a trade idea.
  *
  * How it is read. Three analysts look at the same picture independently, each
  * through a different lens, then a head trader reconciles them against the
@@ -22,8 +22,8 @@
  *  - the check: every plan becomes "No trade", with the reason shown, unless
  *    it is a market order on the instrument and timeframe selected, read at the
  *    price the user typed, with the stop on the right side and clear of both
- *    costs and ordinary five-minute noise, and a first target that pays at
- *    least the risk after the full cost of the trade.
+ *    costs and the ordinary noise of one candle, and a first target that pays
+ *    at least the risk after the full cost of the trade.
  *
  * This is the one place the tool says buy or sell. The user asked for it
  * (27 Sep 2026), knowing the earlier design deliberately never did. It is
@@ -32,8 +32,52 @@
  */
 import { formatHM } from './timezone.js';
 
-/** How old an analysis may be before the ticket stops using it. */
-export const SHOT_MAX_AGE_MS = 15 * 60000;
+/**
+ * The chart timeframes a screenshot is read on, and what changes with them.
+ *
+ * M15 is the default from 11 Oct 2026, at the user's choice; M5 is kept. A
+ * Thorough read takes about two minutes, plus the screenshot and the typing:
+ * close to half of a five-minute candle, a small part of a fifteen-minute
+ * one. And a wider stop makes bitcoin's fixed $6 spread a smaller share of
+ * each trade. What scales with the candle, and why:
+ *  - noiseScale  the noise part of the stop floor. Over a random walk a
+ *                candle's range grows with the square root of its length, so
+ *                an M15 candle is about √3 ≈ 1.7× an M5 one.
+ *  - maxAgeMin   how long an analysis may feed a ticket: three M5 candles,
+ *                but two M15 candles, not three. 45 minutes would match M5's
+ *                drift against the stop, but the structure the readers saw
+ *                changes too, and a two-minute read does not need the time.
+ *  - staleChartMin  a screenshot whose last candle is this far behind the
+ *                chart clock is an old one.
+ *  - newsSoonMin a major release this close is a caution: a trade opened now
+ *                may still be open when it lands, and M15 trades last longer.
+ *  - newsAheadMin how far ahead the readers are told about releases.
+ * Deliberately not scaled: the cost part of the floor (a trade costs the
+ * same on any chart), the price tolerance and the drift warning (already
+ * fractions of the stop), the gate's clock rules, and the final stretch
+ * (decision 1 is about the session's end, not the candle).
+ */
+export const TIMEFRAMES = {
+  M5: { id: 'M5', minutes: 5, words: 'five-minute', noiseScale: 1, maxAgeMin: 15, staleChartMin: 15, newsSoonMin: 30, newsAheadMin: 90 },
+  M15: { id: 'M15', minutes: 15, words: 'fifteen-minute', noiseScale: Math.sqrt(3), maxAgeMin: 30, staleChartMin: 30, newsSoonMin: 60, newsAheadMin: 180 },
+};
+export const DEFAULT_TIMEFRAME = 'M15';
+
+/** A timeframe as typed — "M15", "m5", "15", "5m", "5 min" — → 'M5' / 'M15', or null for anything else. */
+export function timeframeOf(x) {
+  const s = String(x ?? '').trim().toUpperCase().replace(/\s+/g, '');
+  const m = s.match(/^M?(\d+)(M|MIN|MINS|MINUTE|MINUTES)?$/);
+  const id = m ? `M${Number(m[1])}` : null;
+  return id && TIMEFRAMES[id] ? id : null;
+}
+
+/** A timeframe's settings; anything unrecognised gets the default's. */
+export const tfInfo = (tf) => TIMEFRAMES[timeframeOf(tf)] || TIMEFRAMES[DEFAULT_TIMEFRAME];
+
+/** How old an analysis on this timeframe may be before the ticket stops using it. */
+export const shotMaxAgeMs = (tf) => tfInfo(tf).maxAgeMin * 60000;
+
+const spanText = (min) => (min >= 120 && min % 60 === 0 ? `${min / 60} hours` : `${min} minutes`);
 
 /** The three lenses. Each analyst sees the same picture and context, and only one of these. */
 export const LENSES = [
@@ -80,15 +124,18 @@ export function marketOpenNow(inst, nowMs, serverOffsetHours) {
  *   stand-aside a scheduled release is inside its blackout (gold)
  *   stand-down  the weekday dead zone (gold — decision 2)
  *   caution     allowed, with a warning: weekend, outside the window, a major
- *               release due soon, or (bitcoin) a release blackout
+ *               release due soon (30 minutes on M5, an hour on M15), or
+ *               (bitcoin) a release blackout
  *   ok          allowed
+ *
+ * `nextMajor` must be looked up at least `newsSoonMin` ahead.
  *
  * Bitcoin is analysed at any hour the broker's market is open (the user's
  * request, 4 Oct 2026): its quiet hours and the trading window no longer
  * stop it, and a release blackout becomes a warning rather than a block. Only
  * a closed market still stops it, because MT5 cannot take an order then.
  */
-export function shotGate({ pair, weekend, blackout, band, insideWindow, win, marketOpen = null, bandEndsAtMs = null, nextMajor = null, nowMs = 0 }) {
+export function shotGate({ pair, weekend, blackout, band, insideWindow, win, marketOpen = null, bandEndsAtMs = null, nextMajor = null, nowMs = 0, timeframe = DEFAULT_TIMEFRAME }) {
   if (marketOpen === false || (pair === 'XAUUSD' && weekend)) {
     return {
       allowed: false, state: 'closed',
@@ -119,7 +166,7 @@ export function shotGate({ pair, weekend, blackout, band, insideWindow, win, mar
       message: `Quiet hours for this instrument${until}: the moves are too small for the costs, so no screenshot is analysed${until ? ' until then' : ''}.`,
     };
   }
-  const soon = nextMajor && nextMajor.ts > nowMs && nextMajor.ts - nowMs < 30 * 60000;
+  const soon = nextMajor && nextMajor.ts > nowMs && nextMajor.ts - nowMs < tfInfo(timeframe).newsSoonMin * 60000;
   if (weekend || !insideWindow || soon) {
     const parts = [];
     if (soon) parts.push(`${nextMajor.short || nextMajor.name} is at ${win ? formatHM(nextMajor.ts, win.tz) : 'soon'}: a trade opened now may still be open when it lands.`);
@@ -130,18 +177,23 @@ export function shotGate({ pair, weekend, blackout, band, insideWindow, win, mar
   return { allowed: true, state: 'ok', message: null, needsSpread: false };
 }
 
-/** The context every reader gets, as plain lines. Kept small: it is re-sent with every call. */
+/**
+ * The context every reader gets, as plain lines. Kept small: it is re-sent
+ * with every call. `c.tf` is the chart timeframe; `c.news` must cover that
+ * timeframe's `newsAheadMin`.
+ */
 export function contextLines(c) {
+  const tf = tfInfo(c.tf);
   const lines = [
     `Instrument selected in the trader's tool: ${c.pair} (${c.pair === 'XAUUSD' ? 'gold' : 'bitcoin'}, quoted to ${c.digits} decimals).`,
-    'Intended chart: MetaTrader 5, M5 (five-minute candles). Chart prices are BID prices; a sell\'s stop loss and take profit are triggered on the ask, one spread higher.',
+    `Intended chart: MetaTrader 5, ${tf.id} (${tf.words} candles). Chart prices are BID prices; a sell's stop loss and take profit are triggered on the ask, one spread higher.`,
     `Current price, typed by the trader from MT5: ${c.priceNow}. This is the price a market order fills near.`,
     `Time now: ${c.nowText} London (${c.weekday}); the MT5 chart clock reads ${c.chartClock || 'unknown'}. Session: ${c.sessionName}.`,
     `Cost of one trade: spread about ${c.spread} (${c.spreadSource})${c.commission > 0 ? ` plus commission worth about ${c.commission} in price` : ''}, so about ${c.cost} in total.`,
-    `The stop must be at least ${c.stopFloor} from the entry — clear of the costs and of ordinary five-minute noise.`,
+    `The stop must be at least ${c.stopFloor} from the entry — clear of the costs and of ordinary ${tf.words} noise.`,
     c.news.length
-      ? `Scheduled releases in the next 90 minutes: ${c.news.join('; ')}. If one is within 30 minutes, prefer no trade unless take profit 1 is close enough to be reached before it.`
-      : 'No scheduled releases in the next 90 minutes.',
+      ? `Scheduled releases in the next ${spanText(tf.newsAheadMin)}: ${c.news.join('; ')}. If one is within ${tf.newsSoonMin} minutes, prefer no trade unless take profit 1 is close enough to be reached before it.`
+      : `No scheduled releases in the next ${spanText(tf.newsAheadMin)}.`,
   ];
   if (c.caution) lines.push(`Caution: ${c.caution}`);
   if (c.planSetups && c.planSetups.length) {
@@ -152,18 +204,19 @@ export function contextLines(c) {
 }
 
 // Shape only, and a no-trade example: a filled-in trade here would be a
-// plausible plan a reader who cannot see the axis could simply copy.
-const ANALYST_JSON = '{"readable": true, "instrument_seen": "<symbol as printed on the chart>", "timeframe_seen": "<as printed, e.g. M5>", "price_now": <number>, "axis_low": <number>, "axis_high": <number>, "view": "none", "stop_loss": null, "take_profit_1": null, "take_profit_2": null, "confidence": <0 to 1>, "reasons": ["<short>"], "against": ["<short>"]}';
+// plausible plan a reader who cannot see the axis could simply copy. For the
+// same reason the timeframe example is not the one the trader expects.
+const ANALYST_JSON = '{"readable": true, "instrument_seen": "<symbol as printed on the chart>", "timeframe_seen": "<as printed on the chart, e.g. H1>", "price_now": <number>, "axis_low": <number>, "axis_high": <number>, "view": "none", "stop_loss": null, "take_profit_1": null, "take_profit_2": null, "confidence": <0 to 1>, "reasons": ["<short>"], "against": ["<short>"]}';
 
 const READ_RULES = (c) => [
-  `1. Check the chart. If it is not ${c.pair}, or its timeframe is not M5, or you cannot read the price scale, set "readable": false and stop there. If the time axis clearly shows the chart ending more than 15 minutes before the chart clock, it is an old screenshot: set "readable": false.`,
+  `1. Check the chart. If it is not ${c.pair}, or its timeframe is not ${tfInfo(c.tf).id}, or you cannot read the price scale, set "readable": false and stop there, still filling in "instrument_seen" and "timeframe_seen". If the time axis clearly shows the chart ending more than ${tfInfo(c.tf).staleChartMin} minutes before the chart clock, it is an old screenshot: set "readable": false.`,
   '2. Read the current BID price: the highlighted tag on the right-hand axis level with the last candle\'s close. If two tags sit close together, the lower is the bid and the upper the ask. Ignore tags for open positions, pending orders, stop loss and take profit lines, drawn lines and the crosshair. Read the lowest and highest labels on the price scale.',
 ];
 
 /** The prompt for one analyst. */
 export function analystPrompt(lens, c) {
   return [
-    `You are one of three independent analysts reading a screenshot of a MetaTrader 5 chart for a trader who scalps the five-minute chart. Your lens is ${lens.brief}`,
+    `You are one of three independent analysts reading a screenshot of a MetaTrader 5 chart for a trader who scalps the ${tfInfo(c.tf).words} chart. Your lens is ${lens.brief}`,
     '',
     'Context from the trader\'s tool (reliable):',
     ...contextLines(c).map((l) => `- ${l}`),
@@ -180,7 +233,7 @@ export function analystPrompt(lens, c) {
   ].join('\n');
 }
 
-const PLAN_JSON = '{"decision": "no_trade", "instrument_seen": "<symbol as printed>", "timeframe_seen": "<as printed>", "price_now": <number>, "axis_low": <number>, "axis_high": <number>, "stop_loss": null, "take_profit_1": null, "take_profit_2": null, "confidence": "low", "summary": "<one or two plain sentences>", "reasons": ["<short>"], "against": ["<short>"], "invalidated_if": "<plain words, or empty>"}';
+const PLAN_JSON = '{"decision": "no_trade", "instrument_seen": "<symbol as printed>", "timeframe_seen": "<as printed on the chart, e.g. H1>", "price_now": <number>, "axis_low": <number>, "axis_high": <number>, "stop_loss": null, "take_profit_1": null, "take_profit_2": null, "confidence": "low", "summary": "<one or two plain sentences>", "reasons": ["<short>"], "against": ["<short>"], "invalidated_if": "<plain words, or empty>"}';
 
 const PLAN_RULES = (c) => [
   `- A trade is a market order at the current price. The stop loss sits beyond the structure that proves it wrong, at least ${c.stopFloor} from the entry; a sell's stop sits at least one spread above that structure.`,
@@ -196,7 +249,7 @@ export function headPrompt(readings, c) {
     return `Analyst ${i + 1} (${lens || (LENSES[i] ? LENSES[i].name : 'analyst')}): ${JSON.stringify(rest)}`;
   });
   return [
-    `You are the head trader. ${readings.length} analysts independently read the attached screenshot of a MetaTrader 5 chart for a five-minute scalper. Decide the final plan.`,
+    `You are the head trader. ${readings.length} analysts independently read the attached screenshot of a MetaTrader 5 chart for a ${tfInfo(c.tf).words} scalper. Decide the final plan.`,
     '',
     'Context from the trader\'s tool (reliable):',
     ...contextLines(c).map((l) => `- ${l}`),
@@ -218,7 +271,7 @@ export function headPrompt(readings, c) {
 /** The single-reader prompt for the fast mode: one pass, the same rules as the head trader. */
 export function fastPrompt(c) {
   return [
-    'You are an experienced trader reading a screenshot of a MetaTrader 5 chart for a five-minute scalper. Give a plan in one pass.',
+    `You are an experienced trader reading a screenshot of a MetaTrader 5 chart for a ${tfInfo(c.tf).words} scalper. Give a plan in one pass.`,
     '',
     'Context from the trader\'s tool (reliable):',
     ...contextLines(c).map((l) => `- ${l}`),
@@ -241,7 +294,7 @@ export function fastPrompt(c) {
  */
 export function chatPrompt(c) {
   return [
-    'I am attaching a screenshot of my MetaTrader 5 chart. I scalp the five-minute chart. Read it carefully, as three independent analysts would (trend and structure; levels and liquidity; momentum and risk), then decide as a head trader who checks their work against the picture.',
+    `I am attaching a screenshot of my MetaTrader 5 chart. I scalp the ${tfInfo(c.tf).words} chart. Read it carefully, as three independent analysts would (trend and structure; levels and liquidity; momentum and risk), then decide as a head trader who checks their work against the picture.`,
     '',
     'Context from my trading tool (reliable):',
     ...contextLines(c).map((l) => `- ${l}`),
@@ -286,11 +339,39 @@ export function seesInstrument(seen, pair) {
   const keys = pair === 'XAUUSD' ? ['XAU', 'GOLD'] : ['BTC', 'XBT', 'BITCOIN'];
   return keys.some((k) => s.includes(k));
 }
-const onM5 = (seen) => !seen || typeof seen !== 'string' || /^</.test(seen) || /^\s*M5\s*$/i.test(seen) || /^\s*5\s*m(in)?\s*$/i.test(seen);
 
-/** The stop floor for an instrument at a price: clear of the costs, and of ordinary five-minute noise. */
-export function stopFloor(cost, price, minStopPct = 0) {
-  return Math.max(10 * cost, 0.5 * minStopPct * price);
+const knownTf = (seen) => typeof seen === 'string' && seen.trim() !== '' && !/^</.test(seen);
+
+/**
+ * Does a timeframe as printed on the chart name this one? "M15", "XAUUSD, M15",
+ * "15m", "15 min" and "fifteen-minute" all name M15; "M15" does not name M5.
+ * Unknown counts as a match, as for the instrument.
+ */
+export function seesTimeframe(seen, tf) {
+  if (!knownTf(seen)) return true;
+  const { minutes: n, words } = tfInfo(tf);
+  const s = seen.toLowerCase();
+  return new RegExp(`(^|[^a-z0-9])m\\s?${n}(?![0-9])`).test(s)
+    || new RegExp(`(^|[^0-9.])${n}\\s*-?\\s*(m|min|mins|minute|minutes)(?![a-z])`).test(s)
+    || s.trim() === String(n)
+    || new RegExp(words.replace('-', '[\\s-]?')).test(s);
+}
+
+/**
+ * The supported timeframe other than `tf` that at least `need` of these
+ * printed timeframes name, or null — so a refusal can offer the switch.
+ */
+export function otherTimeframeSeen(seen, tf, need = 1) {
+  const known = seen.filter(knownTf);
+  return Object.keys(TIMEFRAMES).find((k) => k !== tfInfo(tf).id && known.filter((s) => seesTimeframe(s, k)).length >= need) || null;
+}
+
+/**
+ * The stop floor for an instrument at a price: clear of the costs, and of
+ * the ordinary noise of one candle on the timeframe (TIMEFRAMES.noiseScale).
+ */
+export function stopFloor(cost, price, minStopPct = 0, timeframe = DEFAULT_TIMEFRAME) {
+  return Math.max(10 * cost, 0.5 * minStopPct * price * tfInfo(timeframe).noiseScale);
 }
 
 /**
@@ -301,10 +382,11 @@ export function stopFloor(cost, price, minStopPct = 0) {
  *
  *   plan      the head trader's (or fast reader's) JSON
  *   readings  the analysts' JSON (empty in fast mode)
- *   ctx       { priceNow, cost, digits, pair, minStopPct, asked, lastStretch }
+ *   ctx       { priceNow, cost, digits, pair, minStopPct, asked, lastStretch, timeframe }
  */
 export function checkPlan(plan, readings = [], ctx = {}) {
-  const { priceNow = null, cost = 0, digits = 2, pair = null, minStopPct = 0, asked = readings.length, lastStretch = false } = ctx;
+  const { priceNow = null, cost = 0, digits = 2, pair = null, minStopPct = 0, asked = readings.length, lastStretch = false, timeframe = DEFAULT_TIMEFRAME } = ctx;
+  const tf = tfInfo(timeframe);
   const problems = [];
   const good = readings.filter((r) => r && r.readable !== false);
   const agreementOf = (agree) => (asked ? { agree, of: good.length, asked } : null);
@@ -346,7 +428,10 @@ export function checkPlan(plan, readings = [], ctx = {}) {
   const seen = [...good.map((r) => r.instrument_seen), plan.instrument_seen];
   if (pair && seen.filter((s) => !seesInstrument(s, pair)).length >= (asked ? 2 : 1)) problems.push('This does not look like the instrument selected at the top. Check the screenshot matches it.');
   const frames = [...good.map((r) => r.timeframe_seen), plan.timeframe_seen];
-  if (frames.filter((s) => !onM5(s)).length >= (asked ? 2 : 1)) problems.push('The chart is not on M5. Switch MT5 to the five-minute chart and take a new screenshot.');
+  if (frames.filter((s) => !seesTimeframe(s, tf.id)).length >= (asked ? 2 : 1)) {
+    const other = otherTimeframeSeen(frames, tf.id, asked ? 2 : 1);
+    problems.push(`The chart is not on ${tf.id}. Switch MT5 to the ${tf.words} chart and take a new screenshot${other ? `, or set Chart timeframe to ${other} in Setup` : ''}.`);
+  }
   if (asked && agree < 2) problems.push(`Only ${agree} of ${asked} analysts agreed with the idea.`);
   if (plan.entry_type === 'limit') problems.push('A limit order was suggested. This page builds market orders only.');
   if (base.confidence === 'low') problems.push('The readers rated it low confidence.');
@@ -362,8 +447,8 @@ export function checkPlan(plan, readings = [], ctx = {}) {
   if (buy ? !(sl < entry && entry < tp1) : !(tp1 < entry && entry < sl)) problems.push('The stop loss or take profit is on the wrong side of the current price.');
 
   const stopDist = Math.abs(entry - sl);
-  const floor = stopFloor(cost, entry, minStopPct);
-  if (stopDist < floor) problems.push(`The stop is only ${stopDist.toFixed(digits)} away. It needs at least ${floor.toFixed(digits)} to clear the costs and ordinary five-minute noise.`);
+  const floor = stopFloor(cost, entry, minStopPct, tf.id);
+  if (stopDist < floor) problems.push(`The stop is only ${stopDist.toFixed(digits)} away. It needs at least ${floor.toFixed(digits)} to clear the costs and ordinary ${tf.words} noise.`);
   const netR = (Math.abs(tp1 - entry) - cost) / (stopDist + cost);
   if (!(netR >= 1)) problems.push(`Take profit 1 pays ${Math.max(0, netR).toFixed(2)}× the risk after costs. It needs at least 1×.`);
 
@@ -420,8 +505,11 @@ function listOf(x) {
   return Array.isArray(x) ? x.filter((s) => typeof s === 'string' && s.trim()).slice(0, 3) : [];
 }
 
-/** Is a stored analysis still usable for a ticket? The caller also applies the gate. */
+/**
+ * Is a stored analysis still usable for a ticket? Its age limit is its own
+ * timeframe's (`shot.tf`), not today's setting. The caller also applies the gate.
+ */
 export function shotIsFresh(shot, nowMs, pair) {
-  return !!shot && shot.pair === pair && (nowMs - shot.atMs) <= SHOT_MAX_AGE_MS
+  return !!shot && shot.pair === pair && (nowMs - shot.atMs) <= shotMaxAgeMs(shot.tf)
     && (shot.result.decision === 'buy' || shot.result.decision === 'sell');
 }

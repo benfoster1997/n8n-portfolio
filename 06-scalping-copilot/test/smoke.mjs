@@ -88,11 +88,13 @@ const freezeClock = (ms) => `{
 
 // A stand-in for claude.ai's `sample` capability, so the screenshot flow runs
 // end to end: three analyst readings and a head-trader plan, priced for
-// whichever instrument the prompt names. It refuses a call with no image, as
+// whichever instrument the prompt names, on the timeframe the prompt asks for
+// (or window.__tfSeen, to test a chart on the wrong one). Its stops clear the
+// M15 floor ($1.90 gold, $109.64 bitcoin). It refuses a call with no image, as
 // the real one would be useless without it.
 const mockClaude = `{
   const px = (p) => /BTCUSD/.test(p)
-    ? { sym: 'BTCUSD', now: 84400, lo: 84200, hi: 84700, sl: 84330, t1: 84520, t2: 84600 }
+    ? { sym: 'BTCUSD', now: 84400, lo: 84200, hi: 84700, sl: 84250, t1: 84600, t2: 84680 }
     : { sym: 'XAUUSD', now: 4391.2, lo: 4380, hi: 4402, sl: 4386.5, t1: 4398, t2: 4401.5 };
   window.__prompts = [];
   const fn = async () => ({ text: 'ok', truncated: false, modelTierApplied: 'default' });
@@ -105,7 +107,8 @@ const mockClaude = `{
     const mode = window.__mode || 'ok';
     if (mode === 'not_granted') throw { code: 'not_granted', message: 'declined' };
     const v = px(prompt);
-    const seen = { instrument_seen: v.sym, timeframe_seen: 'M5', price_now: v.now, axis_low: v.lo, axis_high: v.hi };
+    const tf = window.__tfSeen || ((prompt.match(/MetaTrader 5, (M\\d+) \\(/) || [])[1]) || 'none';
+    const seen = { instrument_seen: v.sym, timeframe_seen: tf, price_now: v.now, axis_low: v.lo, axis_high: v.hi };
     const levels = { stop_loss: v.sl, take_profit_1: v.t1, take_profit_2: v.t2 };
     if (/You are one of three/.test(prompt)) {
       if (mode === 'one_bad' && /Your lens is trend/.test(prompt)) throw { code: 'invalid_json', message: 'bad', text: 'nope' };
@@ -200,7 +203,8 @@ for (const [label, ms] of Object.entries(MOMENTS)) {
     await p.evaluate(() => document.getElementById('nav-risk').click());
     await p.waitForTimeout(200);
     const tkt = await p.evaluate(() => document.getElementById('ticket').innerText);
-    if (/Buy idea/.test(shotText) && !/84,330\.00|4,386\.50/.test(tkt)) leaks.push('screenshot: the ticket does not carry the analysis stop loss');
+    if (!/Buy idea/.test(shotText) && /Buy idea|Sell idea|No trade/.test(shotText) && !/Stand|Closed/.test(shotText)) leaks.push(`screenshot: expected a buy idea ("${shotText.slice(0, 120)}")`);
+    if (/Buy idea/.test(shotText) && !/84,250\.00|4,386\.50/.test(tkt)) leaks.push('screenshot: the ticket does not carry the analysis stop loss');
     await checkText('ticket from screenshot');
     await p.evaluate(() => document.getElementById('nav-read').click());
   }
@@ -319,7 +323,7 @@ const checks = [];
   const afterCopy = await p.evaluate(() => ({ text: document.getElementById('shot').innerText, prompt: (document.getElementById('chat-prompt') || {}).value || '' }));
   checks.push(['copy: the instructions are copied, or shown to copy by hand', /Copied\./.test(afterCopy.text) || /84400/.test(afterCopy.prompt)]);
   await p.evaluate(() => {
-    const reply = 'Here is my read:\n```json\n' + JSON.stringify({ decision: 'buy', instrument_seen: 'BTCUSD', timeframe_seen: 'M5', price_now: 84400, axis_low: 84200, axis_high: 84700, stop_loss: 84330, take_profit_1: 84520, take_profit_2: null, confidence: 'moderate', summary: 'Higher low held.', reasons: ['Higher lows'], against: ['Thin weekend'], invalidated_if: 'Below 84330.' }) + '\n```';
+    const reply = 'Here is my read:\n```json\n' + JSON.stringify({ decision: 'buy', instrument_seen: 'BTCUSD', timeframe_seen: 'M15', price_now: 84400, axis_low: 84200, axis_high: 84700, stop_loss: 84250, take_profit_1: 84600, take_profit_2: null, confidence: 'moderate', summary: 'Higher low held.', reasons: ['Higher lows'], against: ['Thin weekend'], invalidated_if: 'Below 84250.' }) + '\n```';
     const box = document.getElementById('chat-reply'); box.value = reply; box.dispatchEvent(new Event('input', { bubbles: true }));
     document.querySelector('[data-shot="check"]').click();
   });
@@ -329,7 +333,7 @@ const checks = [];
   await p.evaluate(() => document.getElementById('nav-risk').click());
   await p.waitForTimeout(200);
   const ticket = await p.evaluate(() => document.getElementById('ticket').innerText);
-  checks.push(['the pasted plan reaches the ticket', /84,330\.00/.test(ticket)]);
+  checks.push(['the pasted plan reaches the ticket', /84,250\.00/.test(ticket)]);
   await p.evaluate(() => {
     document.getElementById('nav-read').click();
     const box = document.getElementById('chat-reply'); box.value = 'I could not read this chart.'; box.dispatchEvent(new Event('input', { bubbles: true }));
@@ -338,6 +342,31 @@ const checks = [];
   await p.waitForTimeout(200);
   const bad = await p.evaluate(() => document.getElementById('shot').innerText);
   checks.push(['a reply that is not a plan is explained, not crashed on', /doesn't look like Claude's plan/.test(bad) && !errors.length]);
+  await p.close();
+}
+{
+  // The chart timeframe (11 Oct 2026): M15 by default; an M5 chart is turned down with
+  // the switch offered; after switching Setup to M5 the same chart gives an idea.
+  const { p, errors, card } = await shotPage(PRIME, 'ok');
+  const prompt = await p.evaluate(() => window.__prompts[0] || '');
+  checks.push(['timeframe: M15 by default, in the prompt and the result', /MetaTrader 5, M15 \(fifteen-minute candles\)/.test(prompt) && /Buy idea/.test(card)]);
+  await p.evaluate(() => { document.getElementById('nav-setup').click(); document.querySelectorAll('#howto details').forEach((d) => { d.open = true; }); });
+  await p.waitForTimeout(150);
+  const setup = await p.evaluate(() => document.getElementById('tab-setup').innerText);
+  checks.push(['timeframe: the how-to card and the setting say M15 and 30 minutes', /open the M15 chart/.test(setup) && /for 30 minutes/.test(setup) && /Chart timeframe/.test(setup)]);
+  await p.evaluate(() => { window.__tfSeen = 'M5'; document.getElementById('nav-read').click(); });
+  await p.setInputFiles('#shot-file', { name: 'chart.png', mimeType: 'image/png', buffer: PNG });
+  await p.waitForTimeout(700);
+  const wrong = await p.evaluate(() => document.getElementById('shot').innerText);
+  checks.push(['timeframe: an M5 chart on M15 is No trade, offering the switch', /No trade/.test(wrong) && /not on M15/.test(wrong) && /Chart timeframe to M5/.test(wrong) && !/Buy idea/.test(wrong)]);
+  await p.evaluate(() => { const e = document.getElementById('chart-tf'); e.value = 'M5'; e.dispatchEvent(new Event('change')); });
+  await p.waitForTimeout(200);
+  const switched = await p.evaluate(() => document.getElementById('shot').innerText);
+  await p.setInputFiles('#shot-file', { name: 'chart.png', mimeType: 'image/png', buffer: PNG });
+  await p.waitForTimeout(700);
+  const after = await p.evaluate(() => ({ card: document.getElementById('shot').innerText, prompt: window.__prompts[window.__prompts.length - 1] || '', note: document.getElementById('chart-tf-note').innerText }));
+  checks.push(['timeframe: switched to M5, the same chart gives an idea and the prompt says M5', /Buy idea/.test(after.card) && /MetaTrader 5, M5 \(five-minute candles\)/.test(after.prompt) && /15 minutes/.test(after.note)]);
+  checks.push(['timeframe: no page errors, and the choice is remembered', !errors.length && (await p.evaluate(() => localStorage.getItem('msd.timeframe'))) === '"M5"' && /M5/.test(switched)]);
   await p.close();
 }
 for (const [name, ok] of checks) {

@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url';
 import {
   withDefaults, pairOf, gateFor, formatIdea, formatBlocked, forChat, cautionAfter, latestUpload,
   sizeFor, contextFor, formatNow, formatBrief, phaseWords, serverOffsetFor, clockCheckLine,
+  formatUnreadable, timeframeFor,
 } from '../desk/lib.mjs';
 import { checkPlan } from '../src/shot.js';
 
@@ -87,12 +88,13 @@ test('once the spread is in, the caution keeps the warning and drops the request
 console.log('\nreplies');
 const gGreen = gateFor('XAUUSD', MON_GREEN, cfg);
 const ctxGold = contextFor({ nowMs: MON_GREEN, pair: 'XAUUSD', gate: gGreen, priceNow: 4400, spreadNum: 0.05, spreadTyped: false, cfg });
+// On M15, the desk's default since 11 Oct 2026. The stop is 5.00, clear of M15's 1.91 floor.
 const goodPlan = {
-  decision: 'buy', instrument_seen: 'XAUUSD', timeframe_seen: 'M5', price_now: 4400.02, axis_low: 4388, axis_high: 4412,
+  decision: 'buy', instrument_seen: 'XAUUSD', timeframe_seen: 'M15', price_now: 4400.02, axis_low: 4388, axis_high: 4412,
   stop_loss: 4395, take_profit_1: 4407, take_profit_2: 4410, confidence: 'moderate',
   summary: 'Higher lows into support.', reasons: ['Higher lows'], against: ['Near the high'], invalidated_if: 'A close below 4395.',
 };
-const reading = (view) => ({ readable: true, instrument_seen: 'XAUUSD', timeframe_seen: 'M5', price_now: 4400, axis_low: 4388, axis_high: 4412, view });
+const reading = (view) => ({ readable: true, instrument_seen: 'XAUUSD', timeframe_seen: 'M15', price_now: 4400, axis_low: 4388, axis_high: 4412, view });
 const checkCtx = { priceNow: 4400, cost: ctxGold.costNum, digits: 2, pair: 'XAUUSD', minStopPct: 0.0005, asked: 3 };
 test('an accepted idea carries the levels and an MT5 ticket, and no time to the close', () => {
   const result = checkPlan(goodPlan, [reading('buy'), reading('buy'), reading('none')], checkCtx);
@@ -124,10 +126,13 @@ test('a plain No trade gives its reasons but not the case for a trade, and count
   assert.doesNotMatch(t, /climbing/);
   assert.match(t, /2 of 3 readers saw no trade \(1 could not read it\)/);
 });
-test('an idea more than 15 minutes old says so', () => {
+test('an idea past its age limit says so: 30 minutes on M15, 15 on M5', () => {
   const result = checkPlan(goodPlan, [], { ...checkCtx, asked: 0 });
-  const t = formatIdea({ result, pair: 'XAUUSD', ctx: ctxGold, cfg, mode: 'fast', atMs: MON_GREEN, nowMs: MON_GREEN + 16 * 60000 });
-  assert.match(t, /over 15 minutes old/);
+  const at = (min, ctx = ctxGold) => formatIdea({ result, pair: 'XAUUSD', ctx, cfg, mode: 'fast', atMs: MON_GREEN, nowMs: MON_GREEN + min * 60000 });
+  assert.equal(ctxGold.tf, 'M15');
+  assert.doesNotMatch(at(16), /minutes old/);
+  assert.match(at(31), /over 30 minutes old/);
+  assert.match(at(16, { ...ctxGold, tf: 'M5' }), /over 15 minutes old/);
 });
 test('the final stretch marks confidence down and says so, without a countdown', () => {
   const at = T('2026-10-05T14:40:00Z');
@@ -253,7 +258,7 @@ test('fewer than two readable readings: no head trader, a No trade', () => {
   assert.equal(existsSync(join(dir, 'head.txt')), false);
 });
 test('NFP starts while it is being read: the analysis is discarded', () => {
-  // Friday 2 Oct, 13:00 London: allowed (NFP at 13:30 is not yet inside 30 minutes).
+  // Friday 2 Oct, 13:00 London: allowed, with a caution (on M15, NFP within the hour).
   const d = deskEnv('2026-10-02T12:00:00Z');
   const out = d.run(['gate', '--pair', 'gold', '--price', '4400', '--mode', 'fast']);
   assert.match(out, /STATUS: go · fast/);
@@ -313,13 +318,20 @@ test('the broker clock follows New York + 7: UTC+3 now, UTC+2 from 1 November, a
   assert.equal(gateFor('XAUUSD', T('2026-11-03T22:30:00Z'), cfg).state, 'closed');
   assert.equal(gateFor('XAUUSD', T('2026-11-03T23:10:00Z'), cfg).allowed, true);
 });
-test('a check more than 15 minutes after the gate keeps the levels and the warning but gives no ticket', () => {
+test('a check past the age limit after the gate keeps the levels and the warning but gives no ticket', () => {
   const d = deskEnv('2026-10-05T13:00:00Z');
   const id = runId(d.run(['gate', '--pair', 'gold', '--price', '4400', '--mode', 'fast']));
   writeFileSync(join(d.home, 'runs', id, 'plan.json'), JSON.stringify(goodPlan));
-  const r = replyOf(d.run(['check', '--run', id], '2026-10-05T13:20:00Z'));
-  assert.match(r, /over 15 minutes old/);
+  assert.match(replyOf(d.run(['check', '--run', id], '2026-10-05T13:20:00Z')), /MT5 ticket/, 'M15: still fresh at 20 minutes');
+  const r = replyOf(d.run(['check', '--run', id], '2026-10-05T13:31:00Z'));
+  assert.match(r, /over 30 minutes old/);
   assert.doesNotMatch(r, /MT5 ticket|Volume/);
+  const d5 = deskEnv('2026-10-05T13:00:00Z', { config: { timeframe: 'M5' } });
+  const id5 = runId(d5.run(['gate', '--pair', 'gold', '--price', '4400', '--mode', 'fast']));
+  writeFileSync(join(d5.home, 'runs', id5, 'plan.json'), JSON.stringify({ ...goodPlan, timeframe_seen: 'M5' }));
+  const r5 = replyOf(d5.run(['check', '--run', id5], '2026-10-05T13:20:00Z'));
+  assert.match(r5, /over 15 minutes old/);
+  assert.doesNotMatch(r5, /MT5 ticket/);
 });
 test('a discarded run stays discarded when checked again after the blackout ends', () => {
   const d = deskEnv('2026-10-02T12:00:00Z');
@@ -405,6 +417,104 @@ test('a brief with an overnight range and no instrument named keeps both instrum
   const r = d.run(['brief', '--high', '84700', '--low', '83900', '--now', '84650']);
   assert.match(r, /\*\*Gold\*\*/);
   assert.match(r, /\*\*Bitcoin\*\*[\s\S]*Overnight 83,900\.00–84,700\.00: price is near the overnight high/);
+});
+
+console.log('\nthe chart timeframe (11 Oct 2026)');
+test('the desk reads M15 unless set otherwise; a timeframe named for one chart wins for that read', () => {
+  assert.equal(timeframeFor(cfg), 'M15');
+  assert.equal(timeframeFor(withDefaults({ timeframe: 'M5' })), 'M5');
+  assert.equal(timeframeFor(cfg, 'm5'), 'M5');
+  assert.equal(timeframeFor(withDefaults({ timeframe: 'H4' })), 'M15', 'a bad setting falls back to the default');
+});
+test('the readers are told M15 by default, and the run remembers it', () => {
+  const d = deskEnv('2026-10-05T13:00:00Z');
+  d.upload();
+  const id = runId(d.run(['gate', '--pair', 'gold', '--price', '4400']));
+  const dir = join(d.home, 'runs', id);
+  const a1 = readFileSync(join(dir, 'analyst-1.txt'), 'utf8');
+  assert.match(a1, /M15 \(fifteen-minute candles\)/); assert.match(a1, /timeframe is not M15/);
+  assert.doesNotMatch(a1, /five-minute|\bM5\b/);
+  assert.equal(JSON.parse(readFileSync(join(dir, 'ctx.json'), 'utf8')).tf, 'M15');
+});
+test('an M5 chart on the M15 desk is turned down, offering the switch in chat words', () => {
+  const d = deskEnv('2026-10-05T13:00:00Z');
+  const id = runId(d.run(['gate', '--pair', 'gold', '--price', '4400', '--mode', 'fast']));
+  writeFileSync(join(d.home, 'runs', id, 'plan.json'), JSON.stringify({ ...goodPlan, timeframe_seen: 'XAUUSD, M5' }));
+  const r = replyOf(d.run(['check', '--run', id]));
+  assert.match(r, /not on M15/);
+  assert.match(r, /or tell me to switch the desk to M5/);
+  assert.doesNotMatch(r, /Setup|buy|4,395/i);
+});
+test('--tf M5 reads one chart on M5 without changing the setting; --tf H1 is refused', () => {
+  const d = deskEnv('2026-10-05T13:00:00Z');
+  const out = d.run(['gate', '--pair', 'gold', '--price', '4400', '--mode', 'fast', '--tf', 'M5']);
+  assert.match(out, /M5 \(five-minute candles\)/);
+  assert.match(out, /NOTE: this one read is on M5, as the user named it; the desk's setting stays M15/);
+  const id = runId(out);
+  writeFileSync(join(d.home, 'runs', id, 'plan.json'), JSON.stringify({ ...goodPlan, timeframe_seen: 'M5' }));
+  assert.match(d.run(['check', '--run', id]), /STATUS: done · buy/);
+  assert.match(sh(d, ['gate', '--pair', 'gold', '--price', '4400', '--tf', 'H1']), /EXIT 2[\s\S]*M5 or M15/);
+  assert.match(d.run(['config']), /Chart \*\*M15\*\*/);
+});
+test('readers who saw the other timeframe get a reply that names it, not "could not read it"', () => {
+  const saw = (tf) => ({ readable: false, instrument_seen: 'XAUUSD', timeframe_seen: tf });
+  const t = formatUnreadable('XAUUSD', [saw('M5'), saw('XAUUSD, M5'), saw('M15')], 'M15');
+  assert.match(t, /The readers saw an M5 chart, but the desk is set to M15/);
+  assert.match(t, /tell me to switch the desk to M5/);
+  assert.match(formatUnreadable('XAUUSD', [saw('H1'), saw('H1'), { readable: false }], 'M15'), /a chart on another timeframe[\s\S]*M15/);
+  assert.doesNotMatch(formatUnreadable('XAUUSD', [saw('H1'), saw('H1')], 'M15'), /switch the desk/);
+  assert.match(formatUnreadable('XAUUSD', [{ readable: false }, { readable: false }], 'M15'), /Fewer than two of the three readers could read the chart[\s\S]*M15 chart/);
+  const d = deskEnv('2026-10-05T13:00:00Z');
+  d.upload();
+  const id = runId(d.run(['gate', '--pair', 'gold', '--price', '4400']));
+  const dir = join(d.home, 'runs', id);
+  for (const k of [1, 2]) writeFileSync(join(dir, `reading-${k}.json`), JSON.stringify(saw('M5')));
+  writeFileSync(join(dir, 'reading-3.json'), JSON.stringify(reading('none')));
+  const h = d.run(['head', '--run', id]);
+  assert.match(h, /STATUS: unreadable/);
+  assert.match(replyOf(h), /saw an M5 chart/);
+});
+test('config timeframe: M5 and M15 are taken however typed; anything else is refused', () => {
+  const d = deskEnv('2026-10-05T13:00:00Z');
+  assert.match(d.run(['config', 'timeframe=m5']), /Chart \*\*M5\*\* \(five-minute\) · an idea feeds a ticket for 15 minutes/);
+  assert.equal(JSON.parse(readFileSync(join(d.home, 'config.json'), 'utf8')).timeframe, 'M5');
+  assert.match(d.run(['config', 'timeframe=15']), /Chart \*\*M15\*\*/);
+  for (const bad of ['timeframe=H1', 'timeframe=M30', 'timeframe=fast']) assert.match(sh(d, ['config', bad]), /EXIT 2/, bad);
+});
+test('now says which chart to send', () => {
+  assert.match(formatNow(MON_GREEN, cfg, null), /read on the \*\*M15\*\* \(fifteen-minute\) chart/);
+  assert.match(formatNow(MON_GREEN, withDefaults({ timeframe: 'M5' }), null), /\*\*M5\*\*/);
+});
+test('on M15 a major release within the hour is a caution; on M5 it is not until 30 minutes', () => {
+  const at = T('2026-10-02T11:45:00Z');   // Friday 12:45 London, NFP at 13:30: 45 minutes away
+  assert.equal(gateFor('BTCUSD', at, cfg).state, 'caution');
+  assert.match(gateFor('BTCUSD', at, cfg).message, /NFP|Non-Farm/);
+  assert.equal(gateFor('BTCUSD', at, withDefaults({ timeframe: 'M5' })).state, 'ok');
+});
+test('the stop floor and the news window the readers are told follow the timeframe', () => {
+  const c15 = contextFor({ nowMs: MON_GREEN, pair: 'BTCUSD', gate: gateFor('BTCUSD', MON_GREEN, cfg), priceNow: 84400, spreadNum: 6, spreadTyped: false, cfg });
+  const c5 = contextFor({ nowMs: MON_GREEN, pair: 'BTCUSD', gate: gateFor('BTCUSD', MON_GREEN, cfg), priceNow: 84400, spreadNum: 6, spreadTyped: false, cfg, tf: 'M5' });
+  assert.equal(c15.stopFloor, '109.64'); assert.equal(c5.stopFloor, '63.30');
+  assert.equal(c15.tf, 'M15'); assert.equal(c5.tf, 'M5');
+});
+test('a run written before the setting existed is treated as M5', () => {
+  const d = deskEnv('2026-10-05T13:00:00Z');
+  const id = runId(d.run(['gate', '--pair', 'gold', '--price', '4400', '--mode', 'fast']));
+  const dir = join(d.home, 'runs', id);
+  const ctx = JSON.parse(readFileSync(join(dir, 'ctx.json'), 'utf8'));
+  delete ctx.tf; delete ctx.c.tf;
+  writeFileSync(join(dir, 'ctx.json'), JSON.stringify(ctx));
+  writeFileSync(join(dir, 'plan.json'), JSON.stringify({ ...goodPlan, timeframe_seen: 'M5' }));
+  const r = replyOf(d.run(['check', '--run', id], '2026-10-05T13:20:00Z'));
+  assert.match(r, /Buy idea/); assert.match(r, /over 15 minutes old/);
+});
+test('size keeps using an M15 idea for 30 minutes', () => {
+  const d = deskEnv('2026-10-05T13:00:00Z', { config: { account: { shadowBalance: 10000, sizeFrom: 'shadow' } } });
+  const id = runId(d.run(['gate', '--pair', 'gold', '--price', '4400', '--mode', 'fast']));
+  writeFileSync(join(d.home, 'runs', id, 'plan.json'), JSON.stringify(goodPlan));
+  d.run(['check', '--run', id]);
+  assert.match(d.run(['size', '--stop', '6'], '2026-10-05T13:25:00Z'), /Stop loss \*\*4,394\.00\*\*/);
+  assert.match(d.run(['size', '--stop', '6', '--pair', 'gold'], '2026-10-05T13:31:00Z'), /over 30 minutes old/);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

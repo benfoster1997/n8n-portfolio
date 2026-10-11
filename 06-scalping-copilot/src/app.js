@@ -48,6 +48,8 @@ const state = {
   shotStatus: '',
   shotError: null,
   shotMode: store.get('shotMode', 'thorough'),
+  // The chart screenshots are read on (shot.js TIMEFRAMES): M15 unless chosen in Setup.
+  timeframe: timeframeOf(store.get('timeframe', DEFAULT_TIMEFRAME)) || DEFAULT_TIMEFRAME,
   shotPrice: '',
   shotBlocked: null,
   shotBusyPair: null,
@@ -625,6 +627,7 @@ function briefAction(action, v) {
  */
 function renderHowTo(now) {
   const t = dayTimes(now, state.window);
+  const tf = tfInfo(state.timeframe);
   const hm = (ms) => formatHM(ms, tzw());
   const span = (x) => (x ? `${hm(x.fromMs)}–${hm(x.toMs)}` : '—');
   const sp = (id) => INSTRUMENTS[id].typicalSpread.observed.toFixed(2);
@@ -646,7 +649,7 @@ function renderHowTo(now) {
       <li>Late? Tap <b>Set one</b> on the Read tab. The news times are on the News tab.</li>
     </ol>`)}
     ${step('Each trade', `${hm(t.opensAtMs)}–${hm(t.closesAtMs)}`, `<ol>
-      <li>In MT5, open the <b>M5</b> chart and take a screenshot with the price scale on the right showing.</li>
+      <li>In MT5, open the <b>${tf.id}</b> chart (${tf.words} candles — set in <b>Chart timeframe</b> below) and take a screenshot with the price scale on the right showing.</li>
       <li>On the Read tab, type the <b>Price now</b> from MT5's Quotes tab. At weekends, outside your hours or around news, also type the <b>Spread now</b>: the gap between the two prices there (4,400.10 and 4,400.15 is 0.05), not the 5 or 600 "points" MT5 can show. Then tap <b>Analyse a screenshot</b> and pick it.</li>
       <li>If the card says claude.ai won't let it send pictures on your device, use <b>Use a Claude chat instead</b> on the same card: tap <b>Copy instructions</b>, paste them into a new chat in the Claude app with your screenshot, then paste Claude's whole reply back and tap <b>Check this plan</b>. The same checks run on it.</li>
       <li>Wait: <b>Thorough</b> (three analysts and a head trader) takes a few minutes; <b>Fast</b> (one reader) under a minute. Keep this page open — switching to MT5 can stop it.</li>
@@ -662,7 +665,7 @@ function renderHowTo(now) {
       <li>If it says <b>Too big for one order</b>, place the separate orders it lists, each with the same stop loss and take profit.</li>
       <li>On weekdays, back on the Read tab, tap <b>+ I took a trade</b> — once per trade, even if you split it.</li>
     </ol>
-    <p style="font-size:13px;color:var(--label-2);margin:-4px 0 14px">The ticket uses an analysis for 15 minutes, and drops it if news or the quiet hours begin. After that, take a new screenshot.</p>`)}
+    <p style="font-size:13px;color:var(--label-2);margin:-4px 0 14px">The ticket uses an analysis for ${tf.maxAgeMin} minutes, and drops it if news or the quiet hours begin. After that, take a new screenshot.</p>`)}
     ${step('After the close', `from ${hm(t.closesAtMs)}`, `<ol>
       <li>If you set a plan, the Read tab shows how many trades you tapped in against it. It cannot see MT5, so the count is only your taps.</li>
       <li>Optional, weekly: on the Size tab, tap <b>Show full detail</b> and scroll to <b>Is it working yet?</b> Before your first entry, fill in <b>Sample you are committing to</b>: once it is set, there is no verdict until you reach that many trades (left blank, it judges after any number). Take your totals from MT5's History tab. The page remembers them. Then tap <b>Back to the simple view</b>.</li>
@@ -670,7 +673,7 @@ function renderHowTo(now) {
     ${step('About the trade ideas', '', `<ol>
       <li>They are read from a picture of your chart, so a level can be a little off. <b>Always check the levels on your MT5 chart before you enter.</b></li>
       <li>The readers are one AI reading your picture in four ways. They catch each other's slips, not a shared mistake. The price you type is the check that does not depend on the picture.</li>
-      <li>The page turns an idea into <b>No trade</b> if the chart shows a different price from yours, it is the wrong instrument or not M5, the stop is on the wrong side or too tight for the costs and normal noise, or take profit 1 pays less than the risk after costs. On Thorough it also needs two readings to agree; Fast has one reader, so it cannot check that.</li>
+      <li>The page turns an idea into <b>No trade</b> if the chart shows a different price from yours, it is the wrong instrument or not ${tf.id}, the stop is on the wrong side or too tight for the costs and normal noise, or take profit 1 pays less than the risk after costs. On Thorough it also needs two readings to agree; Fast has one reader, so it cannot check that.</li>
       <li>Each analysis uses your own Claude usage: four requests on Thorough, one on Fast.</li>
       <li>It has no track record. Treat an idea as a second opinion, not an instruction.</li>
       <li>Without an analysis you can still get a lot size: type your own <b>Stop distance</b> on the Size tab (8 means $8 on gold) and take the levels from your MT5 chart.</li>
@@ -700,14 +703,14 @@ function currentShotGate(now) {
   const w = windowState(now, state.window);
   const q = sessionQuality(now, state.pair, state.window);
   const band = remainingBands(now, state.pair, state.window).find((b) => b.current);
-  const nextMajor = getUpcomingEvents(now, 1, state.pair, { includeContext: false })
+  const nextMajor = getUpcomingEvents(now, tfInfo(state.timeframe).newsSoonMin / 60 + 1, state.pair, { includeContext: false })
     .filter((e) => e.tier === 1 && e.ts > now)[0] || null;
   return shotGate({
     pair: state.pair, weekend: w.phase === 'weekend',
     blackout: getActiveBlackout(now, state.pair, state.overrides),
     band: q.band, insideWindow: w.open, win: state.window,
     marketOpen: marketOpenNow(inst(), now, state.serverOffset),
-    bandEndsAtMs: band ? band.endsAtMs : null, nextMajor, nowMs: now,
+    bandEndsAtMs: band ? band.endsAtMs : null, nextMajor, nowMs: now, timeframe: state.timeframe,
   });
 }
 
@@ -725,8 +728,9 @@ function shotContext(now, gate, priceNow, spreadNum) {
   const { comm, cost } = shotCost(i, spreadNum);
   const ps = planStatus(state.plan, dayKey(now, state.window));
   const chart = state.serverOffset !== '' ? brokerChartTime(now, Number(state.serverOffset)) : null;
+  const tf = tfInfo(state.timeframe);
   return {
-    pair: state.pair, digits, priceNow,
+    pair: state.pair, digits, priceNow, tf: tf.id,
     nowText: formatHM(now, 'Europe/London'),
     weekday: new Intl.DateTimeFormat('en-GB', { weekday: 'long', timeZone: 'Europe/London' }).format(now),
     chartClock: chart ? chart.text : null,
@@ -734,8 +738,8 @@ function shotContext(now, gate, priceNow, spreadNum) {
     spread: spreadNum.toFixed(digits), spreadNum,
     spreadSource: typed ? 'typed in by the trader' : "last read off the trader's MT5",
     commission: comm > 0 ? comm.toFixed(3) : 0, cost: cost.toFixed(3), costNum: cost,
-    stopFloor: stopFloor(cost, priceNow, i.minStopPct).toFixed(digits),
-    news: getUpcomingEvents(now, 1.5, state.pair, { includeContext: false })
+    stopFloor: stopFloor(cost, priceNow, i.minStopPct, tf.id).toFixed(digits),
+    news: getUpcomingEvents(now, tf.newsAheadMin / 60, state.pair, { includeContext: false })
       .filter((e) => e.ts > now).map((e) => `${e.short || e.name} at ${formatHM(e.ts, 'Europe/London')} London`),
     caution: gate.state === 'caution' ? gate.message : null,
     planSetups: ps ? ps.setups : [], tradesTaken: ps ? ps.taken : 0, maxTrades: ps ? ps.max : 0,
@@ -811,7 +815,7 @@ async function runShot(file) {
     }
     const result = checkPlan(plan, readings, {
       priceNow, cost: c.costNum, digits: c.digits, pair, minStopPct: i.minStopPct,
-      asked: thorough ? LENSES.length : 0, lastStretch: c.lastStretch,
+      asked: thorough ? LENSES.length : 0, lastStretch: c.lastStretch, timeframe: c.tf,
     });
     // The gate is checked again at the end: a release or the dead zone may have begun meanwhile.
     const after = currentShotGate(Date.now());
@@ -819,7 +823,7 @@ async function runShot(file) {
       state.shot = null;
       state.shotError = `${after.message} The analysis was discarded.`; state.shotErrorPair = pair;
     } else {
-      state.shot = { pair, atMs: now, result, mode: thorough ? 'thorough' : 'fast', caution: c.caution, spread: spreadNum };
+      state.shot = { pair, atMs: now, result, mode: thorough ? 'thorough' : 'fast', caution: c.caution, spread: spreadNum, tf: c.tf };
       // A stop distance typed for an earlier trade must not resize this one.
       $('stop-dist').value = '';
     }
@@ -847,7 +851,7 @@ async function copyChatPrompt() {
   const spreadNum = typedSpread || i.typicalSpread.observed;
   const c = shotContext(now, gate, priceNow, spreadNum);
   state.chatPromptText = chatPrompt(c);
-  state.chatCtx = { pair, priceNow, cost: c.costNum, digits: c.digits, lastStretch: c.lastStretch, caution: c.caution, spread: spreadNum, atMs: now };
+  state.chatCtx = { pair, priceNow, cost: c.costNum, digits: c.digits, lastStretch: c.lastStretch, caution: c.caution, spread: spreadNum, atMs: now, tf: c.tf };
   state.shotError = null;
   try {
     await navigator.clipboard.writeText(state.chatPromptText);
@@ -873,11 +877,13 @@ function checkChatReply() {
   const spreadNum = cc ? cc.spread : Number(state.spread[pair]) || i.typicalSpread.observed;
   const gate = currentShotGate(Date.now());
   if (!gate.allowed) return fail(gate.message);
+  // The timeframe the copied instructions named, not a setting changed since.
+  const tf = cc ? cc.tf : state.timeframe;
   const result = checkPlan(plan, [], {
     priceNow, cost: cc ? cc.cost : shotCost(i, spreadNum).cost, digits: spec(i, 'digits'), pair,
-    minStopPct: i.minStopPct, asked: 0, lastStretch: windowState(Date.now(), state.window).phase === 'last-30',
+    minStopPct: i.minStopPct, asked: 0, lastStretch: windowState(Date.now(), state.window).phase === 'last-30', timeframe: tf,
   });
-  state.shot = { pair, atMs: cc ? cc.atMs : Date.now(), result, mode: 'chat', caution: cc ? cc.caution : null, spread: spreadNum };
+  state.shot = { pair, atMs: cc ? cc.atMs : Date.now(), result, mode: 'chat', caution: cc ? cc.caution : null, spread: spreadNum, tf };
   Object.assign(state, { chatReply: '', shotError: null });
   $('stop-dist').value = '';
   renderShot(true);
@@ -937,20 +943,20 @@ function renderShot(force = false) {
     html = `${title}<p class="answer-sub" style="margin:0">A ${esc(INSTRUMENTS[state.shotBusyPair].label.toLowerCase())} analysis is running. Switch back at the top to see it.</p>`;
   } else {
     const s = state.shot && state.shot.pair === state.pair ? state.shot : null;
-    const other = state.shot && state.shot.pair !== state.pair && now - state.shot.atMs < SHOT_MAX_AGE_MS ? state.shot : null;
+    const other = state.shot && state.shot.pair !== state.pair && now - state.shot.atMs < shotMaxAgeMs(state.shot.tf) ? state.shot : null;
     let body = '';
     if (s && gate.allowed) {
       const r = s.result;
       const trade = r.decision === 'buy' || r.decision === 'sell';
       const age = Math.round((now - s.atMs) / 60000);
-      const stale = now - s.atMs > SHOT_MAX_AGE_MS;
+      const stale = now - s.atMs > shotMaxAgeMs(s.tf);
       const word = r.decision === 'buy' ? ['&#9650;', 'Buy idea', 'up'] : r.decision === 'sell' ? ['&#9660;', 'Sell idea', 'down'] : ['&#9644;', 'No trade', 'flat'];
       const lv = (label, v, tone = 'label') => `<div class="shot-lv"><span>${label}</span><b style="color:var(--${tone})">${fmt(v, digits)}</b></div>`;
       const list = (xs, cls = '') => (xs.length ? `<ul class="reasons ${cls}">${xs.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : '');
       const ag = r.agreement ? ` · ${r.agreement.agree} of ${r.agreement.asked} readings agree${r.agreement.asked > r.agreement.of ? ` (${r.agreement.asked - r.agreement.of} could not read it)` : ''}` : '';
       body = `<div class="answer" style="color:var(--${word[2]})"><span>${word[0]}</span><span>${word[1]}</span></div>
         ${s.caution && trade ? `<p class="answer-sub" style="color:var(--warn)">${esc(s.caution)}</p>` : ''}
-        ${stale ? '<div class="unconfirmed">This analysis is over 15 minutes old. Take a new screenshot before trading on it.</div>' : ''}
+        ${stale ? `<div class="unconfirmed">This analysis is over ${tfInfo(s.tf).maxAgeMin} minutes old. Take a new screenshot before trading on it.</div>` : ''}
         ${trade ? `<div style="margin-top:8px">
             ${lv('Entry · market order, at the price you typed', r.entry)}
             ${lv('Stop loss', r.stopLoss, 'down')}
@@ -990,7 +996,7 @@ function renderShot(force = false) {
       html = `${title}${body ? `${body}<div class="hr"></div>` : ''}
         ${state.shotError && state.shotErrorPair === state.pair ? `<div class="unconfirmed" style="color:var(--danger);background:var(--danger-dim)">${esc(state.shotError)}</div>` : ''}
         ${other ? `<p class="answer-sub" style="margin-top:0">Your ${esc(INSTRUMENTS[other.pair].label.toLowerCase())} analysis is ready — switch at the top to see it.</p>` : ''}
-        ${body ? '' : `<p class="answer-sub" style="margin:0">In MT5, take a screenshot of the ${esc(i.label.toLowerCase())} M5 chart with the price scale on the right showing. Type the price now, then pick the screenshot.</p>`}
+        ${body ? '' : `<p class="answer-sub" style="margin:0">In MT5, take a screenshot of the ${esc(i.label.toLowerCase())} ${tfInfo(state.timeframe).id} chart with the price scale on the right showing. Type the price now, then pick the screenshot.</p>`}
         ${gate.state === 'caution' && !body ? `<p class="answer-sub" style="color:var(--warn)">${esc(gate.message)}</p>` : ''}
         <div class="grid2" style="margin-top:12px">
           <div class="field"><label class="f" for="shot-price">Price now, from MT5</label>
@@ -1331,8 +1337,8 @@ function renderRisk() {
     // No live prices: point at the screenshot, and still give a lot size for a typed stop.
     $('ticket').innerHTML = `<p class="card-title">Type this into MT5</p>
       <p style="font-size:13.5px;color:var(--label-2);margin:0">${!gateNow.allowed ? esc(gateNow.message)
-        : state.shot && state.shot.pair === state.pair && Date.now() - state.shot.atMs > SHOT_MAX_AGE_MS
-          ? 'The last screenshot analysis is over 15 minutes old. Analyse a new one on the Read tab for levels.'
+        : state.shot && state.shot.pair === state.pair && Date.now() - state.shot.atMs > shotMaxAgeMs(state.shot.tf)
+          ? `The last screenshot analysis is over ${tfInfo(state.shot.tf).maxAgeMin} minutes old. Analyse a new one on the Read tab for levels.`
           : 'No live prices here, so the levels come from a chart screenshot. Analyse one on the Read tab.'}</p>
       ${r.ok && Number($('stop-dist').value) > 0
         ? `<div class="row" style="margin-top:12px"><dt>Volume for your ${fmt(Number($('stop-dist').value), digits)} stop</dt><dd style="font-size:20px;font-weight:700">${r.cfd.lots.toFixed(2)} lots</dd></div>
@@ -2077,6 +2083,19 @@ function boot() {
   $('key-twelvedata').onchange = (e) => {
     state.keys = { ...state.keys, twelvedata: e.target.value.trim() };
     store.set('keys', state.keys); refresh();
+  };
+
+  // The chart timeframe screenshots are read on. Remembered on this phone.
+  const tfNote = () => {
+    const t = tfInfo(state.timeframe);
+    $('chart-tf-note').innerHTML = `A screenshot on any other timeframe is turned down. On ${t.id} the stop must clear one ${t.words} candle's ordinary noise, a major release within ${t.newsSoonMin} minutes is a warning, and an idea feeds the ticket for ${t.maxAgeMin} minutes.<span class="detail"> The live read on the Read tab still uses five-minute bars.</span>`;
+  };
+  $('chart-tf').value = state.timeframe;
+  tfNote();
+  $('chart-tf').onchange = (e) => {
+    state.timeframe = timeframeOf(e.target.value) || DEFAULT_TIMEFRAME;
+    store.set('timeframe', state.timeframe);
+    tfNote(); renderShot(true); renderHowTo(Date.now()); renderRisk();
   };
 
   $('server-offset').value = String(state.serverOffset);

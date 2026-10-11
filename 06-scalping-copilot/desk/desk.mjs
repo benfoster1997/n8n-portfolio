@@ -7,8 +7,9 @@
  *   now                                   both instruments: open, closed, warnings; next news; plan
  *   brief [--only P] [--high H --low L --now N [--pair P]]
  *   news  [--pair P] [--days 7]
- *   gate  --pair P [--price N] [--spread S] [--mode thorough|fast] [--image PATH]
+ *   gate  --pair P [--price N] [--spread S] [--mode thorough|fast] [--image PATH] [--tf M5|M15]
  *                                         may a screenshot be read now? writes the reader prompts
+ *                                         (--tf: a timeframe the user named for this chart; else the setting)
  *   head  --run ID                        after the three readings: the head trader's prompt
  *   check --run ID                        the checks, the lot size and the reply text
  *   size  --stop D [--pair P] [--spread S] [--price N]
@@ -33,10 +34,10 @@ import { fileURLToPath } from 'node:url';
 import {
   withDefaults, pairOf, label, digitsOf, gateFor, gateWord, contextFor, formatBlocked, formatIdea,
   formatNow, formatBrief, formatNews, formatEdge, sizeFor, lotsOnlyLines, ticketLines,
-  planLine, nextNewsLine, recentUploads, forChat, fmt, costFor,
+  planLine, nextNewsLine, recentUploads, forChat, fmt, costFor, formatUnreadable, timeframeFor,
 } from './lib.mjs';
 import { INSTRUMENTS } from '../src/instruments.js';
-import { LENSES, analystPrompt, headPrompt, fastPrompt, checkPlan, parseReply, SHOT_MAX_AGE_MS } from '../src/shot.js';
+import { LENSES, analystPrompt, headPrompt, fastPrompt, checkPlan, parseReply, shotMaxAgeMs, tfInfo, timeframeOf } from '../src/shot.js';
 import { SETUPS, planProblem, planStatus, dayKey } from '../src/brief.js';
 import { formatHM } from '../src/timezone.js';
 
@@ -123,6 +124,8 @@ function spreadFor(pair, typed) {
 const spreadExample = (pair) => (pair === 'XAUUSD' ? '4,400.10 and 4,400.15 is 0.05' : '84,400.00 and 84,406.00 is 6.00');
 
 const runDir = (id) => join(HOME, 'runs', id);
+// Runs written before the timeframe setting (11 Oct 2026) were all M5.
+const runTf = (ctx) => (ctx && timeframeOf(ctx.tf)) || 'M5';
 const lastRunId = () => readText(join(HOME, 'last-run.txt'))?.trim() || null;
 
 function loadRun(id) {
@@ -182,9 +185,11 @@ const cmds = {
   gate(a) {
     const pair = pairOf(a.pair);
     if (!pair) usage('Which instrument? --pair gold or --pair bitcoin');
+    if (a.tf !== undefined && !timeframeOf(a.tf)) usage('--tf must be M5 or M15.');
+    const tf = timeframeFor(cfg, a.tf);
     const nm = label(pair).toLowerCase();
     // The gate first: a shut market or a stand-down needs no price.
-    const g = gateFor(pair, NOW, cfg);
+    const g = gateFor(pair, NOW, cfg, tf);
     if (!g.allowed) return say('blocked', formatBlocked(pair, g));
     const priceNow = num(a.price);
     const typedSpread = num(a.spread);
@@ -216,7 +221,7 @@ const cmds = {
       if (batch.length > 1) {
         // Two or more pictures sent together: the session must say which is this instrument's chart.
         return say('need-image', null, [
-          `NOTE: ${batch.length} pictures arrived together. Open each with the Read tool, find the ${pair} M5 chart, and run gate again with --image <its path>:`,
+          `NOTE: ${batch.length} pictures arrived together. Open each with the Read tool, find the ${pair} chart (the ${tf} one, if there are two), and run gate again with --image <its path>:`,
           ...batch.map((x) => `  ${x.path} (${Math.round(x.ageMs / 1000)} s ago)`),
         ]);
       }
@@ -230,12 +235,13 @@ const cmds = {
       }
     }
 
-    const c = contextFor({ nowMs: NOW, pair, gate: g, priceNow, spreadNum: sp.spreadNum, spreadTyped: sp.spreadTyped, cfg, plan: loadPlan() });
+    const c = contextFor({ nowMs: NOW, pair, gate: g, priceNow, spreadNum: sp.spreadNum, spreadTyped: sp.spreadTyped, cfg, plan: loadPlan(), tf });
     const id = newRunId(pair);
     const dir = runDir(id);
-    writeJson(join(dir, 'ctx.json'), { c, pair, mode, atMs: NOW, spreadNum: sp.spreadNum, image: image ? image.path : null, minStopPct: INSTRUMENTS[pair].minStopPct });
+    writeJson(join(dir, 'ctx.json'), { c, pair, mode, tf, atMs: NOW, spreadNum: sp.spreadNum, image: image ? image.path : null, minStopPct: INSTRUMENTS[pair].minStopPct });
     writeFileSync(join(HOME, 'last-run.txt'), id + '\n');
     if (sp.note) notes.push(`TELL THE USER: ${sp.note}`);
+    if (tf !== timeframeFor(cfg)) notes.push(`NOTE: this one read is on ${tf}, as the user named it; the desk's setting stays ${timeframeFor(cfg)}.`);
     if (g.state === 'caution') notes.push(`CAUTION (the final reply repeats it): ${forChat(g.message)}`);
     console.log(`STATUS: go · ${mode} · run ${id}`);
     for (const n of notes) console.log(n);
@@ -260,9 +266,9 @@ const cmds = {
     const { id, dir, ctx } = loadRun(a.run);
     const readings = readingsOf(dir);
     if (readings.filter((r) => r.readable !== false).length < 2) {
-      return say('unreadable', `**■ No trade · ${label(ctx.pair)}**\n\nFewer than two of the three readers could read the chart. Send a new screenshot of the M5 chart with the price scale on the right showing, and the price.`);
+      return say('unreadable', formatUnreadable(ctx.pair, readings, runTf(ctx)));
     }
-    writeFileSync(join(dir, 'head.txt'), headPrompt(readings, ctx.c));
+    writeFileSync(join(dir, 'head.txt'), headPrompt(readings, { ...ctx.c, tf: runTf(ctx) }));
     console.log(`STATUS: go · head · run ${id}`);
     console.log(`NEXT: start ONE head-trader agent with exactly this task: Use the Read tool to open the image ${ctx.image}, then read ${join(dir, 'head.txt')} and do exactly what it says. Read no other file. Write only the JSON object it asks for to ${join(dir, 'plan.json')} with the Write tool, then reply with that JSON.`);
     console.log(`THEN: node ${join(here, 'desk.mjs')} check --run ${id}`);
@@ -270,10 +276,12 @@ const cmds = {
 
   check(a) {
     const { id, dir, ctx } = loadRun(a.run);
-    const { pair, c } = ctx;
+    const { pair } = ctx;
+    const tf = runTf(ctx);
+    const c = { ...ctx.c, tf };
     const discard = (g) => say('discarded', `**■ ${gateWord(g)} · ${label(pair)}**\n\n${forChat(g.message)} The analysis was discarded.`);
     const prior = readJson(join(dir, 'result.json'));
-    if (prior && prior.discarded) return discard(prior.gate || gateFor(pair, NOW, cfg));
+    if (prior && prior.discarded) return discard(prior.gate || gateFor(pair, NOW, cfg, tf));
     const plan = parseReply(readText(join(dir, 'plan.json')) || '');
     if (!plan) {
       return say('error', null, [
@@ -285,17 +293,18 @@ const cmds = {
     const readings = thorough ? readingsOf(dir) : [];
     const result = checkPlan(plan, readings, {
       priceNow: c.priceNow, cost: c.costNum, digits: c.digits, pair, minStopPct: ctx.minStopPct,
-      asked: thorough ? LENSES.length : 0, lastStretch: c.lastStretch,
+      asked: thorough ? LENSES.length : 0, lastStretch: c.lastStretch, timeframe: tf,
     });
     // The gate again, at the end: a release or the quiet hours may have begun meanwhile.
-    const after = gateFor(pair, NOW, cfg);
+    const after = gateFor(pair, NOW, cfg, tf);
     if (!after.allowed) {
       writeJson(join(dir, 'result.json'), { discarded: true, gate: after, result });
       return discard(after);
     }
     const trade = result.decision === 'buy' || result.decision === 'sell';
-    // Over 15 minutes old: the levels and the warning, but no ticket (the page hides it too).
-    const fresh = NOW - ctx.atMs <= SHOT_MAX_AGE_MS;
+    // Past its timeframe's age limit (15 minutes on M5, 30 on M15): the levels
+    // and the warning, but no ticket (the page hides it too).
+    const fresh = NOW - ctx.atMs <= shotMaxAgeMs(tf);
     const sized = trade && fresh ? sizeFor({
       pair, cfg, stop: result.stopDistance, entry: result.entry, spreadNum: ctx.spreadNum,
       side: result.decision, stopLoss: result.stopLoss, target: result.takeProfit1,
@@ -313,7 +322,7 @@ const cmds = {
     const lastId = lastRunId();
     const last = lastId ? readJson(join(runDir(lastId), 'ctx.json')) : null;
     const lastRes = lastId ? readJson(join(runDir(lastId), 'result.json')) : null;
-    const lastFresh = last && NOW - last.atMs <= SHOT_MAX_AGE_MS;
+    const lastFresh = last && NOW - last.atMs <= shotMaxAgeMs(runTf(last));
     // The instrument: as named, or the last screenshot's if that is recent. Never a guess.
     const pair = a.pair ? pairOf(a.pair) : lastFresh ? last.pair : null;
     if (!pair) usage('Which instrument? --pair gold or --pair bitcoin (ask the user if the conversation does not say).');
@@ -329,7 +338,7 @@ const cmds = {
     }
     // Lots only — with the reason there is no idea to attach them to, as the page says it.
     const lead = !g.allowed ? [`**■ ${gateWord(g)} · ${label(pair)}**`, forChat(g.message)]
-      : isIdea ? [`Your last ${label(pair).toLowerCase()} idea is over 15 minutes old — send a new screenshot and the price for levels.`]
+      : isIdea ? [`Your last ${label(pair).toLowerCase()} idea is over ${tfInfo(runTf(last)).maxAgeMin} minutes old — send a new screenshot and the price for levels.`]
         : [];
     const sp = spreadFor(pair, num(a.spread));
     const price = num(a.price) || (pair === 'XAUUSD' ? 4390 : 84400);   // lots do not depend on price; only margin does
@@ -384,6 +393,7 @@ const cmds = {
       commission: ['account', 'commissionPerSideGBP', (v) => (v === 'spec' ? null : Number(v) >= 0 && v !== '' ? Number(v) : NaN)],
       serveroffset: ['broker', 'serverOffset', (v) => (v === 'auto' ? 'auto' : Number.isInteger(Number(v)) && v !== '' && Math.abs(Number(v)) <= 14 ? Number(v) : NaN)],
       mode: [null, 'mode', (v) => (v === 'fast' || v === 'thorough' ? v : NaN)],
+      timeframe: [null, 'timeframe', (v) => timeframeOf(v) || NaN],
     };
     for (const kv of sets) {
       const eq = kv.indexOf('=');
@@ -407,6 +417,7 @@ const cmds = {
       `- GBP/USD ${ac.gbpusd} · leverage 1:${ac.leverage}`,
       `- Commission ${ac.commissionPerSideGBP === null ? 'from the spec (gold £2.75 a lot each side, bitcoin none)' : `£${ac.commissionPerSideGBP} a lot each side`}`,
       `- MT5 server clock ${c.broker.serverOffset === 'auto' ? 'follows New York + 7 (UTC+3 now, UTC+2 from 1 November)' : `UTC${c.broker.serverOffset >= 0 ? '+' : ''}${c.broker.serverOffset}`} · screenshots read **${c.mode === 'fast' ? 'Fast (one reader)' : 'Thorough (three readers and a head trader)'}** unless you say otherwise`,
+      `- Chart **${timeframeFor(c)}** (${tfInfo(timeframeFor(c)).words}) · an idea feeds a ticket for ${tfInfo(timeframeFor(c)).maxAgeMin} minutes`,
     ].join('\n'));
   },
 

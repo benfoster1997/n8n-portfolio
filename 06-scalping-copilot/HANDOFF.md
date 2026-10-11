@@ -1,7 +1,7 @@
 # Handoff — M5 Scalp Desk
 
 Everything needed to pick this up in a fresh session without re-deriving it.
-Last updated 26 September 2026 (end of session). Read this whole file before changing anything —
+Last updated 11 October 2026. Read this whole file before changing anything —
 several decisions below look like mistakes and are not.
 
 ---
@@ -30,7 +30,7 @@ refuse a plain publish and would otherwise create a *second* page. Do this:
 
 ```
 node build.mjs            # inline src/*.js into index.html; refuses on name collisions
-node test/run-all.mjs     # 349 assertions across 10 suites — unit level only
+node test/run-all.mjs     # 372 assertions across 10 suites — unit level only
 node desk/desk.mjs now    # the in-chat desk; see .claude/skills/scalp-desk/SKILL.md
 node test/smoke.mjs       # real browser, 7 frozen moments x both views, fills in the brief; fails on page errors, overflow, "undefined"/"NaN"
 ```
@@ -44,20 +44,30 @@ and stayed fully green twice while the page was broken.
 
 ### Where we stopped (11 Oct 2026, latest) — read this first
 
-**Open decision with the user: live alerts, and a longer timeframe.** Asked how they could get
+**Resumed 11 Oct (evening).** The price hosts were still refused (CONNECT 403 on all four), so
+the user was given the network steps again (below). They then answered both open questions:
+- **Timeframe: yes, M15 default, M5 kept** — built, see decision 25. 372 unit assertions and the smoke test (7/7, plus five timeframe checks) pass; an independent review was run after the first commit.
+- **The watcher: wait until the price sites are open**, so nothing reaches them untested. Not
+  started. **On resume:** run the curl check below; if it returns 200, the go-ahead is already
+  given — build the watcher. It must follow the timeframe setting: the engine
+  (`src/signal-engine.js`) is built on five-minute bars (its bar minimums, ATR stop multiple,
+  the M15/H1 bias, `minStopPct`), so watching M15 means feeding it 15-minute bars and
+  retuning those, not just changing the poll interval.
+
+**Earlier the same day: live alerts, and a longer timeframe.** Asked how they could get
 alerts rather than screenshotting, they were offered four routes (TradingView alerts ~$13–15
 a month with a Pine script I'd write; an MT5 alert robot ~$15 a month plus a computer; Claude
 watching in the chat; not yet). They chose **Claude watches in the chat**. Their setup: a Mac
 they could leave on, but **MT5 only runs properly on their iPhone**, so MT5 stays there.
 
-They then asked two things, answered but **not yet acted on**:
+They then asked two things (both since settled — see above):
 1. *Is it worth moving off M5 to give Claude and them more time?* — Answered **yes, M15**: the
    ~2-minute Thorough read plus screenshot/typing goes stale on M5, and wider M15 stops make the
    $6 BTC spread a smaller share of each trade with fewer trades paying it; fewer setups and
    smaller lots for the same risk are the trade-off, and it does not by itself create an edge.
    Offered to make the timeframe **a setting (M15 default, M5 kept)** and retune the checks
    (`checkPlan` rejects non-M5 today; prompts say M5; the 15-minute freshness window; stop
-   floors and tolerances are M5-sized). **Waiting for their yes.**
+   floors and tolerances are M5-sized). **They said yes that evening — built (decision 25).**
 2. *How to unblock the price sites, or can I do it?* — I cannot; the cloud environment's
    network policy is theirs. Steps given: session title bar → cloud environment menu → Edit →
    Network access → Limited → Allowed domains: `data-api.binance.vision`,
@@ -66,13 +76,14 @@ They then asked two things, answered but **not yet acted on**:
    https://code.claude.com/docs/en/cloud-environments#network-access. If it does not take
    effect in the running session, a new session with "resume" will pick it up.
 
-**On resume:** first check whether the hosts are reachable now
+**The check for the price hosts:**
 (`curl -sS -m 10 -o /dev/null -w '%{http_code}' 'https://data-api.binance.vision/api/v3/klines?symbol=BTCUSDT&interval=5m&limit=2'`
-— 200 means unblocked). Then, with their go-ahead: (a) the M15 setting; (b) the watcher —
+— 200 means unblocked). The M15 setting is done; what remains is the watcher —
 live bars from those hosts into the existing engine (`src/signal-engine.js`, `src/data-feeds.js`)
 and the desk's gate and checks, polling on the bar close, alerting the phone (check what
 the session offers: PushNotification / Routines, and how long a cloud session can keep a
-loop running before promising anything). Not yet built; nothing promised beyond that.
+loop running before promising anything). Not yet built; nothing promised beyond that. The
+user's answer on the watcher: build it once the sites are open, not before.
 
 ### Earlier on 11 Oct
 
@@ -145,7 +156,8 @@ loop running before promising anything). Not yet built; nothing promised beyond 
 
 ## The user
 
-- UK-based. Scalps **XAUUSD and BTCUSD on the 5-minute chart**.
+- UK-based. Scalps **XAUUSD and BTCUSD on the 15-minute chart** since 11 Oct 2026 (the
+  5-minute chart before; it is kept as a setting).
 - Trades **only the London session, 08:00–16:00 Europe/London**. Not at the screen outside it.
 - Uses **MetaTrader 5 on an iPhone 17 Pro Max**. Mobile MT5 runs no custom
   indicators and saves no templates, so the tool cannot live inside it — the
@@ -443,6 +455,33 @@ A fresh session is likely to "fix" some of these. Don't, without reading why.
       The page still has its own fixed setting (Setup → MT5 server clock).
     - **Pictures sent together are not guessed at**: the gate stops with
       `need-image` and the session names each chart by path.
+
+25. **The chart timeframe is a setting, M15 by default (11 Oct 2026, the user's choice).**
+    One table, `TIMEFRAMES` in `src/shot.js`, drives everything that depends on the candle;
+    the page (Setup → Chart timeframe, remembered on the phone) and the desk (`timeframe` in
+    `desk/config.json`; `gate --tf` for one chart the user names) both read it. Things that
+    look like oversights and are not:
+    - **The stop floor's cost part does not scale; its noise part is ×√3 on M15** (a candle's
+      range grows with the square root of its length). Gold's floor goes 1.24 → 1.90 at
+      $4,391; bitcoin's 63.30 → 109.64 at $84,400.
+    - **An M15 idea feeds the ticket for 30 minutes, not 45.** 45 would match M5's drift
+      against the stop, but the structure the readers saw changes too.
+    - **The final stretch stays the last 30 minutes on both.** It is decision 1's nudge about
+      the session's end, not about how long a trade lasts. The news caution is what widens
+      (60 minutes on M15), because there the open trade is the point.
+    - **Price tolerance and the drift warning do not scale** — they are already fractions of
+      the stop, which does.
+    - **The reader prompts' JSON example says "e.g. H1"** for the timeframe: an example naming
+      the expected one could be copied by a reader that cannot see the chart.
+    - **The timeframe is never taken from the picture.** A chart on the other one is turned
+      down with the switch offered (page: "set Chart timeframe…"; chat: "tell me to switch the
+      desk…"). When the readers mark it unreadable for that reason, `head` names the timeframe
+      they saw instead of "could not read it".
+    - **Runs and analyses carry their own timeframe.** Freshness and checks use the one the
+      analysis was made on, not a setting changed since; a desk run from before the setting
+      has none and is treated as M5.
+    - **The live engine is untouched** and still reads five-minute bars (blocked in claude.ai
+      anyway). The Setup note says so in the full view.
 
 ---
 
