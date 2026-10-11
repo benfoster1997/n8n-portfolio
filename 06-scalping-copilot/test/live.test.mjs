@@ -121,10 +121,10 @@ test('a feed whose newest bar is old is not read', () => {
 test('too few bars is said, not read', () => {
   assert.equal(liveRead({ pair: 'BTCUSD', bars: upTo(30), nowMs: at(30), cfg }).kind, 'no-data');
 });
-test('the shipped rule: on these ten days no idea passes (nothing clears 1R after costs at the next level)', () => {
-  let ideas = 0;
-  for (let k = 500; k < BARS.length; k += 3) if (liveRead({ pair: 'BTCUSD', bars: upTo(k), nowMs: at(k), cfg }).kind === 'idea') ideas++;
-  assert.equal(ideas, 0);
+test('on these ten days the next-level rule passes nothing; the shipped 1.5R rule finds the Wednesday and Thursday ideas', () => {
+  const count = (rule) => { let n = 0; for (let k = 500; k < BARS.length; k++) if (liveRead({ pair: 'BTCUSD', bars: upTo(k), nowMs: at(k), cfg, targetRule: rule }).kind === 'idea') n++; return n; };
+  assert.equal(count('level'), 0);
+  assert.equal(count(undefined), 7, 'the default is 1.5R, the user\'s choice');
 });
 test('a clear-path rule aims 1.5R or 2R only when no level stands in the way', () => {
   const a = { bias: 'long', price: 100, stopDistance: 10, targets: [{ price: 110 }], levels: [] };
@@ -134,13 +134,13 @@ test('a clear-path rule aims 1.5R or 2R only when no level stands in the way', (
   const blocked = { ...a, levels: [{ price: 104 }], targets: [{ price: 104 }, { price: 110 }] };
   assert.equal(clearPathTarget(blocked, '2R')[0].price, 104, 'a level in the way is never skipped');
 });
-test('Wednesday 14:15 London: on a 1.5R clear-path rule a sell passes every check', () => {
+test('Wednesday 14:15 London: on the 1.5R clear-path rule a sell passes every check', () => {
   const r = liveRead({ pair: 'BTCUSD', bars: upTo(IDEA_K), nowMs: at(IDEA_K), cfg, targetRule: '1.5R', source: { id: 'test', label: 'test bars' } });
   assert.equal(r.kind, 'idea'); assert.equal(r.result.decision, 'sell');
   assert.ok(r.result.netR >= 1);
   assert.ok(r.result.stopDistance >= stopFloor(r.cost, r.price, INSTRUMENTS.BTCUSD.minStopPct, 'M15'));
-  // The same moment on the shipped rule: the 1R fallback cannot pay after costs.
-  const same = liveRead({ pair: 'BTCUSD', bars: upTo(IDEA_K), nowMs: at(IDEA_K), cfg });
+  // The same moment on the next-level rule: the 1R fallback cannot pay after costs.
+  const same = liveRead({ pair: 'BTCUSD', bars: upTo(IDEA_K), nowMs: at(IDEA_K), cfg, targetRule: 'level' });
   assert.equal(same.kind, 'rejected'); assert.ok(same.result.problems.some((p) => /needs at least 1×/.test(p)));
   assert.doesNotMatch(formatLiveNone(same, cfg), DIRECTION, 'a rejected idea\'s direction is never shown');
 });

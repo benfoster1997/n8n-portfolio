@@ -71,13 +71,20 @@ async function history(start, end) {
   return bars;
 }
 
-/** Follow one alert forward to the stop, the target, or the window's close. Returns R after costs. */
+/**
+ * Follow one alert forward to the stop, the target, or the window's close.
+ * Returns R after costs, where 1R is what the stop actually loses. A buy pays
+ * the spread in its fill (ask), so its stop loses stopDist + spread and its
+ * target makes tp1Dist - spread. A sell fills at the bid and pays the spread
+ * in its exits triggering on the ask — sooner, but for exactly the distances.
+ */
 function outcome(bars, k, rec, spread, comm) {
   const buy = rec.side === 'buy';
   const entryBid = bars[k].c;
   const sl = buy ? entryBid - rec.stopDist : entryBid + rec.stopDist;
   const tp = buy ? entryBid + rec.tp1Dist : entryBid - rec.tp1Dist;
-  const riskPx = rec.stopDist + spread + comm;
+  const riskPx = (buy ? rec.stopDist + spread : rec.stopDist) + comm;
+  const winPx = (buy ? rec.tp1Dist - spread : rec.tp1Dist) - comm;
   const close = windowState(rec.barCloseMs, cfg.window).closesAtMs;
   for (let j = k + 1; j < bars.length; j++) {
     const b = bars[j];
@@ -85,7 +92,7 @@ function outcome(bars, k, rec, spread, comm) {
     const hitSl = buy ? lo <= sl : hi >= sl;
     const hitTp = buy ? hi >= tp : lo <= tp;
     if (hitSl) return { r: -1, how: 'stop', bars: j - k };
-    if (hitTp) return { r: (rec.tp1Dist - spread - comm) / riskPx, how: 'target', bars: j - k };
+    if (hitTp) return { r: winPx / riskPx, how: 'target', bars: j - k };
     if (b.t + tf.minutes * 60000 >= close) {
       const exit = buy ? b.c : b.c + spread;
       const pnl = buy ? exit - (entryBid + spread) : entryBid - exit;
@@ -130,6 +137,10 @@ for (const rule of rules) {
   if (n) {
     console.log(`   outcome: ${JSON.stringify(by((t) => t.how))} · sides ${JSON.stringify(by((t) => t.side))}`);
     console.log(`   average ${mean >= 0 ? '+' : ''}${mean.toFixed(3)}R a trade, 95% range ${(mean - 1.96 * sd / Math.sqrt(n)).toFixed(3)} to ${(mean + 1.96 * sd / Math.sqrt(n)).toFixed(3)} · total ${trades.reduce((s, t) => s + t.r, 0).toFixed(1)}R`);
+    // The same average in each half of the stretch: a real effect should not live in one half only.
+    const half = Math.floor(n / 2);
+    const avg = (xs) => (xs.length ? xs.reduce((s, t) => s + t.r, 0) / xs.length : 0);
+    console.log(`   first half ${avg(trades.slice(0, half)).toFixed(3)}R (${half} trades, to ${trades[half - 1] ? trades[half - 1].at.slice(0, 10) : '—'}) · second half ${avg(trades.slice(half)).toFixed(3)}R (${n - half})`);
     if (process.argv.includes('--list')) for (const t of trades) console.log(`   ${t.at} ${t.side} ${t.conf} netR ${t.netR} → ${t.how} ${t.r.toFixed(2)}R after ${t.bars} bars`);
   }
 }

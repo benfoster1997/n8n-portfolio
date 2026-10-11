@@ -60,21 +60,14 @@ their iPhone. **On resume:** `node -e "console.log(!!process.env.TWELVEDATA_API_
   (`src/timeframes.js`, `analyse({timeframe, htfBars})`, `resample(…, baseMinutes)`,
   feeds' `minutes`, `closedBars`); `desk/replay.mjs` (history replay with outcomes);
   `test/live.test.mjs` on 10 days of recorded Binance bars (`test/fixtures/btc-m15.json`).
-- **Open decision for the user — the target rule.** With the engine's targets as they are
-  (`TARGET_RULE = 'level'`), no idea passed in the recorded 10 days: when no level stands
-  ahead the engine's target is exactly 1R, which can never pay 1R after costs. '1.5R' / '2R'
-  (aim that far only when no level is in the way) gave two or three alerts that week.
-  `node desk/replay.mjs --pair bitcoin --from 2026-01-01` compares the three over 2026 with
-  outcomes; it was running when the session ended — rerun it, show the user the alerts a
-  week and the average R with its range, recommend, and let them choose. Do not pick a rule
-  by which number looks best without saying so: three rules on one sample is a mild
-  multiple-comparison problem.
-- Not done: SKILL.md section for watching (start `watch` with Bash run_in_background,
-  timeout 7200000; on `STATUS: alert` send the reply, PushNotification, restart; on
-  `timeout` restart silently; on `stopped` one line; `watch --stop` on "stop watching";
-  "take it"/a price after an alert → `take --price`); README; an independent review of the
-  watcher; then start it for the user. Phone pushes from this cloud session need Remote
-  Control on their Mac; otherwise alerts are chat messages.
+- **Target rule: decided — 1.5R when no level is in the way** (the user's choice, see
+  decision 26). The replay over 2026 is in decision 26.
+- Done since: the SKILL.md section for watching and the README section. **Next:** an
+  independent review of the watcher (it has had none), then start it for the user when
+  they ask ("watch") — weekdays 08:00–16:00 London; it cannot be pre-armed (outside the
+  window `watch` exits `stopped`). Phone pushes from this cloud session need Remote Control
+  on their Mac; otherwise alerts are chat messages. The user will add the gold key on
+  12 Oct and continue from their iPhone in a new session.
 - The timeframe review (8 findings confirmed, 2 refuted) is fixed and tested: `knownTf`
   (placeholders like "unknown" name no timeframe), `timeframeMismatch` shared by the page
   and the desk, the one-off `--tf` wording, the upload window following `staleChartMin`,
@@ -519,6 +512,40 @@ A fresh session is likely to "fix" some of these. Don't, without reading why.
       has none and is treated as M5.
     - **The live engine is untouched** and still reads five-minute bars (blocked in claude.ai
       anyway). The Setup note says so in the full view.
+
+26. **The live watcher (11 Oct 2026), and its 1.5R target rule.** `desk/live.mjs` runs live
+    bars through the same engine, gate and `checkPlan()` as a screenshot; `desk.mjs watch`
+    polls each bar close in the window and exits on an alert so the session wakes. Things
+    that look like mistakes and are not:
+    - **Alerts give distances, not prices.** No feed is IC Markets' quote (Binance,
+      Coinbase and Kraken sat $100–135 apart on 11 Oct). `take` builds the ticket from the
+      user's typed MT5 price; it refuses after one bar, after a feed drift of a quarter of
+      the stop (same source only), and on a typed price more than 1.5% from the feed's.
+    - **Silent wherever the spread is unknown** (weekend, outside the window, a bitcoin
+      blackout) — the screenshot path asks for the spread there; the watcher cannot.
+    - **Bitcoin's quiet hours do not withhold its read** (decision 23); gold's dead zone and
+      blackouts stop it at the gate, as for a screenshot.
+    - **The target rule is 1.5R when no level stands in the way.** The engine's own fallback
+      target is exactly 1R, which can never pay 1R after costs, so with it every such idea
+      was refused. `node desk/replay.mjs --pair bitcoin --from 2026-01-01` replays the
+      watcher over history with outcomes (buy fills at ask; stops/targets on the right side;
+      a bar touching both counts as the stop; still open at 16:00 London → closed there).
+      Over 1 Jan – 11 Oct 2026 (6,464 checks in the window):
+      | rule | alerts | a week | target / stop / 16:00 | average | 95% range |
+      |---|---|---|---|---|---|
+      | next level only | 57 | 1.4 | 18 / 33 / 6 | +0.08R | −0.34 to +0.50 |
+      | 1.5R when clear | 175 | 4.3 | 33 / 52 / 90 | +0.07R | −0.10 to +0.23 |
+      | 2R when clear | 175 | 4.3 | 26 / 52 / 97 | +0.09R | −0.08 to +0.26 |
+      (First run; a fix for sells being charged the spread twice moves these by about
+      0.01R — rerun before quoting exact figures.) **No rule shows an edge**; telling +0.08R
+      from zero needs ~600 trades. The user chose 1.5R knowing that, for about one alert a
+      trading day on the demo; they were advised to commit to a sample (~150) in "Is it
+      working yet?" first. Do not describe the alerts as profitable.
+    - **The engine reads M15 with its own table** (`src/timeframes.js`): "the last hour" is 4
+      bars, the bias is H1 and H4 from a longer `htfBars` history (the window stays 300 bars),
+      and its minimum stop is scaled by √3 so its stop always clears the desk's floor.
+      Relative volume now votes on M15 (300 bars ≈ 3 days of slots); decision 19's "only the
+      last 300" still holds for the page's M5 engine.
 
 ---
 

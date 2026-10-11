@@ -60,8 +60,16 @@ const CONF = { firm: 'high', moderate: 'moderate', low: 'low' };
  *   'level'  keep the engine's targets — no level ahead means no idea
  *   '1.5R' / '2R'  when NO level stands in the way, aim that far instead.
  * A level closer than that is never skipped: it is where the move may stop.
+ *
+ * '1.5R' is the user's choice (11 Oct 2026), after desk/replay.mjs over
+ * bitcoin's 2026 (1 Jan – 11 Oct, London window, $6 spread): 'level' 57
+ * alerts, +0.08R a trade (95% range −0.34 to +0.50); '1.5R' 175 alerts,
+ * +0.07R (−0.10 to +0.23); '2R' the same 175, +0.09R (−0.08 to +0.26). No
+ * rule showed an edge; 1.5R was chosen for alerts about once a trading day
+ * (a demo record that grows faster) and reaching its target more often than
+ * 2R. It is not evidence that the alerts make money.
  */
-export const TARGET_RULE = 'level';
+export const TARGET_RULE = '1.5R';
 export function clearPathTarget(a, rule = TARGET_RULE) {
   const t = a.targets || [];
   const k = rule === '1.5R' ? 1.5 : rule === '2R' ? 2 : null;
