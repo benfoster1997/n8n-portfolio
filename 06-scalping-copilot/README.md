@@ -97,7 +97,8 @@ only when an idea passes every check; the session sends it and starts watching a
   spread — weekend, outside the window, a bitcoin release blackout — the watcher sends
   nothing. Gold's dead zone and blackouts stop it as they stop a screenshot.
 - **One alert at a time** for each instrument: none while the last one's stop and target are
-  both untouched and the window is open, and no more than one per side per hour.
+  both untouched and the window is open, and no more than one per side every four bars (an
+  hour on M15).
 - **A feed that stops answering** three polls in a row drops that instrument only; the
   session restarts the watch for the other. Started before 08:00, the watch waits for the open.
 - **The target.** The engine's first target is the next level in the trade's direction.
@@ -387,7 +388,7 @@ reason to be flat.
 
 ```
 node build.mjs        # inline src/*.js into a single self-contained index.html
-node test/run-all.mjs # 430 assertions across 11 suites, the desk's and the watcher's included
+node test/run-all.mjs # 436 assertions across 11 suites, the desk's and the watcher's included
 node test/smoke.mjs   # real browser; needs playwright, see the file header
 node desk/desk.mjs now                         # the desk, as the chat session runs it
 node desk/desk.mjs gate --pair gold --price 4400
@@ -685,9 +686,10 @@ desk/
   desk.mjs          the commands the chat session runs (now, brief, gate, check, size, plan…)
   live.mjs          the watcher: live bars through the same engine, gate and checks
   replay.mjs        the watcher over past bars, with what happened next
+  stats.mjs         the replay's averages, and its range clustered by day
   config.json       account settings and the trade record, committed
 ../.claude/skills/scalp-desk/SKILL.md   how a session runs the desk
-test/               430 assertions; run-all.mjs runs the lot
+test/               436 assertions; run-all.mjs runs the lot
                     smoke.mjs loads the page in a real browser at seven
                     frozen session moments and fails on any page error
 HANDOFF.md          state, decisions and research, for picking this up cold

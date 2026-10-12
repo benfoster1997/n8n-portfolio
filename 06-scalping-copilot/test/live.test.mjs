@@ -10,12 +10,13 @@ import { readFileSync, writeFileSync, mkdtempSync, mkdirSync, existsSync, openSy
 import { execFileSync, spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   liveRead, shouldAlert, ideaRecord, formatLiveIdea, formatLiveNone, takeIdea, nextPollMs, inWatchHours,
   clearPathTarget, toPlan, COOLDOWN_BARS, stillRunning, alertState, minHistory,
 } from '../desk/live.mjs';
 import { withDefaults } from '../desk/lib.mjs';
+import { clusteredByDay } from '../desk/stats.mjs';
 import { closedBars, loadBars } from '../src/data-feeds.js';
 import { resample, relativeVolume } from '../src/indicators.js';
 import { analyse } from '../src/signal-engine.js';
@@ -219,19 +220,58 @@ test('an alert from the final stretch is not marked down a second time when take
 
 console.log('\nthe commands, end to end (no network: $SCALP_DESK_BARS)');
 /**
+ * Stands in for the network in a child process (node --import): the bars in
+ * $STUB_BARS (the BTCUSD list), served as each source would serve them.
+ *   short     Binance and Coinbase give 300 bars, Kraken 720
+ *   down      every source fails
+ *   golddown  Binance gives every bar; gold's sources fail
+ */
+const FETCH_STUB = `
+import { readFileSync } from 'node:fs';
+const bars = JSON.parse(readFileSync(process.env.STUB_BARS, 'utf8')).BTCUSD;
+const mode = process.env.STUB_MODE;
+const ok = (json) => ({ ok: true, status: 200, json: async () => json });
+const no = { ok: false, status: 503, json: async () => ({}) };
+const first = (n) => bars.slice(0, n);
+globalThis.fetch = async (u) => {
+  u = String(u);
+  if (mode === 'down' || u.includes('twelvedata')) return no;
+  if (mode === 'short') {
+    if (u.includes('binance')) return ok(first(300).map((b) => [b.t, b.o, b.h, b.l, b.c, b.v]));
+    if (u.includes('coinbase')) return ok(first(300).map((b) => [b.t / 1000, b.l, b.h, b.o, b.c, b.v]));
+    if (u.includes('kraken.com/0/public/OHLC?pair=XBTUSD')) return ok({ error: [], result: { XXBTZUSD: first(720).map((b) => [b.t / 1000, b.o, b.h, b.l, b.c, 0, b.v, 1]), last: 0 } });
+    return no;
+  }
+  if (u.includes('binance.vision')) return ok(bars.map((b) => [b.t, b.o, b.h, b.l, b.c, b.v]));
+  return no;
+};
+`;
+
+/**
  * A desk of its own: state in a temporary home, default settings, the test
  * feeds given (bitcoin's recorded bars unless told otherwise), the clock set.
  * Under $SCALP_DESK_NOW the watcher's waits move the clock on instead of
  * sleeping, so a whole morning of bar closes runs in a moment.
  */
-function env(nowIso, feeds = { BTCUSD: BARS }) {
+function env(nowIso, feeds = { BTCUSD: BARS }, { stub = null, key = '' } = {}) {
   const home = mkdtempSync(join(tmpdir(), 'live-'));
   const bars = join(home, 'bars.json');
   writeFileSync(bars, JSON.stringify(feeds));
   const config = join(home, 'config.json');
   writeFileSync(config, '{}');
-  const e = { ...process.env, SCALP_DESK_HOME: home, SCALP_DESK_CONFIG: config, SCALP_DESK_BARS: bars, SCALP_DESK_NOW: nowIso, TWELVEDATA_API_KEY: '' };
-  const run = (args, cmd = DESK) => { try { return execFileSync('node', [cmd, ...args], { encoding: 'utf8', env: e }); } catch (x) { return `EXIT ${x.status}\n${x.stdout}`; } };
+  const e = { ...process.env, SCALP_DESK_HOME: home, SCALP_DESK_CONFIG: config, SCALP_DESK_BARS: bars, SCALP_DESK_NOW: nowIso, TWELVEDATA_API_KEY: key };
+  const pre = [];
+  if (stub) {
+    // The real feed path (loadBars and every source), with fetch answered by FETCH_STUB.
+    delete e.SCALP_DESK_BARS;
+    const file = join(home, 'stub.mjs');
+    writeFileSync(file, FETCH_STUB);
+    Object.assign(e, { NODE_USE_ENV_PROXY: '1', NODE_NO_WARNINGS: '1', STUB_MODE: stub, STUB_BARS: bars });
+    pre.push('--import', pathToFileURL(file).href);
+  }
+  const run = (args, cmd = DESK, more = {}) => {
+    try { return execFileSync('node', [...pre, cmd, ...args], { encoding: 'utf8', env: { ...e, ...more }, timeout: 120000 }); } catch (x) { return `EXIT ${x.status ?? x.signal}\n${x.stdout}`; }
+  };
   const file = (f) => join(home, 'watch', f);
   const read = (f) => JSON.parse(readFileSync(file(f), 'utf8'));
   const put = (f, v) => { mkdirSync(join(home, 'watch'), { recursive: true }); writeFileSync(file(f), JSON.stringify(v)); };
@@ -250,6 +290,7 @@ test('watch outside the window stops at once, and says so to the session only', 
   const out = d.run(['watch', '--once']);
   assert.match(out, /STATUS: stopped/); assert.doesNotMatch(out, /--- reply ---/);
   assert.match(out, /gold is not watched — no Twelve Data key/);
+  assert.doesNotMatch(out, /WATCHING:/, 'a watch that stops at once is not announced as watching');
 });
 test('watch --once at any hour polls bitcoin and stays quiet when nothing passes', () => {
   const d = env('2026-10-11T21:30:20Z');
@@ -321,6 +362,16 @@ test('at 03:00 London it waits out its time limit for the open, instead of exiti
   assert.equal(s.polls, 0);
   assert.ok(s.endedAtMs - s.startedAtMs >= 1.85 * 3600e3, `it waited ${Math.round((s.endedAtMs - s.startedAtMs) / 60000)} minutes`);
   assert.equal(existsSync(d.file('watch.pid')), false, 'and it cleans up after itself');
+});
+test('once under way it names what it watches, with the start-up notes, before it ends', () => {
+  // The session reads these while the watch runs in the background.
+  const d = env('2026-10-07T06:00:00Z');   // Wednesday, 07:00 London; no gold key
+  const out = d.run(['watch']);
+  const lines = out.split('\n');
+  assert.equal(lines[0], 'WATCHING: Bitcoin on M15, in the window.');
+  assert.match(lines[1], /^NOTE: gold is not watched — no Twelve Data key/);
+  assert.match(lines[2], /^STATUS: timeout/);
+  assert.equal(out.split('gold is not watched').length, 2, 'said once, not again at the end');
 });
 test('from 07:00 London it sleeps until the open, then reads at each bar close', () => {
   const d = env('2026-10-07T06:00:00Z');   // Wednesday, 07:00 London
@@ -401,20 +452,34 @@ test('a watch started just after the 14:15 alert sends nothing more that day; wi
   const fresh = env('2026-10-07T13:15:30Z').run(['watch', '--pair', 'bitcoin']);
   assert.match(fresh, /STATUS: alert/); assert.match(reply(fresh), /▼ Sell idea · Bitcoin/);
 });
-test('the replay holds itself to the same rule, and gives its range clustered by day', () => {
+test('the real cycle: the watcher stores what it needs, so the watch restarted after an alert stays quiet', () => {
+  const d = env('2026-10-07T13:15:30Z');
+  assert.match(d.run(['watch', '--pair', 'bitcoin']), /STATUS: alert/);
+  const kept = d.read('state.json').lastAlert.BTCUSD;
+  assert.deepEqual(kept, alertState(d.read('ideas.json').BTCUSD));
+  assert.ok(kept.refPrice > 0 && kept.stopDist > 0 && kept.tp1Dist > 0, 'the levels stillRunning reads');
+  // The session starts it again, as the skill says, and it runs to the close without a second alert.
+  const again = d.run(['watch', '--pair', 'bitcoin'], DESK, { SCALP_DESK_NOW: '2026-10-07T13:30:20Z' });
+  assert.match(again, /STATUS: stopped/); assert.doesNotMatch(again, /--- reply ---/);
+  assert.equal(d.read('status.json').polls, 6);
+});
+test('the replay holds itself to the same rule, and prints the range stats.mjs clusters by day', () => {
   const d = env('2026-10-12T00:00:00Z');
   const out = d.run(['--pair', 'bitcoin', '--from', '2026-10-06', '--to', '2026-10-11T22:00', '--rule', '1.5R', '--list'], REPLAY);
   const trades = [...out.matchAll(/^ {3}(\S+) (buy|sell) \w+ netR [\d.]+ → \w+ (-?[\d.]+)R after \d+ bars$/gm)];
   assert.deepEqual(trades.map((m) => m[1]), ['2026-10-07T13:15', '2026-10-08T13:45'], 'not also 14:15 on the 7th: the 13:15 sell was still running');
-  // The clustered range, recomputed by day from the listed trades (shown to 2 places).
-  const rs = trades.map((m) => ({ day: m[1].slice(0, 10), r: Number(m[3]) }));
-  const mean = rs.reduce((s, t) => s + t.r, 0) / rs.length;
-  const byDay = new Map();
-  for (const t of rs) byDay.set(t.day, (byDay.get(t.day) || 0) + t.r - mean);
-  const se = Math.sqrt([...byDay.values()].reduce((s, x) => s + x * x, 0)) / rs.length;
+  const st = clusteredByDay(trades.map((m) => ({ at: m[1], r: Number(m[3]) })));   // listed to 2 places
   const m = out.match(/clustered by day: 95% range (-?[\d.]+) to (-?[\d.]+)/);
   assert.ok(m, out);
-  assert.ok(Math.abs(Number(m[1]) - (mean - 1.96 * se)) < 0.02 && Math.abs(Number(m[2]) - (mean + 1.96 * se)) < 0.02, `${m[0]} vs ${(mean - 1.96 * se).toFixed(3)} to ${(mean + 1.96 * se).toFixed(3)}`);
+  assert.ok(Math.abs(Number(m[1]) - st.clustered[0]) < 0.02 && Math.abs(Number(m[2]) - st.clustered[1]) < 0.02, `${m[0]} vs ${st.clustered.map((x) => x.toFixed(3)).join(' to ')}`);
+});
+test('the range is clustered by day: two results on one day count as one draw, not two', () => {
+  const t = (at, r) => ({ at, r });
+  const apart = clusteredByDay([t('2026-10-05T10:00', 1), t('2026-10-06T10:00', 1), t('2026-10-07T10:00', -1), t('2026-10-08T10:00', -1)]);
+  const paired = clusteredByDay([t('2026-10-05T10:00', 1), t('2026-10-05T14:00', 1), t('2026-10-07T10:00', -1), t('2026-10-07T14:00', -1)]);
+  assert.equal(apart.mean, 0); assert.deepEqual(paired.range, apart.range, 'the unclustered range cannot tell them apart');
+  assert.equal(apart.days, 4); assert.equal(paired.days, 2);
+  assert.equal(apart.seDay, 0.5); assert.equal(paired.seDay, Math.sqrt(8) / 4, 'each day\'s deviations are summed before squaring');
 });
 
 console.log('\nrelative volume compares like with like');
@@ -497,10 +562,14 @@ test('take picks the alert whose price the user typed, whichever was stored firs
   const btc = { ...rec0(), sourceId: 'test', refPrice: BARS.at(-1).c };
   const gold = { ...goldRec(), refPrice: GOLD.at(-1).c };
   assert.equal(btc.barCloseMs, gold.barCloseMs, 'read at the same close, so recency cannot decide');
-  d.put('ideas.json', { XAUUSD: gold, BTCUSD: btc });
-  assert.match(reply(d.run(['take', '--price', (btc.refPrice + 25).toFixed(2)])), /MT5 ticket — SELL BTCUSD/);
-  d.put('ideas.json', { BTCUSD: btc, XAUUSD: gold });
-  assert.match(reply(d.run(['take', '--price', (gold.refPrice + 0.2).toFixed(2)])), /MT5 ticket — SELL XAUUSD/);
+  const recs = { XAUUSD: gold, BTCUSD: btc };
+  const typed = { XAUUSD: (gold.refPrice + 0.2).toFixed(2), BTCUSD: (btc.refPrice + 25).toFixed(2) };
+  for (const order of [['XAUUSD', 'BTCUSD'], ['BTCUSD', 'XAUUSD']]) {
+    for (const want of order) {
+      d.put('ideas.json', Object.fromEntries(order.map((p) => [p, recs[p]])));
+      assert.match(reply(d.run(['take', '--price', typed[want]])), new RegExp(`MT5 ticket — SELL ${want}`), `stored ${order.join(' then ')}, typed the ${want} price`);
+    }
+  }
 });
 test('a scan records its alert without undoing one the watcher stored while the scan waited for its feed', async () => {
   const d = env('2026-10-07T13:15:20Z');
@@ -528,11 +597,36 @@ test('a scan records its alert without undoing one the watcher stored while the 
     try { off += writeSync(fd, buf, off); } catch (e) { if (e.code !== 'EAGAIN') throw e; await pause(5); }
   }
   closeSync(fd);
-  await exited;
+  let timer;
+  await Promise.race([exited, new Promise((_, no) => { timer = setTimeout(() => { child.kill(); no(new Error('the scan did not finish')); }, 60000); })]);
+  clearTimeout(timer);
   assert.match(reply(out), /▼ Sell idea · Bitcoin/);
   assert.deepEqual(Object.keys(d.read('ideas.json')).sort(), ['BTCUSD', 'XAUUSD']);
   assert.deepEqual(d.read('ideas.json').XAUUSD, gold, 'the gold alert is untouched');
   assert.deepEqual(Object.keys(d.read('state.json').lastAlert).sort(), ['BTCUSD', 'XAUUSD']);
+});
+
+console.log('\nthe real feed path, with the network stubbed');
+test('the desk asks the feeds for enough history: a 300-bar answer is passed over for one that has it', () => {
+  const out = env('2026-10-07T13:15:20Z', { BTCUSD: BARS }, { stub: 'short' }).run(['scan', '--pair', 'bitcoin']);
+  assert.match(reply(out), /▼ Sell idea · Bitcoin/);
+  assert.match(reply(out), /from Kraken \(XBT\/USD\)/, 'Binance\'s and Coinbase\'s 300 bars were not read');
+});
+test('gold\'s feed failing three polls drops gold; bitcoin is still watched', () => {
+  const d = env('2026-10-07T07:00:20Z', { BTCUSD: BARS }, { stub: 'golddown', key: 'k' });
+  const out = d.run(['watch']);
+  assert.match(out, /^WATCHING: Gold and Bitcoin on M15, in the window\.$/m);
+  assert.match(out, /STATUS: dropped/);
+  assert.match(reply(out), /^The live gold feed has stopped answering, so I have stopped watching gold\. Still watching bitcoin\.$/);
+  assert.match(out, /^NOTE: send the reply, then start the watch again with: watch --pair bitcoin$/m);
+  assert.match(out, /^NOTE: Twelve Data: HTTP 503/m);
+});
+test('both feeds failing on the same poll leave nothing to watch: it ends with an error naming both', () => {
+  const d = env('2026-10-11T21:30:20Z', { BTCUSD: BARS }, { stub: 'down', key: 'k' });
+  const out = d.run(['watch', '--anytime']);
+  assert.match(out, /STATUS: error/);
+  assert.match(reply(out), /^The live gold and bitcoin feeds have stopped answering, so I have stopped watching\./);
+  assert.equal(d.read('status.json').polls, 3);
 });
 
 for (const run of pending) await run();

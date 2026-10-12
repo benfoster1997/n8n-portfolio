@@ -573,11 +573,21 @@ const cmds = {
     const started = clock();
     const errors = {};
     const status = { startedAtMs: clock(), pairs, tf, polls: 0, last: {} };
-    console.log(`WATCHING: ${pairs.map((p) => label(p)).join(' and ')} on ${tfInfo(tf).id}${anytime ? ', at any hour' : ', in the window'}.`);
+    // Said once the watch is really under way (reading, or waiting for the open), with
+    // the start-up notes straight after it: the session reads these while the watch
+    // runs in the background, to tell the user what is watched. A watch that stops
+    // at once (after 16:00, the weekend) says only that.
+    let announced = false;
+    const announce = () => {
+      if (announced) return;
+      console.log(`WATCHING: ${pairs.map((p) => label(p)).join(' and ')} on ${tfInfo(tf).id}${anytime ? ', at any hour' : ', in the window'}.`);
+      for (const n of notes) console.log(n);
+      announced = true;
+    };
     const finish = (st, reply, extra = []) => {
       rmSync(pidFile, { force: true });
       writeJson(watchPath('status.json'), { ...status, endedAtMs: clock(), ended: st });
-      say(st, reply, [...notes, ...extra]);
+      say(st, reply, announced ? extra : [...notes, ...extra]);
       process.exit(0);
     };
 
@@ -590,11 +600,13 @@ const cmds = {
           // had the session restarting it in a tight loop before 06:00.
           const left = maxMs - (clock() - started);
           if (left <= 60000) finish('timeout', null, ['NOTE: the window has not opened yet; start the watch again (no message to the user).']);
+          announce();
           await pause(Math.min(w.opensAtMs - now + 20000, left - 30000));
           continue;
         }
         finish('stopped', null, [`NOTE: outside the watch hours (${w.phase}). Tell the user the watch has stopped for today, in one line.`]);
       }
+      announce();
       const alerts = [], gone = [];
       for (const pair of pairs) {
         const lb = await liveBars(pair, tf);

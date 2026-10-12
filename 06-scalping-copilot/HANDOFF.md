@@ -30,7 +30,7 @@ refuse a plain publish and would otherwise create a *second* page. Do this:
 
 ```
 node build.mjs            # inline src/*.js into index.html; refuses on name collisions
-node test/run-all.mjs     # 430 assertions across 11 suites — unit level only
+node test/run-all.mjs     # 436 assertions across 11 suites — unit level only
 node desk/desk.mjs now    # the in-chat desk; see .claude/skills/scalp-desk/SKILL.md
 node desk/desk.mjs scan --pair bitcoin   # one live read now (watch = poll each bar close)
 node desk/replay.mjs --pair bitcoin --from 2026-01-01   # the watcher over history, with outcomes
@@ -46,9 +46,11 @@ and stayed fully green twice while the page was broken.
 
 ### Where we stopped (12 Oct 2026, evening) — read this first
 
-**Everything is committed and pushed**; 430 unit assertions across 11 suites and the smoke test
-(7/7 moments, every flow check) pass. **The live page is version 21** (published 12 Oct from the
-current build: the M15 setting and the watcher review's engine fixes; `sample` kept).
+**Everything is committed and pushed**; 436 unit assertions across 11 suites (`live.test.mjs`
+takes about a minute) and the smoke test (7/7 moments, every flow check) pass. **The live page
+is version 21** (published 12 Oct from the current build: the M15 setting and the watcher
+review's engine fixes; `sample` kept). The review's follow-up fixes touched only the desk, its
+tests and the skill file, not the page.
 
 **Nothing is pending in code.** On "resume", wait for the user — a screenshot, "brief", "news",
 "watch" — and use the `scalp-desk` skill.
@@ -72,9 +74,22 @@ What the morning's resume checklist became (all done):
 - **SKILL.md** now covers `STATUS: dropped`, `STATUS: need-key`, the `WATCHING:` line, restarting
   with the right `--pair`, and never storing a key the user pastes into the chat.
 - **An independent review** (three lenses — the tests, the code changes, the session protocol —
-  each finding put to a skeptic) was started after this round was committed. Its outcome is in
-  the commit after it; if there is no such commit, it did not finish, and a small three-reviewer
-  pass over that commit's diff is worth re-running.
+  each finding put to a skeptic; 10 agents) ran after the first commit. Confirmed and fixed in
+  the commit after it: the take-by-price test also passed for "newest alert, ties to the last
+  stored" (now all four orders × typed prices); nothing tested that the watcher's *own* saved
+  state carries the levels `stillRunning` needs (now: alert, then a restarted watch stays quiet);
+  SKILL.md told the session to read a gold-key NOTE at start that the desk printed only at the
+  end (now printed straight after `WATCHING:`, which itself is printed only once the watch is
+  under way — a watch that stops at once after 16:00 is not announced); and the rule on a pasted
+  key sat under one rare status (now in "Never"). From its notes: the desk's own 300-bar skip
+  and the both-feeds-down ending are tested end to end with the network stubbed (`node
+  --import`); the by-day clustering moved to `desk/stats.mjs` and is tested with two results on
+  one day; the README's cooldown says "four bars (an hour on M15)". Two findings were refuted
+  (child-process timeouts — added anyway; `WATCHING:` before the window check — fixed anyway).
+  All 21 reintroduced bugs, old and new, are caught by their tests.
+- **Both feeds failing on the same poll** now ends `error` ("the live gold and bitcoin feeds have
+  stopped answering"): nothing is left to watch. Before, gold was dropped first and bitcoin got
+  three more polls (45 minutes) before the same `error`.
 
 **For the user:**
 - **Gold key:** `TWELVEDATA_API_KEY` is still **not set** (checked 12 Oct, 22:43 London; Twelve Data

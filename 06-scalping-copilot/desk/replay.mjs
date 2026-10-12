@@ -32,6 +32,7 @@ import { homedir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { liveRead, shouldAlert, alertState, COOLDOWN_BARS } from './live.mjs';
 import { withDefaults, pairOf, costFor } from './lib.mjs';
+import { clusteredByDay } from './stats.mjs';
 import { windowState } from '../src/sessions.js';
 import { tfInfo } from '../src/timeframes.js';
 import { INSTRUMENTS } from '../src/instruments.js';
@@ -132,21 +133,18 @@ for (const rule of rules) {
     if (o) trades.push({ at: new Date(closeMs).toISOString().slice(0, 16), side: rec.side, conf: res.confidence, netR: res.netR, ...o });
   }
   const n = trades.length;
-  const mean = n ? trades.reduce((s, t) => s + t.r, 0) / n : 0;
-  const sd = n > 1 ? Math.sqrt(trades.reduce((s, t) => s + (t.r - mean) ** 2, 0) / (n - 1)) : 0;
+  const st = clusteredByDay(trades);
+  const mean = st ? st.mean : 0, sd = st ? st.sd : 0;
   const weeks = (Math.min(toMs, bars[bars.length - 1].t) - fromMs) / (7 * 86400e3);
   const by = (f) => trades.reduce((m, t) => (m[f(t)] = (m[f(t)] || 0) + 1, m), {});
   console.log(`\n== rule ${rule}: ${polls} checks in the window → ${n} alerts (${(n / weeks).toFixed(1)} a week)`);
   console.log('   reads:', JSON.stringify(kinds));
   if (n) {
     console.log(`   outcome: ${JSON.stringify(by((t) => t.how))} · sides ${JSON.stringify(by((t) => t.side))}`);
-    console.log(`   average ${mean >= 0 ? '+' : ''}${mean.toFixed(3)}R a trade, 95% range ${(mean - 1.96 * sd / Math.sqrt(n)).toFixed(3)} to ${(mean + 1.96 * sd / Math.sqrt(n)).toFixed(3)} · total ${trades.reduce((s, t) => s + t.r, 0).toFixed(1)}R`);
+    console.log(`   average ${mean >= 0 ? '+' : ''}${mean.toFixed(3)}R a trade, 95% range ${st.range[0].toFixed(3)} to ${st.range[1].toFixed(3)} · total ${trades.reduce((s, t) => s + t.r, 0).toFixed(1)}R`);
     // Trades on the same day share the same market, so they are not independent:
-    // the range is also given with the uncertainty clustered by day.
-    const days = new Map();
-    for (const t of trades) { const d = t.at.slice(0, 10); days.set(d, (days.get(d) || 0) + (t.r - mean)); }
-    const seDay = Math.sqrt([...days.values()].reduce((s2, x) => s2 + x * x, 0)) / n;
-    console.log(`   clustered by day: 95% range ${(mean - 1.96 * seDay).toFixed(3)} to ${(mean + 1.96 * seDay).toFixed(3)} · spread of results ${sd.toFixed(2)}R · trades for the range to clear zero at this average: about ${mean > 0 ? Math.round((1.96 * seDay * Math.sqrt(n) / mean) ** 2) : '—'}`);
+    // the range is also given with the uncertainty clustered by day (desk/stats.mjs).
+    console.log(`   clustered by day: 95% range ${st.clustered[0].toFixed(3)} to ${st.clustered[1].toFixed(3)} · spread of results ${sd.toFixed(2)}R · trades for the range to clear zero at this average: about ${mean > 0 ? Math.round((1.96 * st.seDay * Math.sqrt(n) / mean) ** 2) : '—'}`);
     // The same average in each half of the stretch: a real effect should not live in one half only.
     const half = Math.floor(n / 2);
     const avg = (xs) => (xs.length ? xs.reduce((s, t) => s + t.r, 0) / xs.length : 0);
