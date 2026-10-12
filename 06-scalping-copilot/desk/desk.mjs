@@ -38,7 +38,9 @@
  * Network commands re-run themselves with NODE_USE_ENV_PROXY=1 when the
  * environment has a proxy and it is not set: Node's fetch ignores HTTPS_PROXY
  * otherwise, and every request fails with ENOTFOUND. $SCALP_DESK_BARS (a JSON
- * file of bars per instrument) stands in for the feeds under test.
+ * file of bars per instrument) stands in for the feeds under test, and
+ * $SCALP_DESK_NOW sets the clock; under it the watcher's waits move the clock
+ * on instead of sleeping.
  */
 import { readFileSync, writeFileSync, mkdirSync, renameSync, existsSync, rmSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -55,7 +57,7 @@ import { LENSES, analystPrompt, headPrompt, fastPrompt, checkPlan, parseReply, s
 import { tfInfo, timeframeOf } from '../src/timeframes.js';
 import { SETUPS, planProblem, planStatus, dayKey } from '../src/brief.js';
 import { formatHM } from '../src/timezone.js';
-import { loadBars } from '../src/data-feeds.js';
+import { loadBars, closedBars } from '../src/data-feeds.js';
 import { windowState } from '../src/sessions.js';
 import {
   FETCH_BARS, liveRead, shouldAlert, ideaRecord, formatLiveIdea, formatLiveNone, takeIdea, nextPollMs, inWatchHours,
@@ -180,7 +182,15 @@ function imagesAlreadyRead() {
 /* ------------------------------------------------------------ live prices */
 
 const NET_CMDS = ['scan', 'watch', 'take'];
-const clock = () => (process.env.SCALP_DESK_NOW ? NOW : Date.now());
+// Under test ($SCALP_DESK_NOW) the clock starts there and moves only when the
+// watcher waits: a wait advances it instead of sleeping, so a whole morning of
+// bar closes runs in a second. Otherwise both are the real clock.
+let testSkewMs = 0;
+const clock = () => (process.env.SCALP_DESK_NOW ? NOW + testSkewMs : Date.now());
+const pause = (ms) => {
+  if (process.env.SCALP_DESK_NOW) { testSkewMs += Math.max(0, ms); return Promise.resolve(); }
+  return new Promise((res) => setTimeout(res, Math.max(0, ms)));
+};
 const watchPath = (f) => join(HOME, 'watch', f);
 const goldKey = () => process.env.TWELVEDATA_API_KEY || '';
 /** Can gold be read at all here: its key, or (under test) bars for it. */
@@ -194,9 +204,10 @@ const goldAvailable = () => (process.env.SCALP_DESK_BARS ? !!(readJson(process.e
 async function liveBars(pair, tf, preferred = null) {
   const fixture = process.env.SCALP_DESK_BARS;
   if (fixture) {
-    const f = readJson(fixture, {});
-    const bars = f[pair] || [];
-    return bars.length ? { ok: true, bars, source: { id: 'test', label: 'test bars' } } : { ok: false, reason: 'no test bars' };
+    const bars = readJson(fixture, {})[pair] || [];
+    if (bars.length) return { ok: true, bars, source: { id: 'test', label: 'test bars' } };
+    // No gold bars stands for no gold key, as goldAvailable() reads it.
+    return pair === 'XAUUSD' ? { ok: false, noKey: true, reason: 'no Twelve Data key ($TWELVEDATA_API_KEY)' } : { ok: false, reason: 'no test bars' };
   }
   if (pair === 'XAUUSD' && !goldKey()) return { ok: false, noKey: true, reason: 'no Twelve Data key ($TWELVEDATA_API_KEY)' };
   const r = await loadBars(pair, { keys: { twelvedata: goldKey() }, limit: FETCH_BARS, minutes: tfInfo(tf).minutes, allowProxy: false, preferred, minBars: minHistory(tf) });
@@ -559,7 +570,7 @@ const cmds = {
     }
     mkdirSync(watchPath(''), { recursive: true });
     writeFileSync(pidFile, String(process.pid));
-    const started = Date.now();
+    const started = clock();
     const errors = {};
     const status = { startedAtMs: clock(), pairs, tf, polls: 0, last: {} };
     console.log(`WATCHING: ${pairs.map((p) => label(p)).join(' and ')} on ${tfInfo(tf).id}${anytime ? ', at any hour' : ', in the window'}.`);
@@ -569,7 +580,6 @@ const cmds = {
       say(st, reply, [...notes, ...extra]);
       process.exit(0);
     };
-    const sleep = (ms) => new Promise((res) => setTimeout(res, Math.max(0, ms)));
 
     for (;;) {
       const now = clock();
@@ -578,44 +588,50 @@ const cmds = {
         if (w.phase === 'before' && !a.once) {
           // Wait for the open — in real time, up to the cap. An instant exit here
           // had the session restarting it in a tight loop before 06:00.
-          const left = maxMs - (Date.now() - started);
+          const left = maxMs - (clock() - started);
           if (left <= 60000) finish('timeout', null, ['NOTE: the window has not opened yet; start the watch again (no message to the user).']);
-          await sleep(Math.min(w.opensAtMs - now + 20000, left - 30000));
+          await pause(Math.min(w.opensAtMs - now + 20000, left - 30000));
           continue;
         }
         finish('stopped', null, [`NOTE: outside the watch hours (${w.phase}). Tell the user the watch has stopped for today, in one line.`]);
       }
-      const alerts = [];
+      const alerts = [], gone = [];
       for (const pair of pairs) {
         const lb = await liveBars(pair, tf);
         if (!lb.ok) {
           errors[pair] = (errors[pair] || 0) + 1;
           status.last[pair] = { kind: 'feed-error', atMs: now, reason: lb.reason };
-          if (errors[pair] >= 3) {
-            const rest = pairs.filter((p) => p !== pair);
-            if (!rest.length) finish('error', `The live ${label(pair).toLowerCase()} feed has stopped answering, so I have stopped watching. Send screenshots meanwhile, or tell me to start watching again.`, [`NOTE: ${lb.reason}`]);
-            finish('dropped', `The live ${label(pair).toLowerCase()} feed has stopped answering, so I have stopped watching ${label(pair).toLowerCase()}. Still watching ${rest.map((p) => label(p).toLowerCase()).join(' and ')}.`,
-              [`NOTE: ${lb.reason}`, `NOTE: send the reply, then start the watch again with: watch --pair ${rest.map((p) => (p === 'XAUUSD' ? 'gold' : 'bitcoin')).join(' ')}`]);
-          }
+          if (errors[pair] >= 3) gone.push({ pair, reason: lb.reason });
           continue;
         }
         errors[pair] = 0;
         const r = liveRead({ pair, bars: lb.bars, nowMs: now, cfg, plan: loadPlan(), source: lb.source });
         status.last[pair] = { kind: r.kind, atMs: now, price: r.price ?? null, source: lb.source.label, barCloseMs: r.barCloseMs ?? null };
         const state = readJson(watchPath('state.json'), { lastAlert: {} });
-        if (r.kind === 'idea' && shouldAlert(state, r, lb.bars, cfg)) alerts.push(r);
+        // Whether the last alert is still running is judged on closed bars, as the replay does.
+        if (r.kind === 'idea' && shouldAlert(state, r, closedBars(lb.bars, tfInfo(tf).minutes, now), cfg)) alerts.push(r);
       }
       status.polls += 1;
       writeJson(watchPath('status.json'), status);
+      // A feed that failed three polls in a row is dropped, and only that one. The
+      // other instrument is still read on the same poll, so an idea on it is sent
+      // rather than lost to the exit.
+      const names = (ps) => ps.map((p) => label(p).toLowerCase()).join(' and ');
+      const rest = pairs.filter((p) => !gone.some((g) => g.pair === p));
+      const goneNotes = gone.map((g) => `NOTE: ${g.reason}`);
+      if (gone.length && !rest.length) finish('error', `The live ${names(pairs)} feed${pairs.length > 1 ? 's have' : ' has'} stopped answering, so I have stopped watching. Send screenshots meanwhile, or tell me to start watching again.`, goneNotes);
+      const goneLine = gone.length ? `The live ${names(gone.map((g) => g.pair))} feed has stopped answering, so I have stopped watching ${names(gone.map((g) => g.pair))}. Still watching ${names(rest)}.` : null;
+      const again = gone.length ? ` with: watch --pair ${rest.map((p) => (p === 'XAUUSD' ? 'gold' : 'bitcoin')).join(' ')}` : '.';
       if (alerts.length) {
         const recs = alerts.map((r) => ideaRecord(r));
         recordAlerts(recs);
-        finish('alert', recs.map((rec) => formatLiveIdea(rec, cfg, now, loadPlan())).join('\n\n'), ['NOTE: send the reply, push a one-line notification, then start the watch again.']);
+        finish('alert', [...recs.map((rec) => formatLiveIdea(rec, cfg, now, loadPlan())), goneLine].filter(Boolean).join('\n\n'), [...goneNotes, `NOTE: send the reply, push a one-line notification, then start the watch again${again}`]);
       }
+      if (gone.length) finish('dropped', goneLine, [...goneNotes, `NOTE: send the reply, then start the watch again${again}`]);
       if (a.once) finish('quiet', null, pairs.map((p) => `NOTE: ${p} ${status.last[p] ? status.last[p].kind : 'not read'}`));
       const next = nextPollMs(clock(), tf);
-      if (Date.now() - started + (next - clock()) > maxMs) finish('timeout', null, ['NOTE: the watch reached its time limit; start it again (no message to the user).']);
-      await sleep(next - clock());
+      if (next - started > maxMs) finish('timeout', null, ['NOTE: the watch reached its time limit; start it again (no message to the user).']);
+      await pause(next - clock());
     }
   },
 

@@ -30,7 +30,7 @@ refuse a plain publish and would otherwise create a *second* page. Do this:
 
 ```
 node build.mjs            # inline src/*.js into index.html; refuses on name collisions
-node test/run-all.mjs     # 410 assertions across 11 suites — unit level only
+node test/run-all.mjs     # 430 assertions across 11 suites — unit level only
 node desk/desk.mjs now    # the in-chat desk; see .claude/skills/scalp-desk/SKILL.md
 node desk/desk.mjs scan --pair bitcoin   # one live read now (watch = poll each bar close)
 node desk/replay.mjs --pair bitcoin --from 2026-01-01   # the watcher over history, with outcomes
@@ -44,58 +44,76 @@ container it uses the preinstalled headless_shell under `/opt/pw-browsers`.
 **Run the smoke test after any UI change.** The unit suites do not touch the DOM
 and stayed fully green twice while the page was broken.
 
-### Where we stopped (12 Oct 2026) — read this first
+### Where we stopped (12 Oct 2026, evening) — read this first
 
-**Everything is committed and pushed** (last code commit `cb56ed9`); 410 unit assertions across
-11 suites pass. The user cleared the context to **resume the tests**. On "resume", work this list
-in order without asking again — the go-ahead is given:
+**Everything is committed and pushed**; 430 unit assertions across 11 suites and the smoke test
+(7/7 moments, every flow check) pass. **The live page is version 21** (published 12 Oct from the
+current build: the M15 setting and the watcher review's engine fixes; `sample` kept).
 
-1. **Tests for the watcher review's fixes.** The fixes are in code (`cb56ed9`) but have no tests
-   of their own. Add them to `test/live.test.mjs` (fixture: `test/fixtures/btc-m15.json`, 10 days
-   of recorded Binance M15 bars), at least one assertion each:
-   - the final stretch is marked down **once**: a real read at fixture bar 586
-     (2026-10-07T14:30:20Z) must pass `take` (`liveRead` passes `lastStretch: false`; the engine
-     already applied ×0.6);
-   - before ~06:00 London, `watch` waits for the open in real time instead of exiting (the skill
-     had restarted it in a tight loop);
-   - three failures of one feed drop only that instrument (`STATUS: dropped`); the other keeps
-     watching;
-   - `stillRunning`: no new alert on an instrument while the last one's stop or target is
-     untouched and the window is open; the replay applies the same rule and clusters its range
-     by day;
-   - `relativeVolume` compares like with like (bitcoin weekday with weekday), from `htfBars`;
-   - `minBars`: a 300-bar feed is skipped (it can never give the H4 bias);
-   - `KEY_HOW`: the missing-key reply points at instructions that exist;
-   - `take` chooses the instrument by price, not insertion order; `recordAlerts`: scan and
-     watch no longer overwrite each other's alerts.
-2. **SKILL.md** (`.claude/skills/scalp-desk/SKILL.md`) does not yet cover `STATUS: dropped`,
-   `STATUS: need-key` or the `WATCHING:` line — add what the session does with each.
-3. `node test/run-all.mjs`; then **the smoke test** (`node test/smoke.mjs` — the engine changed
-   since it last ran green); then `node build.mjs` and **republish the page** (steps above; live
-   page is still version 20; omit `capabilities` to keep `sample`).
-4. Commit, push, and rewrite this section.
+**Nothing is pending in code.** On "resume", wait for the user — a screenshot, "brief", "news",
+"watch" — and use the `scalp-desk` skill.
 
-**Then, for the user:**
-- **Gold key:** `TWELVEDATA_API_KEY` was **not set** in the container on 12 Oct (Twelve Data
-  answers 401). Check `node -e "console.log(!!process.env.TWELVEDATA_API_KEY)"`; once true, run
+What the morning's resume checklist became (all done):
+- **Tests for every fix from the watcher review** (`cb56ed9`): 20 new tests in
+  `test/live.test.mjs`. Each was checked by putting its bug back — 14 mutations, each caught by
+  the test written for it. The real 15:30 alert (fixture bar 586) is taken; a watch started at
+  03:00 waits out its limit; a failing feed drops only its instrument; no alert while the last
+  one runs (unit, `watch` end to end, and the replay); relative volume weekday with weekday and
+  from `htfBars`; a 300-bar feed passed over; the key reply; `take` by price; and a scan that
+  records its alert while the watcher writes one meanwhile (a named pipe holds the scan at its
+  feed, so the race is reproduced, not hoped for).
+- **To make the watch loop testable**, `$SCALP_DESK_NOW` now also makes the watcher's waits move
+  the clock instead of sleeping (a morning of polls in under a second); real use is unchanged.
+  `desk/replay.mjs` reads `$SCALP_DESK_BARS` and `$SCALP_DESK_CONFIG` under test.
+- **Two small fixes the tests found.** (1) A feed dropped in the same poll as an idea on the other
+  instrument lost that idea: the watch exited before sending it. Now the alert goes out with the
+  drop notice, and the NOTE names the `--pair` to restart with. (2) `watch` handed `stillRunning`
+  every bar the feed returned; it now gets closed bars only, as the replay does.
+- **SKILL.md** now covers `STATUS: dropped`, `STATUS: need-key`, the `WATCHING:` line, restarting
+  with the right `--pair`, and never storing a key the user pastes into the chat.
+- **An independent review** (three lenses — the tests, the code changes, the session protocol —
+  each finding put to a skeptic) was started after this round was committed. Its outcome is in
+  the commit after it; if there is no such commit, it did not finish, and a small three-reviewer
+  pass over that commit's diff is worth re-running.
+
+**For the user:**
+- **Gold key:** `TWELVEDATA_API_KEY` is still **not set** (checked 12 Oct, 22:43 London; Twelve Data
+  answers 401). Once `node -e "console.log(!!process.env.TWELVEDATA_API_KEY)"` prints true, run
   `node desk/desk.mjs scan --pair gold` to see whether the free plan serves 15-minute XAU/USD.
-  Until then the watcher covers bitcoin only. The key goes in the cloud environment's variables
-  (environment menu → Edit), never in `desk/config.json` (committed).
-- **Start the watch only when they ask** ("watch"), weekdays 08:00–16:00 London. It cannot be
-  pre-armed: outside the window `watch` exits `stopped`. The skill file says how to run it in the
-  background and what to do with each way it ends. Phone pushes from a cloud session need Remote
-  Control on their Mac; otherwise an alert is a chat message.
+  Until then the watcher covers bitcoin only. The key goes in the cloud environment's settings as
+  an environment variable (environment menu → Edit; a new session picks it up), never in
+  `desk/config.json` (committed) and never in the chat.
+- **Start the watch only when they ask** ("watch"). Started before 08:00 London it waits for the
+  open (up to its ~1.9-hour limit, then ends `timeout` and the session restarts it); after 16:00
+  or at the weekend it ends `stopped`. The skill file says what to do with each ending. Phone
+  pushes from a cloud session need Remote Control on their Mac; otherwise an alert is a chat
+  message.
 - The alerts are **demo practice, not evidence of an edge** (decision 26: the 1.5R rule averaged
   +0.03R a trade, −0.17 to +0.23, over 2026). Keep saying so, and keep advising a committed
   sample (~150) in "Is it working yet?" before reading anything into results.
 
 **State of the build** (details in decisions 25–26):
-- Timeframe is a setting, **M15 default**, M5 kept — built, reviewed, tested.
-- **Price sites open** (12 Oct: Binance, Coinbase, Kraken 200; Twelve Data 401 without a key).
-  Node needs `NODE_USE_ENV_PROXY=1`; the desk's network commands re-run themselves with it.
-- **Watcher built**: `desk/live.mjs`, `desk.mjs scan | watch | take`, `desk/replay.mjs`,
-  `src/timeframes.js`; target rule **1.5R when no level is in the way** (the user's choice);
-  independent review done (17 findings, 13 confirmed ≈ 8 distinct, all fixed in `cb56ed9`).
+- Timeframe is a setting, **M15 default**, M5 kept — built, reviewed, tested, live on the page.
+- **Price sites open** (12 Oct, 22:43 London: Binance, Coinbase, Kraken 200; Twelve Data 401
+  without a key). Node needs `NODE_USE_ENV_PROXY=1`; the desk's network commands re-run
+  themselves with it. A live `scan --pair bitcoin` that evening fetched the bars and stopped at
+  the gate as it should (outside the window).
+- **Watcher built and tested**: `desk/live.mjs`, `desk.mjs scan | watch | take`,
+  `desk/replay.mjs`, `src/timeframes.js`; target rule **1.5R when no level is in the way**.
+
+**One latent engine quirk, noted and not fixed** (outside this round's scope): the volume score
+(`volumeBucket` in `src/signal-engine.js`) reads `lastOf(relVol)` — the last bar that *has* a
+baseline — so when the newest bar has none it scores an older bar's volume instead of
+abstaining, as its own comment says it should. Today it barely bites: the watcher's 500–1,000
+bars nearly always give the newest weekday bar a baseline, and the page's M5 engine has none
+anywhere, so it abstains. The fix is one line (the value at the newest bar) plus a test; re-run
+the 2026 replay afterwards and say plainly if decision 26's figures move.
+
+### The morning of 12 Oct (for reference; superseded by the section above)
+
+The user cleared the context to resume the tests; the checklist then was: tests for the watcher
+review's fixes, SKILL.md for `dropped` / `need-key` / `WATCHING:`, run everything, republish
+(version 20 was live), commit. All done in the evening.
 
 ### History of 11 Oct (for reference; superseded by the section above)
 
@@ -185,8 +203,13 @@ user's answer on the watcher: build it once the sites are open, not before.
 - **Next step: wait for the user** to try the chat route on Bitcoin and report what the
   card says. Nothing is built or pending beyond that.
 
-### What the page is (live page version 20, 4 Oct 2026; `capabilities: {sample: {}}` since version 18)
+### What the page is (live page version 21, 12 Oct 2026; `capabilities: {sample: {}}` since version 18)
 
+- **Version 21 (12 Oct 2026)** adds Setup → **Chart timeframe** (M15 default, M5 kept; decision
+  25) and carries the watcher review's engine changes (relative volume weekday with weekday;
+  feeds asked for the bar length). The page's own live engine still reads five-minute bars and
+  is blocked in claude.ai anyway. Before publishing, the live version 20 was read in full: it
+  was exactly commit d2cf104's build, so nothing saved from inside the page was lost.
 - **Inside claude.ai there are no live prices** (claude.ai blocks the feeds; the user
   chose to stay). Trade ideas come from **MT5 chart screenshots** read by Claude on the
   user's account (decision 22). Republishing must keep the `sample` capability: omit

@@ -22,7 +22,9 @@
  *
  *   node desk/replay.mjs --pair bitcoin --from 2026-01-01 [--to 2026-10-11] [--rule level|1.5R|2R]
  *
- * History is cached under $SCALP_DESK_HOME/history/.
+ * History is cached under $SCALP_DESK_HOME/history/. Under test,
+ * $SCALP_DESK_BARS (the desk's file of bars per instrument) stands in for it
+ * and $SCALP_DESK_CONFIG for desk/config.json.
  */
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -34,7 +36,7 @@ import { windowState } from '../src/sessions.js';
 import { tfInfo } from '../src/timeframes.js';
 import { INSTRUMENTS } from '../src/instruments.js';
 
-if ((process.env.HTTPS_PROXY || process.env.https_proxy) && !process.env.NODE_USE_ENV_PROXY) {
+if (!process.env.SCALP_DESK_BARS && (process.env.HTTPS_PROXY || process.env.https_proxy) && !process.env.NODE_USE_ENV_PROXY) {
   const r = spawnSync(process.execPath, [...process.execArgv, ...process.argv.slice(1)], { stdio: 'inherit', env: { ...process.env, NODE_USE_ENV_PROXY: '1', NODE_NO_WARNINGS: '1' } });
   process.exit(r.status ?? 1);
 }
@@ -42,7 +44,7 @@ if ((process.env.HTTPS_PROXY || process.env.https_proxy) && !process.env.NODE_US
 const arg = (k, d = null) => { const i = process.argv.indexOf(`--${k}`); return i > 0 ? process.argv[i + 1] : d; };
 const HOME = process.env.SCALP_DESK_HOME || join(homedir(), '.scalp-desk');
 const pair = pairOf(arg('pair', 'bitcoin'));
-const cfg = withDefaults(JSON.parse(readFileSync(new URL('./config.json', import.meta.url), 'utf8')));
+const cfg = withDefaults(JSON.parse(readFileSync(process.env.SCALP_DESK_CONFIG || new URL('./config.json', import.meta.url), 'utf8')));
 const tf = tfInfo(cfg.timeframe);
 const fromMs = Date.parse(arg('from', '2026-01-01'));
 const toMs = arg('to') ? Date.parse(arg('to')) : Date.now();
@@ -103,7 +105,7 @@ function outcome(bars, k, rec, spread, comm) {
   return null;
 }
 
-const bars = await history(fromMs, toMs);
+const bars = process.env.SCALP_DESK_BARS ? JSON.parse(readFileSync(process.env.SCALP_DESK_BARS, 'utf8'))[pair] : await history(fromMs, toMs);
 const inst = INSTRUMENTS[pair];
 const spread = inst.typicalSpread.observed;
 const comm = costFor(pair, 0, cfg).comm;

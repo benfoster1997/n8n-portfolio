@@ -81,17 +81,28 @@ is watched (the command says so).
 
 | The user says | Run |
 |---|---|
-| "watch", "alert me", "start watching" | `watch` with the Bash tool's `run_in_background` and a timeout of 7200000. Tell them in one line what is watched and that you will message when an idea passes every check. Do not say until when. |
+| "watch", "alert me", "start watching" | `watch` with the Bash tool's `run_in_background` and a timeout of 7200000. Read its first line, `WATCHING:` — it names what is actually watched — and tell them in one line what is watched and that you will message when an idea passes every check. Do not say until when. If a NOTE says gold is not watched (no Twelve Data key), add that gold needs a key first; if they ask how, run `scan --pair gold` and send its reply. |
 | "what does the live chart say?" | `scan` (`--pair` for one) — send the reply |
 | a price, or "take it", after an alert | `take --price N` (`--spread S` if they gave one) — send the reply |
 | "stop watching" | `watch --stop` |
 
-When the background `watch` ends, read its output and act on the STATUS:
+When the background `watch` ends, read its output and act on the STATUS. "Start `watch` again"
+means the same way, in the background, with the same `--pair` as the run that ended — unless
+its NOTE names a `--pair` to use instead.
 - `alert` → send the reply as it is, call PushNotification with one line ("Bitcoin sell idea —
-  reply with your MT5 price for the ticket"), then start `watch` again.
-- `timeout` → start `watch` again; say nothing.
+  reply with your MT5 price for the ticket"), then start `watch` again. If the reply also says
+  a feed stopped answering, restart with the `--pair` its NOTE names.
+- `timeout` → start `watch` again; say nothing. Started before the window opens, it waits for
+  the open up to its time limit and ends this way: that is expected.
+- `dropped` → one instrument's feed failed three polls in a row and that instrument alone is
+  dropped. Send the reply, then start `watch` again with the `--pair` its NOTE names (the one
+  still answering). No notification.
 - `stopped` → the window has closed or it is the weekend: one line, e.g. "Watch stopped for today."
 - `error` → send the reply; do not restart unless they ask.
+- `need-key` → they asked to watch gold and there is no Twelve Data key, so nothing was
+  started. Send the reply as it is; it says where the key goes. Never ask for the key in the
+  chat. If they paste one anyway, do not write it anywhere (not `desk/config.json`, not the
+  repo, not a command line); tell them it goes in the environment settings, as the reply says.
 - `already` → one is running; nothing to do.
 
 An alert is good for one bar: after that, or once the price has moved a quarter of the stop,
