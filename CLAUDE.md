@@ -2,8 +2,11 @@
 
 ## Active work: `06-scalping-copilot/`
 
-A 5-minute scalping dashboard for XAUUSD and BTCUSD, built for one user who trades
-the London session on MetaTrader 5 on an iPhone.
+A scalping desk for XAUUSD and BTCUSD (15-minute chart by default, 5-minute kept as a
+setting), built for one user who trades the London session on MetaTrader 5 on an iPhone.
+It can also watch the live chart and alert them (`desk.mjs watch`; decision 26).
+
+**On "resume", start from the checklist in HANDOFF.md → "Where we stopped".**
 
 **It now runs inside this chat.** When the user sends an MT5 screenshot, or asks for the
 brief, the news, a lot size or their plan, use the `scalp-desk` skill

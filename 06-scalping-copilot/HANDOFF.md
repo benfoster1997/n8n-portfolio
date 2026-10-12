@@ -1,7 +1,7 @@
 # Handoff — M5 Scalp Desk
 
 Everything needed to pick this up in a fresh session without re-deriving it.
-Last updated 11 October 2026. Read this whole file before changing anything —
+Last updated 12 October 2026. Read this whole file before changing anything —
 several decisions below look like mistakes and are not.
 
 ---
@@ -30,8 +30,10 @@ refuse a plain publish and would otherwise create a *second* page. Do this:
 
 ```
 node build.mjs            # inline src/*.js into index.html; refuses on name collisions
-node test/run-all.mjs     # 372 assertions across 10 suites — unit level only
+node test/run-all.mjs     # 410 assertions across 11 suites — unit level only
 node desk/desk.mjs now    # the in-chat desk; see .claude/skills/scalp-desk/SKILL.md
+node desk/desk.mjs scan --pair bitcoin   # one live read now (watch = poll each bar close)
+node desk/replay.mjs --pair bitcoin --from 2026-01-01   # the watcher over history, with outcomes
 node test/smoke.mjs       # real browser, 7 frozen moments x both views, fills in the brief; fails on page errors, overflow, "undefined"/"NaN"
 ```
 
@@ -42,49 +44,60 @@ container it uses the preinstalled headless_shell under `/opt/pw-browsers`.
 **Run the smoke test after any UI change.** The unit suites do not touch the DOM
 and stayed fully green twice while the page was broken.
 
-### Where we stopped (11 Oct 2026, ~22:00 London, latest) — read this first
+### Where we stopped (12 Oct 2026) — read this first
 
-**The price sites are open** (the user allowed them; curl 200 for Binance, Coinbase, Kraken;
-Twelve Data 401 without a key). Node needs `NODE_USE_ENV_PROXY=1`; the desk's network
-commands re-run themselves with it. **Gold needs the user's Twelve Data key** as the
-environment variable `TWELVEDATA_API_KEY` (cloud environment → Edit → environment
-variables); they were adding it when this was written, then moving to a new session on
-their iPhone. **On resume:** `node -e "console.log(!!process.env.TWELVEDATA_API_KEY)"`, then
-`node desk/desk.mjs scan --pair gold` to see whether the free plan serves 15-minute XAU/USD.
+**Everything is committed and pushed** (last code commit `cb56ed9`); 410 unit assertions across
+11 suites pass. The user cleared the context to **resume the tests**. On "resume", work this list
+in order without asking again — the go-ahead is given:
 
-**The watcher is built but not finished** (committed so the next session has it):
-- Done: `desk/live.mjs` (liveRead → engine on M15 → checkPlan; alert text with distances,
-  because no feed is IC Markets' price; `take` rebuilds the ticket from the user's MT5
-  price, refusing after one bar, after a drift of a quarter of the stop, or on a typo);
-  `desk.mjs scan | watch | take`; the engine and feeds take a timeframe
-  (`src/timeframes.js`, `analyse({timeframe, htfBars})`, `resample(…, baseMinutes)`,
-  feeds' `minutes`, `closedBars`); `desk/replay.mjs` (history replay with outcomes);
-  `test/live.test.mjs` on 10 days of recorded Binance bars (`test/fixtures/btc-m15.json`).
-- **Target rule: decided — 1.5R when no level is in the way** (the user's choice, see
-  decision 26). The replay over 2026 is in decision 26.
-- **A review of the watcher (3 lenses, 17 findings, 13 confirmed ≈ 8 distinct) is fixed in
-  code, but its fixes have no tests of their own yet**: the double final-stretch markdown
-  (`liveRead` now passes `lastStretch: false` — the engine already applied ×0.6), the
-  restart loop before the window (it now sleeps in real time), one feed's failures
-  stopping both instruments (`STATUS: dropped`), stacked alerts (`stillRunning`; replay
-  applies it too and clusters its range by day), weekday/weekend volume
-  (`relativeVolume` like for like, from `htfBars`), 300-bar feeds (`minBars`), the key
-  message (`KEY_HOW`), `take` choosing the instrument by price, scan/watch overwriting each
-  other (`recordAlerts`). **Next session: write those tests** (e.g. a real final-stretch
-  read at fixture bar 586, 2026-10-07T14:30:20Z, must `take` ok), update SKILL.md for
-  `dropped`, `need-key` and the `WATCHING:` line, rerun the smoke test (the engine
-  changed), then republish the page.
-- Done since: the SKILL.md section for watching and the README section. **Next:** an
-  independent review of the watcher (it has had none), then start it for the user when
-  they ask ("watch") — weekdays 08:00–16:00 London; it cannot be pre-armed (outside the
-  window `watch` exits `stopped`). Phone pushes from this cloud session need Remote Control
-  on their Mac; otherwise alerts are chat messages. The user will add the gold key on
-  12 Oct and continue from their iPhone in a new session.
-- The timeframe review (8 findings confirmed, 2 refuted) is fixed and tested: `knownTf`
-  (placeholders like "unknown" name no timeframe), `timeframeMismatch` shared by the page
-  and the desk, the one-off `--tf` wording, the upload window following `staleChartMin`,
-  `config` reporting "unchanged". Units 381 + the watcher suite; smoke green before the
-  watcher's engine changes were rebuilt into the page — rerun it.
+1. **Tests for the watcher review's fixes.** The fixes are in code (`cb56ed9`) but have no tests
+   of their own. Add them to `test/live.test.mjs` (fixture: `test/fixtures/btc-m15.json`, 10 days
+   of recorded Binance M15 bars), at least one assertion each:
+   - the final stretch is marked down **once**: a real read at fixture bar 586
+     (2026-10-07T14:30:20Z) must pass `take` (`liveRead` passes `lastStretch: false`; the engine
+     already applied ×0.6);
+   - before ~06:00 London, `watch` waits for the open in real time instead of exiting (the skill
+     had restarted it in a tight loop);
+   - three failures of one feed drop only that instrument (`STATUS: dropped`); the other keeps
+     watching;
+   - `stillRunning`: no new alert on an instrument while the last one's stop or target is
+     untouched and the window is open; the replay applies the same rule and clusters its range
+     by day;
+   - `relativeVolume` compares like with like (bitcoin weekday with weekday), from `htfBars`;
+   - `minBars`: a 300-bar feed is skipped (it can never give the H4 bias);
+   - `KEY_HOW`: the missing-key reply points at instructions that exist;
+   - `take` chooses the instrument by price, not insertion order; `recordAlerts`: scan and
+     watch no longer overwrite each other's alerts.
+2. **SKILL.md** (`.claude/skills/scalp-desk/SKILL.md`) does not yet cover `STATUS: dropped`,
+   `STATUS: need-key` or the `WATCHING:` line — add what the session does with each.
+3. `node test/run-all.mjs`; then **the smoke test** (`node test/smoke.mjs` — the engine changed
+   since it last ran green); then `node build.mjs` and **republish the page** (steps above; live
+   page is still version 20; omit `capabilities` to keep `sample`).
+4. Commit, push, and rewrite this section.
+
+**Then, for the user:**
+- **Gold key:** `TWELVEDATA_API_KEY` was **not set** in the container on 12 Oct (Twelve Data
+  answers 401). Check `node -e "console.log(!!process.env.TWELVEDATA_API_KEY)"`; once true, run
+  `node desk/desk.mjs scan --pair gold` to see whether the free plan serves 15-minute XAU/USD.
+  Until then the watcher covers bitcoin only. The key goes in the cloud environment's variables
+  (environment menu → Edit), never in `desk/config.json` (committed).
+- **Start the watch only when they ask** ("watch"), weekdays 08:00–16:00 London. It cannot be
+  pre-armed: outside the window `watch` exits `stopped`. The skill file says how to run it in the
+  background and what to do with each way it ends. Phone pushes from a cloud session need Remote
+  Control on their Mac; otherwise an alert is a chat message.
+- The alerts are **demo practice, not evidence of an edge** (decision 26: the 1.5R rule averaged
+  +0.03R a trade, −0.17 to +0.23, over 2026). Keep saying so, and keep advising a committed
+  sample (~150) in "Is it working yet?" before reading anything into results.
+
+**State of the build** (details in decisions 25–26):
+- Timeframe is a setting, **M15 default**, M5 kept — built, reviewed, tested.
+- **Price sites open** (12 Oct: Binance, Coinbase, Kraken 200; Twelve Data 401 without a key).
+  Node needs `NODE_USE_ENV_PROXY=1`; the desk's network commands re-run themselves with it.
+- **Watcher built**: `desk/live.mjs`, `desk.mjs scan | watch | take`, `desk/replay.mjs`,
+  `src/timeframes.js`; target rule **1.5R when no level is in the way** (the user's choice);
+  independent review done (17 findings, 13 confirmed ≈ 8 distinct, all fixed in `cb56ed9`).
+
+### History of 11 Oct (for reference; superseded by the section above)
 
 **Resumed 11 Oct (evening).** The price hosts were still refused (CONNECT 403 on all four), so
 the user was given the network steps again (below). They then answered both open questions:
