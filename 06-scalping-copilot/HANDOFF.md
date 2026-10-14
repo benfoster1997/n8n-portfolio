@@ -1,7 +1,7 @@
 # Handoff — M5 Scalp Desk
 
 Everything needed to pick this up in a fresh session without re-deriving it.
-Last updated 12 October 2026. Read this whole file before changing anything —
+Last updated 14 October 2026. Read this whole file before changing anything —
 several decisions below look like mistakes and are not.
 
 ---
@@ -44,7 +44,48 @@ container it uses the preinstalled headless_shell under `/opt/pw-browsers`.
 **Run the smoke test after any UI change.** The unit suites do not touch the DOM
 and stayed fully green twice while the page was broken.
 
-### Where we stopped (12 Oct 2026, evening) — read this first
+### Where we stopped (14 Oct 2026, ~22:15 London) — PAUSED by the user; read this first
+
+**The user said "pause everything till I resume".** All work is stopped; nothing is running and
+nothing is half-written in code. The code is exactly as the 12 Oct section below describes (436
+unit assertions pass; live page version 21). What changed on 14 Oct is a decision and a plan:
+
+- **The user asked how many trades to test** → answered **about 240** for the 1.5R alerts (detects
+  a +0.2R/trade edge: breakeven ≈ 41% win rate after ~0.03R cost, edge ≈ 49%; +0.3R needs ~105,
+  +0.1R ~940 — `tradesNeeded()` in src/edge-test.js). Earlier "~150" was for 1:1 trades. Count
+  alert trades only; a 16:00 close counts as a win only if in profit, and the average R is checked
+  too; no stopping early. At ~3 bitcoin alerts a week that is ~1.5 years; with gold ~9–10 months.
+  Asked whether to lock 240 into "Is it working yet?" — **not answered yet; desk/config.json still
+  has plannedSample 0. Do not set it without their yes.**
+- **They asked whether it can be proven in a few weeks and whether the tool can learn why trades
+  go the way they do** → told: not from a few weeks of their own trades; yes from a multi-year
+  replay on past prices with years held back; one trade's "why" is mostly luck; patterns count
+  only across many trades and on data nothing was tuned on; the tool must not rewrite its rules
+  after each trade.
+- **They approved building both**, and asked for **"a way for the tool to learn the algorithm of
+  the charts for BTCUSD and XAUUSD"**: (1) a multi-year bitcoin replay recording why each alert
+  fired and how it ended, broken down by condition, with 2025–26 held back; (2) an automatic trade
+  journal of every live alert, its reasons, its outcome on the feed, and whether they took it;
+  (3) a learning layer. **The plan is `06-scalping-copilot/LEARNING-PLAN.md`** (ridge regression +
+  "similar past setups", walk-forward 2019–2024, holdout 2025-01-01 → now evaluated once, two
+  pre-declared tests, a model that can only remove alerts and never bypass the gate or checks).
+- They asked **how long** → told: the build ~3–5 hours of session work; "perfect / best bot" has
+  no finish line; tonight's history test is the first real answer, live confirmation takes months.
+  They asked to be told the results "tonight", then paused before anything was built.
+- They asked whether closing the Claude apps pauses the work → told no: the session runs in the
+  cloud; idle sessions can be paused, so work is saved after each stage.
+
+**On "resume", in order:**
+1. Re-run the **plan critique** (three lenses, listed at the end of LEARNING-PLAN.md; it was
+   stopped before any critic returned). Fold its fixes into LEARNING-PLAN.md.
+2. Build, then run on bitcoin, then review — as the plan says. The bitcoin history must be fetched
+   again in a new container (~2 minutes from Binance; 320,623 M15 bars from 2017-08-17).
+   Gold waits for `TWELVEDATA_API_KEY` (still not set on 14 Oct).
+3. Report the results to the user in plain English: what held up on 2025–26 and what did not,
+   beside the coin-flip baseline. Do not describe anything as profitable unless the pre-declared
+   holdout test passed, and even then as "held up on unseen history", not as proof.
+
+### Before the pause: 12 Oct 2026, evening
 
 **Everything is committed and pushed**; 436 unit assertions across 11 suites (`live.test.mjs`
 takes about a minute) and the smoke test (7/7 moments, every flow check) pass. **The live page
