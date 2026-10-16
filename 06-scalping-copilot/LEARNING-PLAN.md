@@ -239,6 +239,74 @@ broker's price. It has no live record yet, and the decision is yours._"
 Gold: the same pipeline; without `TWELVEDATA_API_KEY` every gold step returns need-key with the same
 instructions as `scan --pair gold`. No PAXG stand-in.
 
-## Engineering
+## Engineering (from the engineering review, 16 Oct)
 
-(Filled in from the engineering review — see the section below.)
+Measured: the 65 ms a check is not `analyse()` (1–4 ms). About 95% is a new `Intl.DateTimeFormat`
+built on every timezone conversion (src/timezone.js `tzOffsetMs`, src/sessions.js `localDate`), and
+`getActiveBlackout` runs twice per check (in `gateFor` and in `liveRead`). With formatters cached
+per timezone a check takes ~8–10 ms (0 differences on 600 sampled checks); a two-phase replay of
+2026 took 18 s on 3 workers, and 2017-09 → 2026-10-14 (75,919 checks) 150 s on 4 workers.
+
+Corrections the review made to the facts above:
+- The calendar does not cover 2026 only: rule-derived events (weekly claims, ISM by business day,
+  approximate retail sales and flash PMI, month-end expiries, ADP pulse) produce blackouts in every
+  year, using 2026 holidays. Only the date-listed tier-1 events are 2026-only. History runs take an
+  explicit **calendar mode** (`full` | `rules` | `none`), the same for every year in the dataset and
+  learner; each read records the blackout event id. 2026 is reported with `full` only to compare
+  with decision 26.
+- **Historical cost goes into the read**, not only into `outcome()`: `liveRead` hard-codes the
+  observed spread, which feeds the engine's spread verdict, `costFor`, `checkPlan`'s stop floor
+  (max 10 × cost, noise) and netR. 2019 with the scaled spread gave 281 ideas against 192 at a fixed
+  $6. `liveRead` takes a `spreadNum` override; each read stores the spread it used; cost mode is in
+  the read-store key and every report header.
+- Rows with no engine read: `blocked` rows never reach `analyse`; `none` rows are mostly neutral
+  (no stop or target). A dataset `readAt()` computes features from an `analyse` call made with
+  `blackout: null` and a non-dead band (features only), takes the watcher kind from the real path,
+  and leaves label (a) null unless the kind is idea or rejected (rejected rows take their levels
+  from `toPlan`). Gate-blocked rows are never tradeable. Net and raw confidence are recomputed in
+  features.mjs from the buckets and the exported WEIGHTS (or analyse returns them additively).
+  Zero-variance features are dropped per pair; sd = 0 is guarded when standardising.
+- The filter changes later `stillRunning` and cooldown results, so T1 cannot be computed by
+  filtering the unfiltered alert list: the read store keeps every idea read, and the serial alert
+  pass takes a predicate applied before `shouldAlert`; the baseline and T1 come from the same pass.
+
+Build order (only one agent edits a shared file at a time):
+0. **Foundation (one agent).** Cache formatters (src/timezone.js, src/sessions.js); prove the 2026
+   replay is byte-identical; rebuild the page; smoke test. `desk/net.mjs` `ensureProxy()` shared by
+   desk.mjs, replay.mjs and the new CLIs. `desk/reads.mjs` (side-effect free): `readAt()` with
+   `spreadNum` and `calendar` options, the read for every target rule from one `analyse`, an
+   `extra()` hook for features; a worker pool that gives each worker a k-range and the full bar
+   array (no warm-up logic: each read is a pure function of bars[k−999..k], nowMs = close + 20 s,
+   cfg, rule); the serial alert pass (`shouldAlert` → `alertState` → `outcome`, rebuilding
+   `seen = bars.slice(max(0,k−999), k+1)`) with a predicate; a JSONL read store keyed by a hash of
+   the engine source, cost mode, calendar mode, window and timeframe. replay.mjs on top, with
+   `--workers` (1 takes the same two-phase path), `--cost fixed|scaled`, `--calendar`,
+   `--both-touched stop|half`, and holdout discipline (rows from 2025-01-01 only with `--holdout`,
+   every such look appended to desk/model.json; the decision-26 window is marked "already seen").
+   Parity tests: CLI 2026 at workers 1 and 4 prints exactly 6464 / {none 2600, rejected 3291, idea
+   359, blocked 214} / 120 / 24-41-55 / buy 55, sell 65 / +0.028R / −0.169 to 0.225; a unit test
+   compares alert lists on test/fixtures/btc-m15.json for workers 1 vs 3. **Then** the volumeBucket
+   fix, the 2026 re-run, and the change recorded in HANDOFF decision 26; rebuild and smoke again.
+1. **New files only, in parallel:** A `desk/history.mjs` (merge into the cache, never truncate; drop
+   the forming bar; refetch from the last cached bar; Twelve Data code 429 → wait 60 s, code 400
+   "No data" → stop, dedupe by t; skip checks whose 1,000-bar slice has a gap > 4 bars; stubbed
+   fetch in tests). B `desk/features.mjs` (pure function of closed bars, analysis, nowMs, cfg; test
+   that the live path and the dataset give the same features at bar k). C `desk/journal.mjs`
+   (append-only JSONL event log — alert, ticketed, taken, resolved, actual — natural id
+   `${pair}-${barCloseMs}`, idempotent fold; path `$SCALP_DESK_JOURNAL` or `journal.jsonl` beside the
+   config so tests are isolated; allowlist test; wording; summary). E `desk/conditions.mjs` (the
+   by-condition table). F the 2025 calendar dates (src/news-calendar.js data only).
+2. **After B and 0:** D `desk/dataset.mjs` + `desk/learn.mjs` + tests (ridge, kNN, walk-forward, T1
+   and T2 via the predicate pass, P2 exploratory, canonical recipe JSON hashed, every `--final`
+   attempt recorded in model.json; model.json beside the config like the journal).
+3. **Integration (one agent):** desk.mjs (journal and learn commands; now/brief on the proxy path),
+   live.mjs (METHOD_VERSION and the method-hash test; journal entries; footer), config
+   `account.mode`, SKILL.md, README, HANDOFF, `.gitattributes`
+   (`06-scalping-copilot/desk/journal.jsonl merge=union`; the session pulls with rebase before
+   pushing); replay on history.mjs. Resolution fetches bounded by `AbortSignal.timeout(~5 s)`, never
+   failing the command, on the alert's own feed (history.mjs for entries older than the live window).
+4. Then: build the bitcoin read store, run walk-forward on dev years, commit the recipe, run the
+   holdout once, review, report.
+
+Keep test/run-all.mjs under ~30 s once the formatter cache lands: fixture-only tests, no more than
+~200 liveReads each. JSONL rows (~2 KB, ~150 MB for bitcoin) are read line by line.
