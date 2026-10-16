@@ -31,7 +31,9 @@ test('the 08:30 ET slot resolves correctly on every real 2026 NFP date', () => {
   //
   // A "first Friday of the month" rule — the one every retail article
   // repeats — is wrong for four of the twelve 2026 releases:
-  //   Jan 9, May 8 and Aug 7 are SECOND Fridays;
+  //   Jan 9 and May 8 are SECOND Fridays;
+  //   Feb 11 is a WEDNESDAY: a brief federal shutdown from 31 January
+  //   delayed it from its scheduled 6 February;
   //   Jul 2 is a THURSDAY, because Fri 3 Jul is the observed Independence
   //   Day holiday.
   // That is why the calendar in this tool is table-driven and why
@@ -39,7 +41,7 @@ test('the 08:30 ET slot resolves correctly on every real 2026 NFP date', () => {
   // follow a rule. Deriving NFP would put a trader in a position during
   // the largest print of the month, roughly a third of the time.
   const published2026 = [
-    [1, 9, '13:30'], [2, 6, '13:30'], [3, 6, '13:30'], [4, 3, '12:30'],
+    [1, 9, '13:30'], [2, 11, '13:30'], [3, 6, '13:30'], [4, 3, '12:30'],
     [5, 8, '12:30'], [6, 5, '12:30'], [7, 2, '12:30'], [8, 7, '12:30'],
     [9, 4, '12:30'], [10, 2, '12:30'], [11, 6, '13:30'], [12, 4, '13:30'],
   ];
@@ -50,13 +52,13 @@ test('the 08:30 ET slot resolves correctly on every real 2026 NFP date', () => {
 
 test('the first-Friday rule provably disagrees with the published NFP dates', () => {
   // Guards against anyone "simplifying" the calendar back to a rule later.
-  const published = { 1: 9, 2: 6, 3: 6, 4: 3, 5: 8, 6: 5, 7: 2, 8: 7, 9: 4, 10: 2, 11: 6, 12: 4 };
+  const published = { 1: 9, 2: 11, 3: 6, 4: 3, 5: 8, 6: 5, 7: 2, 8: 7, 9: 4, 10: 2, 11: 6, 12: 4 };
   const mismatches = [];
   for (let m = 1; m <= 12; m++) {
     if (nthWeekdayOfMonth(2026, m, 5, 1) !== published[m]) mismatches.push(m);
   }
-  assert.deepEqual(mismatches, [1, 5, 7],
-    'a first-Friday rule must be shown to fail for Jan, May and Jul 2026');
+  assert.deepEqual(mismatches, [1, 2, 5, 7],
+    'a first-Friday rule must be shown to fail for Jan, Feb, May and Jul 2026');
 });
 
 test('the 6 Nov 2026 NFP falls back to 13:30 UTC because DST ended on 1 Nov', () => {

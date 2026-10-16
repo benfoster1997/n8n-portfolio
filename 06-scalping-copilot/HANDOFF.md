@@ -30,7 +30,7 @@ refuse a plain publish and would otherwise create a *second* page. Do this:
 
 ```
 node build.mjs            # inline src/*.js into index.html; refuses on name collisions
-node test/run-all.mjs     # 449 assertions across 12 suites — unit level only
+node test/run-all.mjs     # 463 assertions across 12 suites — unit level only
 node desk/desk.mjs now    # the in-chat desk; see .claude/skills/scalp-desk/SKILL.md
 node desk/desk.mjs scan --pair bitcoin   # one live read now (watch = poll each bar close)
 node desk/replay.mjs --pair bitcoin --from 2026-01-01 --to 2026-10-11   # the watcher over history (decision 26's stretch; 2025-01-01 on is held back, see LEARNING-PLAN.md)
@@ -389,9 +389,13 @@ A fresh session is likely to "fix" some of these. Don't, without reading why.
    open. The 10:30 LBMA auction is ~a statistical non-event post the 2015 reform.
 
 4. **News dates are table-driven, not rule-derived.** "NFP is the first Friday"
-   is wrong 4 times in 12 for 2026 (Jan 9, May 8, Aug 7 are second Fridays; Jul 2
-   is a Thursday because Jul 3 is the observed holiday). A test asserts the rule
-   fails, so nobody "simplifies" it back.
+   is wrong 4 times in 12 for 2026 (Jan 9 and May 8 are second Fridays; Feb 11 is a
+   Wednesday, delayed by a brief shutdown; Jul 2 is a Thursday because Jul 3 is the
+   observed holiday — an earlier version of this line said Aug 7, which is the first
+   Friday). A test asserts the rule fails, so nobody "simplifies" it back. Past
+   years (2017–2025, for the replay) come from data/calendar-history.json: only
+   dates a source confirmed, never its unsourced candidates, so NFP and CPI before
+   2025 are partial; confidence is kept per year.
 
 5. **All times are wall-clock in a named IANA zone**, resolved at runtime. Never
    hardcode a UTC offset. US data is 13:30 London almost all year, 12:30 London
@@ -671,6 +675,38 @@ A fresh session is likely to "fix" some of these. Don't, without reading why.
       the same slot, so the newest bar always had a baseline (0 of 634 sampled 2026 reads
       lacked one). The fix matters for weekend reads, the start of a history, and the page's
       M5 engine, not for these figures. Decision 26 stands as written.
+      **Later the same day: the review's fixes, then corrected February dates — one alert moved.**
+      An independent review of the rebuilt replay found two majors and six minors, all fixed:
+      the read store now serves a stored read only when the bars it was made from match (each
+      read keeps a fingerprint of its 1,000-bar slice: first bar, length, a hash of times and
+      closes) and keys the bar source, a spread override and the broker block; the decision-26
+      exception covers only the plain report (`--by-condition`, or any flag not on the plain
+      report's list, needs `--holdout` and is recorded), and the by-condition hook gets bars
+      only up to the last check's session close; the features hook gets the slice ending at the
+      check, frozen, never the whole history or an index; `alertPass` requires the pair; a
+      broken `desk/conditions.mjs` stops the run instead of reading as "not built yet"; a
+      `--holdout` run prints the development years, 2025 and 2026 as separate blocks, 2026
+      labelled already seen. Re-run on the 14 Oct bar file (320,623 bars) in a fresh home,
+      `--workers 1` and `--workers 4` both still print, byte for byte, 6,464 checks; reads none
+      2,600 / rejected 3,291 / idea 359 / blocked 214; 120 alerts; window 55 / stop 41 / target
+      24; buys 55, sells 65; +0.028R, clustered −0.169 to 0.225 (and again from the store).
+      **Then the calendar** gained 2025 and the sourced 2017–2024 dates
+      (data/calendar-history.json), and two live 2026 dates were corrected: January's NFP came
+      out Wed 11 Feb, not Fri 6 Feb (verified), and January's CPI Fri 13 Feb, not Wed 11 Feb
+      (likely) — a brief shutdown from 31 January. Re-run at the default settings (calendar
+      full), **every rule keeps its alert count and outcome split; one alert moved**: the
+      6 Feb bitcoin buy, held back to 14:00 by the NFP blackout the old table wrongly put on
+      that day, now fires at 13:15 (+1.14R at the 16:00 close instead of +0.98R). Reads idea 359 → 362, rejected 3,291 →
+      3,288 (blocked stays 214: three checks freed on 6 Feb, three blocked on 13 Feb, 11 Feb
+      blocked either way). 1.5R: 120 alerts, +0.028R → **+0.029R**, clustered −0.169..0.225 →
+      −0.168..0.226, total 3.3R → 3.5R, halves −0.037R → −0.034R / +0.092R unchanged. Next level
+      only: 50 alerts, +0.038R → +0.041R. 2R: 117 alerts, +0.041R → +0.042R. With
+      `--calendar rules` (only rule-derived events; not the default, so it needs `--holdout` —
+      those two looks, 2026 rows only, went to a scratch model file, not desk/model.json)
+      the figures did not move with the correction, as they should not: 1.5R 120 alerts,
+      +0.029R, −0.168..0.226 (reads none 2,624 / rejected 3,327 / idea 368 / blocked 145); level
+      50, +0.041R; 2R 117, +0.042R. The conclusion stands: roughly break-even after the spread,
+      no evidence of an edge. The figures in the table above are the ones the user was shown.
 
 ---
 

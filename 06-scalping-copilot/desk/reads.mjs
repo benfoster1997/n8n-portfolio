@@ -38,7 +38,7 @@ import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Worker } from 'node:worker_threads';
 import { availableParallelism } from 'node:os';
-import { engineRead, judgeLean, shouldAlert, alertState, FETCH_BARS } from './live.mjs';
+import { engineRead, judgeLean, shouldAlert, alertState, FETCH_BARS, ENGINE_BARS } from './live.mjs';
 import { costFor, timeframeFor } from './lib.mjs';
 import { outcome } from './outcome.mjs';
 import { windowState } from '../src/sessions.js';
@@ -104,6 +104,25 @@ export function checkIndices(bars, { fromMs, toMs, cfg }) {
   return ks;
 }
 
+/**
+ * What a read at bar k was made from: the first bar of its 1,000-bar slice,
+ * how many bars the slice holds, and a short hash of every bar's time and
+ * close. The read store answers a check only from a read whose slice matches
+ * the bars in hand, because the close time alone does not identify them: a
+ * test file of bars, a shorter history or a gap filled later all give a
+ * different read at the same close (found in review, 16 Oct 2026, where the
+ * test fixture's reads were served for the real history). Time and close tell
+ * apart every way the bars have actually differed; a mismatch costs one
+ * recomputed read, so it errs on the side of recomputing.
+ */
+export function sliceOf(bars, k) {
+  const lo = Math.max(0, k - (FETCH_BARS - 1));
+  const buf = new Float64Array(2 * (k - lo + 1));
+  for (let j = lo, i = 0; j <= k; j++) { buf[i++] = bars[j].t; buf[i++] = bars[j].c; }
+  return { from: bars[lo].t, n: k - lo + 1, hash: createHash('sha256').update(new Uint8Array(buf.buffer)).digest('hex').slice(0, 16) };
+}
+const sameSlice = (a, b) => !!a && !!b && a.from === b.from && a.n === b.n && a.hash === b.hash;
+
 /** The longest run of missing bars between bars[lo] and bars[hi]. */
 export function longestGap(bars, lo, hi, tfMs) {
   let worst = 0;
@@ -136,21 +155,37 @@ function verdict(plan, result) {
  *   opts.cost                'fixed' | 'scaled' (COST_MODES); opts.spreadNum overrides both
  *   opts.calendar            'full' | 'rules' | 'none'
  *   opts.extra(ctx)          optional; its return value is stored as `extra`.
- *                            ctx = { pair, k, bars, window, closed, analysis, nowMs, cfg, read }
- *                            (window: the engine's 300 bars; analysis null when the
- *                            gate stopped the read before the engine)
+ *                            The hook NEVER sees a bar after k: it is handed the
+ *                            slice ending at k and no index into the history.
+ *                            ctx = { pair, tf, cfg, nowMs, spreadNum, kind,
+ *                                    closed, window, analysis, read }
+ *                              closed    the closed bars up to k, at most 1,000
+ *                                        (frozen; the engine's htfBars)
+ *                              window    the last 300 of them (frozen; the
+ *                                        engine's bars)
+ *                              analysis  the engine's own analysis, or null when
+ *                                        the gate stopped the read before it ran
+ *                                        (blocked, no-data, stale)
+ *                              kind      the read's kind ('lean', 'none', ...)
+ *                              read      the read so far, without its index k
+ *                            Enough for desk/features.mjs: featuresAt() takes
+ *                            closed, analysis, nowMs, cfg, pair and tf, and
+ *                            analysisForFeatures() the same plus spreadNum for a
+ *                            row with no analysis.
  * Kinds: 'gap' (skipped: the slice is missing more than GAP_BARS bars in a
  * row), 'no-data', 'stale', 'blocked', 'none', or 'lean' — the engine leaned,
- * and `rules[rule].kind` says 'idea' or 'rejected' under each rule.
+ * and `rules[rule].kind` says 'idea' or 'rejected' under each rule. Every read
+ * carries `slice` (sliceOf), so the store can tell which bars made it.
  */
 export function readAt(bars, k, opts) {
   const { pair, cfg, rules = DEFAULT_RULES, cost = 'fixed', calendar = 'full', extra = null } = opts;
-  const tfMs = tfInfo(timeframeFor(cfg)).minutes * 60000;
+  const tf = tfInfo(timeframeFor(cfg));
+  const tfMs = tf.minutes * 60000;
   const lo = Math.max(0, k - (FETCH_BARS - 1));
   const closeMs = bars[k].t + tfMs;
   const nowMs = closeMs + 20000;
   const spreadNum = Number.isFinite(opts.spreadNum) ? opts.spreadNum : spreadAt(pair, bars[k].c, cost);
-  const head = { k, closeMs, nowMs, spreadNum };
+  const head = { k, closeMs, nowMs, spreadNum, slice: sliceOf(bars, k) };
   if (longestGap(bars, lo, k, tfMs) > GAP_BARS) return { ...head, kind: 'gap', blackoutId: null };
 
   const seen = bars.slice(lo, k + 1);
@@ -167,9 +202,16 @@ export function readAt(bars, k, opts) {
     }
   }
   if (extra) {
+    // The features hook is the learner's input, and the learner must never
+    // see the future (LEARNING-PLAN.md Part 4). Handing it the whole history
+    // and k invited exactly that, so it gets the slice ending at k, frozen,
+    // and the read without its index (found in review, 16 Oct 2026).
+    const closed = Object.freeze(core.closed || seen);
+    const window = Object.freeze(core.window || closed.slice(-ENGINE_BARS));
+    const { k: _index, ...view } = read;
     read.extra = extra({
-      pair, k, bars, window: core.window || seen.slice(-300), closed: core.closed || seen,
-      analysis: core.a || null, nowMs, cfg, read,
+      pair, tf: tf.id, cfg, nowMs, spreadNum, kind: read.kind,
+      closed, window, analysis: core.a || null, read: view,
     });
   }
   return read;
@@ -201,12 +243,18 @@ export async function extraFor(opts) {
  *            `file` itself and taking chunks of checks from a queue.
  *   file     the bar file `bars` came from (needed for workers > 1)
  *   chunk    checks per message (default 200)
- * A worker's reads are checked against `bars` by close time, so a bar file
- * changed underneath the run fails loudly instead of misaligning.
+ *   minPerWorker  no more workers start than one per this many checks
+ *            (default 50; each worker parses the whole bar file first)
+ *   stats    optional object; `stats.workers` is set to the number of worker
+ *            threads that started (0 when the reads were made in this process)
+ * A worker's reads are checked against `bars` by close time and slice, so a
+ * bar file changed underneath the run fails loudly instead of misaligning.
  */
 export async function computeReads(bars, ks, opts) {
-  const workers = Math.max(1, Math.min(opts.workers || 1, Math.ceil(ks.length / 50) || 1));
+  const per = opts.minPerWorker || 50;
+  const workers = Math.max(1, Math.min(opts.workers || 1, Math.ceil(ks.length / per) || 1));
   const extra = await extraFor(opts);
+  if (opts.stats) opts.stats.workers = 0;
   if (workers === 1) return readRange(bars, ks, { ...opts, extra });
   if (opts.extra && !opts.extraModule) throw new Error('An extra() function cannot be sent to a worker; pass extraModule (a file exporting `extra`).');
   if (!opts.file) throw new Error('computeReads needs the bar file for workers.');
@@ -215,7 +263,7 @@ export async function computeReads(bars, ks, opts) {
   const chunks = [];
   for (let i = 0; i < ks.length; i += size) chunks.push(ks.slice(i, i + size));
   const results = new Array(chunks.length);
-  let next = 0;
+  let next = 0, started = 0;
   await Promise.all(Array.from({ length: workers }, () => new Promise((ok, fail) => {
     const w = new Worker(join(here, 'reads-worker.mjs'), { workerData: { file: opts.file, opts: portable(opts) } });
     const give = () => {
@@ -225,15 +273,19 @@ export async function computeReads(bars, ks, opts) {
     };
     w.on('message', (m) => {
       if (m.error) { fail(new Error(m.error)); w.terminate(); return; }
+      if (m.ready) started++;
       if (m.reads) results[m.id] = m.reads;
       give();
     });
     w.on('error', fail);
     w.on('exit', (code) => (code === 0 ? ok() : fail(new Error(`a read worker exited with code ${code}`))));
   })));
+  if (opts.stats) opts.stats.workers = started;
   const reads = results.flat();
   for (const r of reads) {
-    if (!bars[r.k] || bars[r.k].t + tfMs !== r.closeMs) throw new Error(`The bar file changed during the run (check ${r.k}); run it again.`);
+    if (!bars[r.k] || bars[r.k].t + tfMs !== r.closeMs || !sameSlice(r.slice, sliceOf(bars, r.k))) {
+      throw new Error(`The bar file changed during the run (check ${r.k}); run it again.`);
+    }
   }
   return reads;
 }
@@ -247,10 +299,14 @@ export const defaultWorkers = () => Math.min(4, availableParallelism());
  *   predicate(read)  optional; a read it refuses is not offered to shouldAlert,
  *                    so it neither alerts nor blocks later alerts
  *   bothTouched      'stop' (default, decision 26's rule) | 'half' (outcome.mjs)
+ *   pair             required: the reads do not record it, and it decides the
+ *                    commission, the alert state's key and the trades' label
+ *                    (a default of bitcoin would score gold at no commission)
  * Each alert is scored with the spread its own read assumed. Returns
  * { checks, kinds, trades } in the replay's shapes.
  */
-export function alertPass(reads, bars, { cfg, rule, predicate = null, bothTouched = 'stop', tfMinutes = null, pair = 'BTCUSD' }) {
+export function alertPass(reads, bars, { cfg, rule, pair, predicate = null, bothTouched = 'stop', tfMinutes = null }) {
+  if (!INSTRUMENTS[pair]) throw new Error(`alertPass needs the instrument its reads are of (${Object.keys(INSTRUMENTS).join(' or ')}), got ${pair}.`);
   const tf = tfInfo(timeframeFor(cfg));
   const minutes = tfMinutes || tf.minutes;
   const comm = costFor(pair, 0, cfg).comm;
@@ -299,18 +355,31 @@ export function engineFiles(entry = fileURLToPath(import.meta.url)) {
 }
 
 /**
- * The read store's key: the engine's source, the cost and calendar modes, the
- * window, the timeframe and the rules — everything a read depends on besides
- * the bars. The account's commission inputs are in it too (gold's cost).
+ * The read store's key: the engine's source, the cost and calendar modes, a
+ * spread override, the window, the timeframe and the rules — everything a
+ * read depends on besides the bars. The account's commission inputs are in it
+ * (gold's cost), and so is the broker block: its server offset decides when
+ * the market counts as open in the gate. `source` names where the bars came
+ * from (a feed, or the file a test stand-in was read from), so a test file's
+ * reads and the real history's never share a store; each read's slice
+ * (sliceOf) is checked as well, in case they ever do.
+ *
+ * An extra() hook changes what a read holds, so it is keyed by its module's
+ * source (and everything that module imports). A function handed in directly
+ * has no source to key by, and is refused here rather than stored under the
+ * same key as reads made without it.
  */
-export function storeKey({ pair, cfg, rules = DEFAULT_RULES, cost = 'fixed', calendar = 'full', extraModule = null }) {
+export function storeKey({ pair, cfg, rules = DEFAULT_RULES, cost = 'fixed', calendar = 'full', spreadNum = null, extra = null, extraModule = null, source = null }) {
+  if (extra && !extraModule) throw new Error('Reads made with an extra() function cannot be stored: pass extraModule (a file exporting `extra`) so the store can key them, or useStore: false.');
   const h = createHash('sha256');
   const root = resolve(here, '..');
-  for (const f of engineFiles()) h.update(f.slice(root.length)).update('\0').update(readFileSync(f)).update('\0');
-  if (extraModule) h.update(readFileSync(resolve(extraModule)));
+  const files = new Set(engineFiles());
+  if (extraModule) for (const f of engineFiles(resolve(extraModule))) files.add(f);
+  for (const f of [...files].sort()) h.update(f.startsWith(root) ? f.slice(root.length) : f).update('\0').update(readFileSync(f)).update('\0');
   h.update(JSON.stringify({
     pair, cost, calendar, rules, window: cfg.window, timeframe: tfInfo(timeframeFor(cfg)).id,
-    commission: [cfg.account.gbpusd, cfg.account.commissionPerSideGBP], extra: !!extraModule,
+    commission: [cfg.account.gbpusd, cfg.account.commissionPerSideGBP], broker: cfg.broker,
+    spreadNum: Number.isFinite(spreadNum) ? spreadNum : null, extra: extraModule ? 'module' : null, source,
   }));
   return h.digest('hex').slice(0, 16);
 }
@@ -346,21 +415,26 @@ export function appendStore(path, reads) {
 }
 
 /**
- * Reads for the checks `ks`: those already in the store (re-indexed to `bars`
- * by close time, since the history may have grown at its start), the rest
- * computed and appended. Returns { reads, fromStore, computed }.
+ * Reads for the checks `ks`: those already in the store whose slice matches
+ * the bars in hand (re-indexed to `bars` by close time, since the history may
+ * have grown at its start), the rest computed and appended — a stored read
+ * made from other bars is recomputed, never served, and the newer line wins
+ * the next time the store is loaded. Returns { reads, fromStore, computed,
+ * replaced, path }, where `replaced` counts stored reads whose bars differed.
  */
 export async function readsFor(bars, ks, opts, { home, useStore = true } = {}) {
   const tfMs = tfInfo(timeframeFor(opts.cfg)).minutes * 60000;
   const path = useStore && home ? storePath(home, opts) : null;
   const stored = path ? await loadStore(path) : new Map();
   const have = [], missing = [];
+  let replaced = 0;
   for (const k of ks) {
     const r = stored.get(bars[k].t + tfMs);
-    if (r) have.push({ ...r, k }); else missing.push(k);
+    if (r && sameSlice(r.slice, sliceOf(bars, k))) have.push({ ...r, k });
+    else { missing.push(k); if (r) replaced++; }
   }
   const fresh = missing.length ? await computeReads(bars, missing, opts) : [];
   if (path) appendStore(path, fresh);
   const reads = [...have, ...fresh].sort((a, b) => a.k - b.k);
-  return { reads, fromStore: have.length, computed: fresh.length, path };
+  return { reads, fromStore: have.length, computed: fresh.length, replaced, path };
 }

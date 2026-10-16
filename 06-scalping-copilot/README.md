@@ -112,8 +112,10 @@ watcher over past bars and follows each alert to its stop, its target or 16:00. 
 the first half of the year and positive in the second: **roughly break-even after the
 spread — no evidence of an edge.** Treat the alerts as demo practice. From 1 January 2025
 onward the replay reports nothing unless asked with `--holdout`, and every such run is recorded:
-those months are kept for one final test of the learning plan (LEARNING-PLAN.md). The 2026
-stretch above is the one exception, labelled as already seen.
+those months are kept for one final test of the learning plan (LEARNING-PLAN.md). The plain
+report of the 2026 stretch above is the one exception, labelled as already seen; anything more
+on those months (`--by-condition`, for one) counts as a recorded look. A `--holdout` run reports
+2025 and 2026 separately, never as one figure.
 
 **What the watcher does not do.** It cannot see the broker's price, spread or fills. It has
 no track record: `desk/replay.mjs` replays history through it with outcomes, and that is the
@@ -161,9 +163,10 @@ Scalping a five-minute chart means the largest risk is not usually the analysis.
 being in a position at 13:30 when a number lands.
 
 A retail economic calendar will tell you Non-Farm Payrolls is "the first Friday of the
-month." For 2026 that is wrong four times in twelve — 9 January, 8 May and 7 August are
-second Fridays, and the July release is on Thursday the 2nd because Friday the 3rd is the
-observed Independence Day holiday. A tool that derives the date from the rule will tell
+month." For 2026 that is wrong four times in twelve — 9 January and 8 May are second
+Fridays, February's came on Wednesday the 11th because a brief federal shutdown delayed it,
+and the July release is on Thursday the 2nd because Friday the 3rd is the observed
+Independence Day holiday. A tool that derives the date from the rule will tell
 you the coast is clear on the morning of the biggest print of the month.
 
 So the calendar here is table-driven, every release time is stored as a wall-clock time
@@ -427,6 +430,11 @@ with the safe areas handled.
   The environment this was built in blocked outbound access to bls.gov, bea.gov and
   federalreserve.gov. Anything marked *unconfirmed* in the UI needs checking against your
   broker's calendar before you rely on it.
+- **Past release dates are incomplete before 2025.** For the history replay the calendar has
+  every FOMC meeting since 2017 and all of 2025's NFP, CPI and PCE releases (with the
+  shutdown's delays as they happened), but before 2025 only the NFP and CPI months a source
+  confirmed — none at all for NFP in 2021–2023 or CPI in 2024. Those years include releases
+  the live desk would have sat out.
 - **The live price endpoints were never verified from a browser.** The same egress policy
   blocked every market-data host, so the CORS behaviour is documented intent, not observed
   fact. The design assumes failure: sources are tried in order, the UI always names which
@@ -674,7 +682,7 @@ src/
   instruments.js    contract specs, commission and swap; unread ones marked confirm-before-use
   risk.js           sizing under both UK account models, the margin gate,
                     break-even win rate, spread drag
-  news-calendar.js  table-driven event data + blackout logic
+  news-calendar.js  table-driven event data + blackout logic (2026 live; 2017–2025 for the replay)
   sessions.js       the trading window, per-instrument hour bands, instrument steer
   data-feeds.js     ordered source chain with honest failure reporting
   signal-engine.js  regime detection, factor buckets, the read
@@ -684,6 +692,8 @@ src/
   app.js            UI wiring
   index.template.html
 build.mjs           inlines the above into index.html
+data/
+  calendar-history.json  past release dates and holidays as researched, with sources and confidence
 desk/
   lib.mjs           the same rules for a Claude chat: gate, context, replies, sizing
   desk.mjs          the commands the chat session runs (now, brief, gate, check, size, plan…)
@@ -696,7 +706,7 @@ desk/
   net.mjs           re-runs a network command so Node's fetch uses the proxy
   config.json       account settings and the trade record, committed
 ../.claude/skills/scalp-desk/SKILL.md   how a session runs the desk
-test/               449 assertions; run-all.mjs runs the lot
+test/               463 assertions; run-all.mjs runs the lot
                     smoke.mjs loads the page in a real browser at seven
                     frozen session moments and fails on any page error
 HANDOFF.md          state, decisions and research, for picking this up cold

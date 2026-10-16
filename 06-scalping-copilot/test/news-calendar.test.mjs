@@ -1,8 +1,13 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   EVENTS, getUpcomingEvents, getActiveBlackout, dstMisalignment,
   brokerChartTime, DST_MISALIGNMENT_WINDOWS, CORRELATION_NOTE, US_HOLIDAYS_2026,
+  US_HOLIDAYS, US_CLOSURES, confidenceOf,
 } from '../src/news-calendar.js';
+
+// The researched release dates the history tables were typed in from.
+const HISTORY = JSON.parse(readFileSync(new URL('../data/calendar-history.json', import.meta.url), 'utf8'));
 
 let passed = 0, failed = 0;
 const test = (n, fn) => {
@@ -31,7 +36,7 @@ test('NFP resolves to the published dates at the right UTC hour', () => {
   const got = rows.map((r) => [isoDate(r.ts), utcHM(r.ts)]);
   assert.deepEqual(got.slice(0, 4), [
     ['2026-01-09', '13:30'],   // second Friday, EST
-    ['2026-02-06', '13:30'],
+    ['2026-02-11', '13:30'],   // a Wednesday: delayed by the brief shutdown from 31 January
     ['2026-03-06', '13:30'],
     ['2026-04-03', '12:30'],   // now EDT
   ]);
@@ -94,6 +99,123 @@ test('pair filtering keeps gold-only and bitcoin-only events apart', () => {
   assert.ok(btc.includes('deribit-expiry'));
   assert.ok(!gold.includes('deribit-expiry'), 'crypto expiries must not appear for gold');
   assert.ok(gold.includes('nfp') && btc.includes('nfp'), 'macro affects both');
+});
+
+console.log('\nrelease dates in past years (data/calendar-history.json)');
+
+const ev = (id) => EVENTS.find((e) => e.id === id);
+const TABLES = ['nfp', 'cpi', 'fomc-statement', 'fomc-presser', 'pce'];
+const yearsOf = (id) => [...new Set(ev(id).schedule.dates.map((d) => d.slice(0, 4)))];
+
+test('every listed tier-1 date is a weekday, listed once, in order', () => {
+  for (const id of TABLES) {
+    const { dates } = ev(id).schedule;
+    for (const d of dates) {
+      const dow = new Date(`${d}T12:00:00Z`).getUTCDay();
+      assert.ok(dow >= 1 && dow <= 5, `${id} ${d} falls on a weekend`);
+    }
+    assert.equal(new Set(dates).size, dates.length, `${id} lists a date twice`);
+    assert.deepEqual([...dates].sort(), dates, `${id} is not in date order`);
+  }
+});
+
+test('2017–2025 hold exactly the data file\'s sourced dates, never an unsourced candidate', () => {
+  const fromData = { nfp: [], cpi: [], pce: [], 'fomc-statement': [], 'fomc-presser': [] };
+  const candidates = { nfp: new Set(), cpi: new Set(), pce: new Set() };
+  for (const id of ['nfp', 'cpi', 'pce']) {
+    for (const row of Object.values(HISTORY[id])) {
+      fromData[id].push(...row.dates);
+      for (const c of row.unsourcedCandidates || []) candidates[id].add(c);
+    }
+  }
+  const unscheduled = new Set(HISTORY.fomc.unscheduled.map((u) => u.date));
+  for (const [y, row] of Object.entries(HISTORY.fomc)) {
+    if (!/^\d{4}$/.test(y)) continue;
+    const held = row.dates.filter((d) => !unscheduled.has(d));   // 15 Mar 2020: unscheduled, time unverified
+    fromData['fomc-statement'].push(...held);
+    fromData['fomc-presser'].push(...(Array.isArray(row.pressConference) ? row.pressConference : held));
+  }
+  for (const id of TABLES) {
+    const past = ev(id).schedule.dates.filter((d) => d < '2026');
+    assert.deepEqual(past, [...fromData[id]].sort(), id);
+    for (const d of ev(id).schedule.dates) assert.ok(!(candidates[id] && candidates[id].has(d)), `${id} uses the unsourced ${d}`);
+  }
+  assert.ok(!ev('fomc-statement').schedule.dates.some((d) => d.startsWith('2020-03')), 'no unscheduled March 2020 action');
+  assert.deepEqual(ev('fomc-presser').schedule.dates.filter((d) => d < '2019'),
+    ['2017-03-15', '2017-06-14', '2017-09-20', '2017-12-13', '2018-03-21', '2018-06-13', '2018-09-26', '2018-12-19'],
+    'press conferences in 2017–2018 only after the quarterly meetings');
+});
+
+test('each year\'s confidence is recorded and never claims more than the data file', () => {
+  for (const id of TABLES) {
+    const byYear = ev(id).schedule.confidenceByYear;
+    for (const y of yearsOf(id)) {
+      if (y === '2026') continue;
+      assert.ok(['verified', 'likely', 'unverified'].includes(byYear[y]), `${id} ${y} has no confidence`);
+      const key = id.startsWith('fomc') ? 'fomc' : id;
+      // "verified" only where the data file says verified for every date listed that year.
+      const said = HISTORY[key][y].confidence;
+      const listed = ev(id).schedule.dates.filter((d) => d.startsWith(y));
+      if (byYear[y] === 'verified') assert.ok(said === 'verified' || (said.startsWith('verified for ') && listed.every((d) => said.includes(d))), `${id} ${y}: "${said}"`);
+    }
+  }
+  assert.equal(ev('nfp').schedule.confidenceByYear[2025], 'likely', 'March, April and September 2025 rest on one calendar each');
+  assert.equal(ev('cpi').schedule.confidenceByYear[2018], 'unverified', '14 Feb 2018 is indirect only');
+  // Each row carries its own year's confidence; 2026 rows the event's, so the UI's marker is unchanged.
+  const row = (from, id) => getUpcomingEvents(from, 24 * 40, null).find((e) => e.id === id);
+  assert.equal(row(Date.UTC(2019, 2, 1), 'fomc-statement').confidence, 'verified');
+  assert.equal(row(Date.UTC(2020, 6, 1), 'fomc-statement').confidence, 'likely');
+  assert.equal(row(Date.UTC(2026, 2, 1), 'fomc-statement').confidence, ev('fomc-statement').confidence);
+  assert.equal(confidenceOf(ev('pce'), 2026), 'unverified');
+});
+
+test('the 2025 shutdown: releases on the days they actually came out, cancelled ones absent', () => {
+  const rows = getUpcomingEvents(Date.UTC(2025, 8, 25), 24 * 90, null);
+  const on = (id) => rows.filter((r) => r.id === id).map((r) => `${isoDate(r.ts)} ${utcHM(r.ts)}`);
+  assert.deepEqual(on('nfp'), ['2025-11-20 13:30', '2025-12-16 13:30'], 'September\'s on Thu 20 Nov, November\'s on Tue 16 Dec, October\'s never');
+  assert.deepEqual(on('cpi'), ['2025-10-24 12:30', '2025-12-18 13:30'], 'September\'s on Fri 24 Oct (still EDT), November\'s on Thu 18 Dec');
+  assert.deepEqual(on('pce'), ['2025-09-26 12:30', '2025-12-05 15:00'], 'September\'s data on Fri 5 Dec at 10:00 New York');
+  assert.deepEqual(on('fomc-statement'), ['2025-10-29 18:00', '2025-12-10 19:00'], 'the Fed met through the shutdown');
+  // The monthly ADP keeps to the dates BLS had scheduled: Wednesdays 1 Oct, 5 Nov, 3 Dec.
+  assert.deepEqual(on('adp-monthly').map((x) => x.slice(0, 10)), ['2025-10-01', '2025-11-05', '2025-12-03']);
+  // A per-date time is a real blackout: 08:35 New York on 5 Dec is clear, 10:05 is not.
+  assert.equal(getActiveBlackout(Date.UTC(2025, 11, 5, 13, 35), 'BTCUSD', {}, { calendar: 'full' })?.event.id ?? null, null);
+  assert.equal(getActiveBlackout(Date.UTC(2025, 11, 5, 15, 5), 'XAUUSD').event.id, 'pce');
+});
+
+test('January 2026: NFP came out Wed 11 Feb and CPI Fri 13 Feb; the ADP stayed on Wed 4 Feb', () => {
+  const rows = getUpcomingEvents(Date.UTC(2026, 1, 1), 24 * 20, null);
+  const on = (id) => rows.filter((r) => r.id === id).map((r) => `${isoDate(r.ts)} ${utcHM(r.ts)}`);
+  assert.deepEqual(on('nfp'), ['2026-02-11 13:30']);
+  assert.deepEqual(on('cpi'), ['2026-02-13 13:30']);
+  assert.deepEqual(on('adp-monthly'), ['2026-02-04 13:15']);
+  assert.equal(getActiveBlackout(Date.UTC(2026, 1, 6, 13, 25), 'XAUUSD'), null, 'nothing at the old NFP slot on 6 Feb');
+  assert.equal(getActiveBlackout(Date.UTC(2026, 1, 11, 13, 25), 'XAUUSD').event.id, 'nfp');
+  assert.equal(getActiveBlackout(Date.UTC(2026, 1, 13, 13, 25), 'XAUUSD').event.id, 'cpi');
+});
+
+test('holidays move the rule-derived events in past years, not only in 2026', () => {
+  const claims = (from, days) => getUpcomingEvents(from, 24 * days, null).filter((e) => e.id === 'jobless');
+  // Thanksgiving, Thursday 28 November 2019: that week's claims on the Wednesday.
+  const nov = claims(Date.UTC(2019, 10, 18), 14);
+  assert.deepEqual(nov.map((r) => isoDate(r.ts)), ['2019-11-21', '2019-11-27']);
+  assert.deepEqual(nov.map((r) => r.dateShifted), [false, true]);
+  // Carter's day of mourning closed the government on Thursday 9 January 2025.
+  assert.ok(claims(Date.UTC(2025, 0, 6), 5).some((r) => isoDate(r.ts) === '2025-01-08' && r.dateShifted));
+  // ISM counts business days with that year's holidays: Labor Day 2025 was Monday 1 September.
+  assert.equal(isoDate(getUpcomingEvents(Date.UTC(2025, 8, 1), 24 * 5, null).find((e) => e.id === 'ism-mfg').ts), '2025-09-02');
+});
+
+test('the holiday table covers 2017–2026, keeps 2026 as it was, and only verified closures', () => {
+  assert.deepEqual(Object.keys(US_HOLIDAYS), ['2017', '2018', '2019', '2020', '2021', '2022', '2023', '2024', '2025', '2026']);
+  assert.equal(US_HOLIDAYS[2026], US_HOLIDAYS_2026);
+  for (const [y, row] of Object.entries(HISTORY.holidays)) assert.deepEqual(US_HOLIDAYS[y], row.dates, y);
+  const verified = Object.values(HISTORY.holidays).flatMap((h) => h.additionalClosures).filter((c) => c.confidence === 'verified').map((c) => c.date);
+  assert.deepEqual([...US_CLOSURES], verified);
+  for (const d of [...Object.values(US_HOLIDAYS).flat(), ...US_CLOSURES]) {
+    const dow = new Date(`${d}T12:00:00Z`).getUTCDay();
+    assert.ok(dow >= 1 && dow <= 5, `${d} is an observed weekday`);
+  }
 });
 
 console.log('\nblackout behaviour');

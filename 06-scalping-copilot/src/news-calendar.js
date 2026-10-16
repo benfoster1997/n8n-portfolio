@@ -9,9 +9,12 @@
  *
  *    "Non-Farm Payrolls is the first Friday of the month" is the most repeated
  *    claim in retail trading and it is wrong four times in twelve for 2026:
- *    9 January, 8 May and 7 August are SECOND Fridays, and 2 July is a
- *    THURSDAY because Friday 3 July is the observed Independence Day holiday.
- *    CPI has no derivable rule at all. BEA moved PCE off its usual slot twice.
+ *    9 January and 8 May are SECOND Fridays, 11 February is a WEDNESDAY (a
+ *    brief federal shutdown from 31 January pushed it back five days), and
+ *    2 July is a THURSDAY because Friday 3 July is the observed Independence
+ *    Day holiday. CPI has no derivable rule at all. BEA moved PCE off its
+ *    usual slot twice. The 2025 shutdown moved or cancelled every BLS release
+ *    from October to December.
  *
  *    A rule-driven calendar would therefore tell a scalper the coast was clear
  *    on the morning of the largest print of the month, several times a year.
@@ -29,6 +32,15 @@
  *
  *    Check the tier-1 rows against your broker's own calendar before you rely
  *    on them. This file is a good default, not an authority.
+ *
+ *    Past years (for the history replay) come from data/calendar-history.json,
+ *    researched on 16 Oct 2026 under the same restriction, with its sources.
+ *    Only dates a source confirmed are typed in, never its "unsourced
+ *    candidates": 2025 and the FOMC are complete, but before 2025 NFP and CPI
+ *    hold only scattered months, and a missing month is simply absent. Where a
+ *    year's confidence differs from 2026's it is kept per year
+ *    (`confidenceByYear`, the weakest date of that year), and each listed
+ *    occurrence carries the confidence of its own year.
  *
  * Times are stored as WALL-CLOCK TIME IN A NAMED IANA ZONE and converted at
  * runtime. See timezone.js for why that is non-negotiable.
@@ -49,7 +61,41 @@ export const US_HOLIDAYS_2026 = [
   '2026-01-01', '2026-01-19', '2026-02-16', '2026-05-25', '2026-06-19',
   '2026-07-03', '2026-09-07', '2026-10-12', '2026-11-11', '2026-11-26', '2026-12-25',
 ];
-const HOLIDAY_SET = new Set(US_HOLIDAYS_2026);
+
+/**
+ * US federal holidays as OBSERVED, by year, 2017–2026. The rule-derived
+ * events (weekly claims moving in a holiday week, ISM counting business days)
+ * run in every year of the history replay, and used to do it with 2026's
+ * holidays whatever the year. 2017–2025 are data/calendar-history.json's
+ * statutory observed days (a computed list cross-checked against 5 U.S.C.
+ * 6103; confidence "likely"). A weekend holiday lands on its observed weekday,
+ * so New Year's Day 2022 sits in 2021's list (Friday 31 December 2021).
+ */
+export const US_HOLIDAYS = Object.freeze({
+  2017: ['2017-01-02', '2017-01-16', '2017-02-20', '2017-05-29', '2017-07-04', '2017-09-04', '2017-10-09', '2017-11-10', '2017-11-23', '2017-12-25'],
+  2018: ['2018-01-01', '2018-01-15', '2018-02-19', '2018-05-28', '2018-07-04', '2018-09-03', '2018-10-08', '2018-11-12', '2018-11-22', '2018-12-25'],
+  2019: ['2019-01-01', '2019-01-21', '2019-02-18', '2019-05-27', '2019-07-04', '2019-09-02', '2019-10-14', '2019-11-11', '2019-11-28', '2019-12-25'],
+  2020: ['2020-01-01', '2020-01-20', '2020-02-17', '2020-05-25', '2020-07-03', '2020-09-07', '2020-10-12', '2020-11-11', '2020-11-26', '2020-12-25'],
+  2021: ['2021-01-01', '2021-01-18', '2021-02-15', '2021-05-31', '2021-06-18', '2021-07-05', '2021-09-06', '2021-10-11', '2021-11-11', '2021-11-25', '2021-12-24', '2021-12-31'],
+  2022: ['2022-01-17', '2022-02-21', '2022-05-30', '2022-06-20', '2022-07-04', '2022-09-05', '2022-10-10', '2022-11-11', '2022-11-24', '2022-12-26'],
+  2023: ['2023-01-02', '2023-01-16', '2023-02-20', '2023-05-29', '2023-06-19', '2023-07-04', '2023-09-04', '2023-10-09', '2023-11-10', '2023-11-23', '2023-12-25'],
+  2024: ['2024-01-01', '2024-01-15', '2024-02-19', '2024-05-27', '2024-06-19', '2024-07-04', '2024-09-02', '2024-10-14', '2024-11-11', '2024-11-28', '2024-12-25'],
+  2025: ['2025-01-01', '2025-01-20', '2025-02-17', '2025-05-26', '2025-06-19', '2025-07-04', '2025-09-01', '2025-10-13', '2025-11-11', '2025-11-27', '2025-12-25'],
+  2026: US_HOLIDAYS_2026,
+});
+
+/**
+ * One-off closures of the federal government: not holidays, but agencies
+ * shut, so a release due that day moves as it would for a holiday. Only the
+ * VERIFIED ones: Carter's national day of mourning (Thu 9 Jan 2025, so the
+ * claims due that day are placed on the Wednesday) and Executive Order 14371
+ * (24 and 26 Dec 2025). The data file's 2018–2020 Christmas-Eve and Bush
+ * closures and the 2024 Christmas Eve are unverified or single-mention, and
+ * left out.
+ */
+export const US_CLOSURES = Object.freeze(['2025-01-09', '2025-12-24', '2025-12-26']);
+
+const HOLIDAY_SET = new Set([...Object.values(US_HOLIDAYS).flat(), ...US_CLOSURES]);
 
 const iso = (y, m, d) =>
   `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
@@ -118,48 +164,109 @@ export const EVENTS = [
     id: 'nfp', name: 'Non-Farm Payrolls', short: 'NFP', agency: 'BLS',
     affects: 'both', tier: 1, tz: NY, at: { h: 8, m: 30 },
     schedule: { kind: 'dates', dates: [
-      '2026-01-09', '2026-02-06', '2026-03-06', '2026-04-03', '2026-05-08', '2026-06-05',
+      // 2017–2024: only the months a source confirmed (data/calendar-history.json).
+      '2017-01-06', '2017-02-03', '2017-04-07', '2017-06-02', '2017-07-07', '2017-08-04',
+      '2018-08-03',
+      '2019-01-04', '2019-08-02',
+      '2020-07-02',   // a Thursday: Friday 3 July 2020 was the observed holiday
+      // 2021–2023: no source found, so none.
+      '2024-01-05', '2024-02-02', '2024-03-08', '2024-09-06', '2024-10-04', '2024-12-06',
+      // 2025, complete as published. The shutdown (1 Oct – 12 Nov) moved September's
+      // report to Thu 20 Nov and November's to Tue 16 Dec; October's never came out.
+      '2025-01-10', '2025-02-07', '2025-03-07', '2025-04-04', '2025-05-02', '2025-06-06',
+      '2025-07-03', '2025-08-01', '2025-09-05', '2025-11-20', '2025-12-16',
+      // 2026. January's report came out Wed 11 Feb, not Fri 6 Feb: a brief shutdown
+      // from 31 January delayed it (verified, three sources; this table had 6 Feb).
+      '2026-01-09', '2026-02-11', '2026-03-06', '2026-04-03', '2026-05-08', '2026-06-05',
       '2026-07-02', '2026-08-07', '2026-09-04', '2026-10-02', '2026-11-06', '2026-12-04',
-    ] },
+    ],
+    // Release date → the date BLS had scheduled, where a shutdown moved it; and the
+    // scheduled dates of reports never published. The monthly ADP keys off these.
+    rescheduledFrom: { '2025-11-20': '2025-10-03', '2025-12-16': '2025-12-05', '2026-02-11': '2026-02-06' },
+    cancelled: ['2025-11-07'],
+    confidenceByYear: { 2017: 'likely', 2018: 'likely', 2019: 'likely', 2020: 'verified', 2024: 'likely', 2025: 'likely' } },
     blackoutBefore: 15, blackoutAfter: 30,
     why: 'The month\'s single biggest repricing of Fed expectations. Gold moves on the rate path; bitcoin moves on risk appetite.',
     typicalMove: { XAUUSD: '0.5-1.2% of price, tails past 2%', BTCUSD: '1-3%' },
     confidence: 'likely',
-    note: 'NOT the first Friday — Jan, May and Jul 2026 all differ. Table-driven for exactly this reason.',
+    note: 'NOT the first Friday — Jan, Feb, May and Jul 2026 all differ (February\'s was delayed to Wednesday the 11th). Table-driven for exactly this reason. Before 2025 the history is partial: 2017 has 6 months, 2018 one, 2019 two, 2020 one, 2021–2023 none, 2024 six.',
   },
   {
     id: 'cpi', name: 'US CPI / Core CPI', short: 'CPI', agency: 'BLS',
     affects: 'both', tier: 1, tz: NY, at: { h: 8, m: 30 },
     schedule: { kind: 'dates', dates: [
-      '2026-01-13', '2026-02-11', '2026-03-11', '2026-04-10', '2026-05-12', '2026-06-10',
+      // 2017–2023: only the months a source confirmed; 2024: none found.
+      '2017-01-18', '2017-02-15',
+      '2018-02-14', '2018-03-13', '2018-06-12',   // 14 Feb 2018 from indirect evidence only
+      '2019-04-10',
+      '2020-02-13', '2020-12-10',
+      '2021-05-12', '2021-12-10',
+      '2022-05-11', '2022-10-13', '2022-12-13',
+      '2023-07-12',
+      // 2025, complete as published. The shutdown moved September's CPI to Fri 24 Oct and
+      // November's to Thu 18 Dec; October's was cancelled outright.
+      '2025-01-15', '2025-02-12', '2025-03-12', '2025-04-10', '2025-05-13', '2025-06-11',
+      '2025-07-15', '2025-08-12', '2025-09-11', '2025-10-24', '2025-12-18',
+      // 2026. January's CPI came out Fri 13 Feb, not Wed 11 Feb: the same brief shutdown
+      // (likely, two sources; this table had 11 Feb).
+      '2026-01-13', '2026-02-13', '2026-03-11', '2026-04-10', '2026-05-12', '2026-06-10',
       '2026-07-14', '2026-08-12', '2026-09-11', '2026-10-14', '2026-11-10', '2026-12-10',
-    ] },
+    ],
+    rescheduledFrom: { '2025-10-24': '2025-10-15', '2025-12-18': '2025-12-10', '2026-02-13': '2026-02-11' },
+    confidenceByYear: { 2017: 'likely', 2018: 'unverified', 2019: 'likely', 2020: 'likely', 2021: 'likely', 2022: 'likely', 2023: 'likely', 2025: 'likely' } },
     blackoutBefore: 15, blackoutAfter: 30,
     why: 'Core CPI month-on-month is the number that moves gold. Headline is comparative noise.',
     typicalMove: { XAUUSD: 'comparable to NFP', BTCUSD: 'the highest macro R-squared of 2026' },
     confidence: 'likely',
-    note: 'Roughly the 10th-14th with no derivable rule. Verify against your broker calendar.',
+    note: 'Roughly the 10th-14th with no derivable rule. Verify against your broker calendar. Before 2025 the history is partial: one to three months a year for 2017–2023, none for 2024.',
   },
   {
     id: 'fomc-statement', name: 'FOMC rate decision', short: 'FOMC', agency: 'Federal Reserve',
     affects: 'both', tier: 1, tz: NY, at: { h: 14, m: 0 },
+    // Every scheduled meeting's decision day (its second day), 2017–2026. Three fell
+    // on a Thursday, the meeting moved back a day after a US election: 8 Nov 2018,
+    // 5 Nov 2020 and 7 Nov 2024. Left out on purpose, because their times are not
+    // verified: the unscheduled actions of 3 Mar 2020 (an emergency cut, mid-morning
+    // New York), 15 Mar 2020 (a Sunday-evening meeting that replaced the scheduled
+    // 17–18 March one, so March 2020 has no row), 23 Mar 2020 (open-ended purchases,
+    // pre-market) and the 11 Oct 2019 bill-purchase notation vote.
     schedule: { kind: 'dates', dates: [
-      '2026-01-28', '2026-03-18', '2026-04-29', '2026-06-17',
-      '2026-07-29', '2026-09-16', '2026-10-28', '2026-12-09',
-    ] },
+      '2017-02-01', '2017-03-15', '2017-05-03', '2017-06-14', '2017-07-26', '2017-09-20', '2017-11-01', '2017-12-13',
+      '2018-01-31', '2018-03-21', '2018-05-02', '2018-06-13', '2018-08-01', '2018-09-26', '2018-11-08', '2018-12-19',
+      '2019-01-30', '2019-03-20', '2019-05-01', '2019-06-19', '2019-07-31', '2019-09-18', '2019-10-30', '2019-12-11',
+      '2020-01-29', '2020-04-29', '2020-06-10', '2020-07-29', '2020-09-16', '2020-11-05', '2020-12-16',
+      '2021-01-27', '2021-03-17', '2021-04-28', '2021-06-16', '2021-07-28', '2021-09-22', '2021-11-03', '2021-12-15',
+      '2022-01-26', '2022-03-16', '2022-05-04', '2022-06-15', '2022-07-27', '2022-09-21', '2022-11-02', '2022-12-14',
+      '2023-02-01', '2023-03-22', '2023-05-03', '2023-06-14', '2023-07-26', '2023-09-20', '2023-11-01', '2023-12-13',
+      '2024-01-31', '2024-03-20', '2024-05-01', '2024-06-12', '2024-07-31', '2024-09-18', '2024-11-07', '2024-12-18',
+      '2025-01-29', '2025-03-19', '2025-05-07', '2025-06-18', '2025-07-30', '2025-09-17', '2025-10-29', '2025-12-10',
+      '2026-01-28', '2026-03-18', '2026-04-29', '2026-06-17', '2026-07-29', '2026-09-16', '2026-10-28', '2026-12-09',
+    ],
+    confidenceByYear: { 2017: 'verified', 2018: 'verified', 2019: 'verified', 2020: 'likely', 2021: 'verified', 2022: 'verified', 2023: 'verified', 2024: 'verified', 2025: 'verified' } },
     blackoutBefore: 20, blackoutAfter: 100,
     why: 'The statement at 14:00 and the press conference at 14:30 are two separate events, and the 30 minutes between them is not safe. The blackout deliberately spans both.',
     typicalMove: { XAUUSD: 'largest scheduled mover of the month', BTCUSD: 'large' },
     confidence: 'likely',
-    note: 'March, June, September and December also carry the SEP and dot plot, which land with the statement and make those meetings heavier.',
+    note: 'March, June, September and December also carry the SEP and dot plot, which land with the statement and make those meetings heavier. Every scheduled meeting since 2017 is listed; the unscheduled 2020 actions are not.',
   },
   {
     id: 'fomc-presser', name: 'Fed Chair press conference', short: 'Presser', agency: 'Federal Reserve',
     affects: 'both', tier: 1, tz: NY, at: { h: 14, m: 30 },
+    // 2017–2018: only after the March, June, September and December meetings.
+    // Every meeting from 2019 (announced by Powell in June 2018).
     schedule: { kind: 'dates', dates: [
-      '2026-01-28', '2026-03-18', '2026-04-29', '2026-06-17',
-      '2026-07-29', '2026-09-16', '2026-10-28', '2026-12-09',
-    ] },
+      '2017-03-15', '2017-06-14', '2017-09-20', '2017-12-13',
+      '2018-03-21', '2018-06-13', '2018-09-26', '2018-12-19',
+      '2019-01-30', '2019-03-20', '2019-05-01', '2019-06-19', '2019-07-31', '2019-09-18', '2019-10-30', '2019-12-11',
+      '2020-01-29', '2020-04-29', '2020-06-10', '2020-07-29', '2020-09-16', '2020-11-05', '2020-12-16',
+      '2021-01-27', '2021-03-17', '2021-04-28', '2021-06-16', '2021-07-28', '2021-09-22', '2021-11-03', '2021-12-15',
+      '2022-01-26', '2022-03-16', '2022-05-04', '2022-06-15', '2022-07-27', '2022-09-21', '2022-11-02', '2022-12-14',
+      '2023-02-01', '2023-03-22', '2023-05-03', '2023-06-14', '2023-07-26', '2023-09-20', '2023-11-01', '2023-12-13',
+      '2024-01-31', '2024-03-20', '2024-05-01', '2024-06-12', '2024-07-31', '2024-09-18', '2024-11-07', '2024-12-18',
+      '2025-01-29', '2025-03-19', '2025-05-07', '2025-06-18', '2025-07-30', '2025-09-17', '2025-10-29', '2025-12-10',
+      '2026-01-28', '2026-03-18', '2026-04-29', '2026-06-17', '2026-07-29', '2026-09-16', '2026-10-28', '2026-12-09',
+    ],
+    confidenceByYear: { 2017: 'verified', 2018: 'verified', 2019: 'verified', 2020: 'likely', 2021: 'verified', 2022: 'verified', 2023: 'verified', 2024: 'verified', 2025: 'verified' } },
     blackoutBefore: 10, blackoutAfter: 60,
     why: 'Frequently a bigger mover than the statement, and often in the opposite direction. The Q&A does the damage, not the prepared remarks.',
     confidence: 'likely',
@@ -169,12 +276,20 @@ export const EVENTS = [
     id: 'pce', name: 'Core PCE price index', short: 'PCE', agency: 'BEA',
     affects: 'both', tier: 1, tz: NY, at: { h: 8, m: 30 },
     schedule: { kind: 'dates', dates: [
+      // 2025 as published (January's release is unsourced and left out). The shutdown
+      // moved September's data to Fri 5 Dec at 10:00; there was no release in November.
+      '2025-02-28', '2025-03-28', '2025-04-30', '2025-05-30', '2025-06-27', '2025-07-31',
+      '2025-08-29', '2025-09-26', '2025-12-05',
       '2026-07-30', '2026-08-26', '2026-09-30', '2026-10-06', '2026-10-29', '2026-11-20',
-    ] },
+    ],
+    // Releases off the usual 08:30 slot (New York time).
+    times: { '2025-04-30': { h: 10, m: 0 }, '2025-12-05': { h: 10, m: 0 } },
+    rescheduledFrom: { '2025-12-05': '2025-10-31' },
+    confidenceByYear: { 2025: 'likely' } },
     blackoutBefore: 10, blackoutAfter: 20,
     why: 'The Fed\'s own target measure. Usually a smaller impulse than CPI because CPI and PPI have already telegraphed it.',
     confidence: 'unverified',
-    note: 'BEA broke its own last-business-day pattern twice in 2026 and issued a schedule advisory. This list is partial — check before relying on it.',
+    note: 'BEA broke its own last-business-day pattern twice in 2026 and issued a schedule advisory. This list is partial — check before relying on it. January to June 2026 are missing (the shutdown catch-up moved them), and nothing before 2025 is listed.',
   },
 
   /* ---------------------------------------------------------- TIER 2 --- */
@@ -206,6 +321,10 @@ export const EVENTS = [
   {
     id: 'adp-monthly', name: 'ADP employment (monthly)', short: 'ADP', agency: 'ADP',
     affects: 'both', tier: 2, tz: NY, at: { h: 8, m: 15 },
+    // Two days before the date BLS SCHEDULED the report (nfp's rescheduledFrom and
+    // cancelled): ADP is a private payroll firm, so a shutdown that delays the BLS
+    // report does not move ADP's. Anchoring on the delayed date put it on a Sunday
+    // (14 Dec 2025) and moved February 2026's off Wednesday the 4th.
     schedule: { kind: 'weekdayBeforeEvent', eventId: 'nfp', offsetDays: -2 },
     blackoutBefore: 5, blackoutAfter: 15,
     why: 'A read on NFP two days early.',
@@ -358,41 +477,54 @@ function shiftForHoliday(y, m, d) {
   return day;
 }
 
+/**
+ * The dates an event was SCHEDULED for: its release dates mapped back through
+ * `rescheduledFrom`, plus the scheduled dates of releases that were cancelled.
+ * Equal to `dates` for an event no shutdown touched.
+ */
+function scheduledDates(s) {
+  const moved = s.rescheduledFrom || {};
+  return [...s.dates.map((x) => moved[x] || x), ...(s.cancelled || [])];
+}
+
 /** Concrete { y, m, d } occurrences of one event within a UTC range. */
 function occurrences(ev, fromMs, toMs) {
   const out = [];
   const s = ev.schedule;
   const startY = new Date(fromMs).getUTCFullYear();
   const endY = new Date(toMs).getUTCFullYear();
+  // Date tables now run 2017–2026; a date more than two days outside the range
+  // cannot land inside it in any zone, so it is skipped before the costly
+  // wall-clock conversion (the gate looks up blackouts at every check).
+  const lo = new Date(fromMs - 2 * 86400e3).toISOString().slice(0, 10);
+  const hi = new Date(toMs + 2 * 86400e3).toISOString().slice(0, 10);
+  const near = (str) => str >= lo && str <= hi;
 
   const pushDate = (str, extra = {}) => {
     const [y, m, d] = str.split('-').map(Number);
     out.push({ y, m, d, ...extra });
   };
+  const pushOffset = (base, offsetDays) => {
+    const [by, bm, bd] = base.split('-').map(Number);
+    const dt = new Date(Date.UTC(by, bm - 1, bd) + offsetDays * 86400e3);
+    const str = dt.toISOString().slice(0, 10);
+    if (near(str)) pushDate(str);
+  };
 
   switch (s.kind) {
     case 'dates':
-      s.dates.forEach((x) => pushDate(x));
+      // A date can carry its own time (`times`) where it left the usual slot.
+      for (const x of s.dates) if (near(x)) pushDate(x, s.times && s.times[x] ? { at: s.times[x] } : {});
       break;
 
     case 'daysAfterDates':
-      for (const base of s.dates) {
-        const [by, bm, bd] = base.split('-').map(Number);
-        const t = Date.UTC(by, bm - 1, bd) + s.offsetDays * 86400e3;
-        const dt = new Date(t);
-        out.push({ y: dt.getUTCFullYear(), m: dt.getUTCMonth() + 1, d: dt.getUTCDate() });
-      }
+      for (const base of s.dates) pushOffset(base, s.offsetDays);
       break;
 
     case 'weekdayBeforeEvent': {
       const anchor = EVENTS.find((e) => e.id === s.eventId);
       if (anchor && anchor.schedule.kind === 'dates') {
-        for (const base of anchor.schedule.dates) {
-          const [by, bm, bd] = base.split('-').map(Number);
-          const t = Date.UTC(by, bm - 1, bd) + s.offsetDays * 86400e3;
-          const dt = new Date(t);
-          out.push({ y: dt.getUTCFullYear(), m: dt.getUTCMonth() + 1, d: dt.getUTCDate() });
-        }
+        for (const base of scheduledDates(anchor.schedule)) pushOffset(base, s.offsetDays);
       }
       break;
     }
@@ -483,6 +615,16 @@ function inCalendar(ev, calendar) {
 }
 
 /**
+ * How well one year's dates of an event are established: the year's entry in
+ * `confidenceByYear` (the weakest date that year), else the event's own
+ * confidence, which describes 2026. Never stronger than the data file says.
+ */
+export function confidenceOf(ev, year) {
+  const byYear = ev.schedule && ev.schedule.confidenceByYear;
+  return (byYear && byYear[year]) || ev.confidence;
+}
+
+/**
  * Concrete upcoming events, sorted, for one pair.
  * `pair` is 'XAUUSD', 'BTCUSD', or null for both.
  */
@@ -506,6 +648,10 @@ export function getUpcomingEvents(fromMs, horizonHours = 48, pair = null, opts =
 
       rows.push({
         ...ev,
+        // The confidence of this occurrence's own year where the table keeps one,
+        // so a 2019 FOMC row reads "verified" and a 2018 CPI row "unverified";
+        // otherwise the event's (2026's), as before.
+        confidence: confidenceOf(ev, occ.y),
         at,
         ts,
         msAway: ts - fromMs,

@@ -26,15 +26,22 @@
  * Held-back years. 2025-01-01 onward is kept for one final test
  * (LEARNING-PLAN.md rule 2). Rows from then are reported only with
  * --holdout, and every such run is recorded in desk/model.json under "looks".
- * The one exception: 1 Jan – 11 Oct 2026 with the default settings, which
- * decision 26 already used to choose the 1.5R rule; it is labelled
- * "already seen (decision 26)" and is never a test on unseen data.
+ * The one exception: the plain report of 1 Jan – 11 Oct 2026 at the default
+ * settings, which decision 26 already printed and used to choose the 1.5R
+ * rule; it is labelled "already seen (decision 26)" and is never a test on
+ * unseen data. Any other flag on those rows (--by-condition, or an analysis
+ * added later) is a new look, so it needs --holdout like the rest.
+ * The development years, 2025 and 2026 are reported as separate blocks and
+ * never added together: 2025 is clean, 2026 was seen.
  *
  * What it is not. A reference feed's bars, not the broker's; no slippage, no
  * partial fills, no weekend spreads (the watcher is silent then anyway). The
- * news calendar's dated releases cover 2026 only (--calendar rules uses only
- * the rule-derived events, the same in every year). One stretch of one
- * market: an average with its uncertainty, not a promise.
+ * news calendar's dated releases are complete for 2025 and 2026 only; before
+ * 2025 it has every FOMC meeting but only the NFP and CPI dates a source
+ * confirmed, so those years include releases the live desk would have sat
+ * out (--calendar rules uses only the rule-derived events, the same in every
+ * year). One stretch of one market: an average with its uncertainty, not a
+ * promise.
  *
  *   node desk/replay.mjs --pair bitcoin --from 2026-01-01 [--to 2026-10-11]
  *        [--rule level|1.5R|2R] [--workers N] [--cost fixed|scaled]
@@ -47,17 +54,18 @@
  * $SCALP_DESK_MODEL for desk/model.json.
  */
 import { readFileSync, writeFileSync, mkdirSync, existsSync, renameSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { join, dirname, resolve } from 'node:path';
 import { homedir } from 'node:os';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { COOLDOWN_BARS } from './live.mjs';
 import { withDefaults, pairOf } from './lib.mjs';
 import { clusteredByDay } from './stats.mjs';
 import { ensureProxy } from './net.mjs';
 import {
-  DEFAULT_RULES, COST_MODES, SCALED_REFERENCE, loadBarsFile, checkIndices, readsFor, alertPass, defaultWorkers,
+  DEFAULT_RULES, COST_MODES, SCALED_REFERENCE, loadBarsFile, checkIndices, readsFor, alertPass, defaultWorkers, kindFor,
 } from './reads.mjs';
 import { CALENDAR_MODES } from '../src/news-calendar.js';
+import { windowState } from '../src/sessions.js';
 import { tfInfo } from '../src/timeframes.js';
 import { INSTRUMENTS } from '../src/instruments.js';
 
@@ -92,8 +100,16 @@ if (!(workers >= 1)) fail('--workers takes a whole number, 1 or more.');
 /* ------------------------------------------------------- held-back years */
 
 const HOLDOUT_FROM = Date.UTC(2025, 0, 1);
+const YEAR_2026 = Date.UTC(2026, 0, 1);
 // Decision 26's stretch, seen while choosing the 1.5R rule: 1 Jan – 11 Oct 2026 inclusive.
-const SEEN = { from: Date.UTC(2026, 0, 1), to: Date.UTC(2026, 9, 12) };
+const SEEN = { from: YEAR_2026, to: Date.UTC(2026, 9, 12) };
+// The flags of the report decision 26 already printed. Its exception covers
+// that report and nothing more: any other flag — --by-condition now, any
+// analysis added later — is a new look at held-back rows, so it takes the
+// --holdout path and is recorded. An allowlist, so a new flag is held back
+// without anyone remembering to add it here (found in review, 16 Oct 2026).
+const PLAIN_FLAGS = new Set(['pair', 'from', 'to', 'rule', 'workers', 'cost', 'calendar', 'both-touched', 'no-store', 'list']);
+const extraFlags = argv.filter((a) => a.startsWith('--')).map((a) => a.slice(2)).filter((f) => !PLAIN_FLAGS.has(f) && f !== 'holdout');
 const defaults = cost === 'fixed' && calendar === 'full' && bothTouched === 'stop';
 const settings = { pair, timeframe: tf.id, rules, cost, calendar, bothTouched, window: cfg.window };
 const notes = [];
@@ -102,12 +118,14 @@ if (toMs >= HOLDOUT_FROM) {
     const model = existsSync(MODEL) ? JSON.parse(readFileSync(MODEL, 'utf8')) : {};
     const looks = Array.isArray(model.looks) ? model.looks : [];
     if (looks.length) notes.push(`The held-back years have already been looked at ${looks.length} time${looks.length > 1 ? 's' : ''}; this result is not on unseen data.`);
-    looks.push({ at: new Date().toISOString(), range: { from: new Date(fromMs).toISOString(), to: new Date(toMs).toISOString() }, settings });
+    looks.push({ at: new Date().toISOString(), range: { from: new Date(fromMs).toISOString(), to: new Date(toMs).toISOString() }, settings, flags: extraFlags });
     model.looks = looks;
     mkdirSync(dirname(MODEL), { recursive: true });
     writeFileSync(MODEL, JSON.stringify(model, null, 2) + '\n');
     notes.push(`Held-back rows (from 2025-01-01) included: this look is recorded in ${MODEL}.`);
+    if (toMs >= YEAR_2026) notes.push('2026 rows were seen while choosing the 1.5R rule (decision 26): they are reported apart from 2025 and are not a test on unseen data.');
   } else if (defaults && fromMs >= SEEN.from && toMs < SEEN.to) {
+    if (extraFlags.length) fail(`1 Jan – 11 Oct 2026 is open without --holdout only to the plain report decision 26 already printed. ${extraFlags.map((f) => `--${f}`).join(' ')} on those rows would be a new look at held-back data: add --holdout (it is recorded in model.json).`);
     notes.push('1 Jan – 11 Oct 2026: already seen (decision 26) — the 1.5R rule was chosen on these bars, so this is not a test on unseen data.');
   } else {
     if (fromMs >= HOLDOUT_FROM) fail('2025-01-01 onward is held back for one final test. Nothing before it is in this range; add --holdout only for that test (it is recorded).');
@@ -180,43 +198,98 @@ console.log(`${pair} ${tf.id}: ${bars.length} bars ${new Date(bars[0].t).toISOSt
 
 const ks = checkIndices(bars, { fromMs, toMs, cfg });
 const t0 = Date.now();
-const { reads, fromStore, computed } = await readsFor(bars, ks, { pair, cfg, rules: DEFAULT_RULES, cost, calendar, workers, file: barFile }, { home: HOME, useStore: !has('no-store') });
+const stats = {};
+// The bars' source is in the store's key: the test stand-in's reads must never
+// answer for the real history's (each read's slice is checked as well).
+const source = process.env.SCALP_DESK_BARS ? `file:${resolve(barFile)}` : 'binance';
+const { reads, fromStore, computed, replaced } = await readsFor(bars, ks, { pair, cfg, rules: DEFAULT_RULES, cost, calendar, workers, file: barFile, source, stats }, { home: HOME, useStore: !has('no-store') });
 // Timing goes to stderr (a terminal only), so the report itself is the same whatever the workers.
-if (process.stderr.isTTY) console.error(`${reads.length} reads (${fromStore} from the read store, ${computed ? `${computed} computed with --workers ${workers}` : 'none computed'}) in ${((Date.now() - t0) / 1000).toFixed(1)} s`);
+if (process.stderr.isTTY) console.error(`${reads.length} reads (${fromStore} from the read store${replaced ? `, ${replaced} stored from other bars and recomputed` : ''}, ${computed ? `${computed} computed ${stats.workers ? `on ${stats.workers} workers` : 'in this process'}` : 'none computed'}) in ${((Date.now() - t0) / 1000).toFixed(1)} s`);
 
 /* --------------------------------------------------------------- report */
 
-for (const rule of rules) {
-  const { checks, kinds, trades } = alertPass(reads, bars, { cfg, rule, bothTouched, tfMinutes: tf.minutes, pair });
-  const n = trades.length;
-  const st = clusteredByDay(trades);
-  const mean = st ? st.mean : 0, sd = st ? st.sd : 0;
-  const weeks = (Math.min(toMs, bars[bars.length - 1].t) - fromMs) / (7 * 86400e3);
-  const by = (f) => trades.reduce((m, t) => (m[f(t)] = (m[f(t)] || 0) + 1, m), {});
-  console.log(`\n== rule ${rule}: ${checks} checks in the window → ${n} alerts (${(n / weeks).toFixed(1)} a week)`);
-  console.log('   reads:', JSON.stringify(kinds));
-  if (n) {
-    console.log(`   outcome: ${JSON.stringify(by((t) => t.how))} · sides ${JSON.stringify(by((t) => t.side))}`);
-    console.log(`   average ${mean >= 0 ? '+' : ''}${mean.toFixed(3)}R a trade, 95% range ${st.range[0].toFixed(3)} to ${st.range[1].toFixed(3)} · total ${trades.reduce((s, t) => s + t.r, 0).toFixed(1)}R`);
-    // Trades on the same day share the same market, so they are not independent:
-    // the range is also given with the uncertainty clustered by day (desk/stats.mjs).
-    console.log(`   clustered by day: 95% range ${st.clustered[0].toFixed(3)} to ${st.clustered[1].toFixed(3)} · spread of results ${sd.toFixed(2)}R · trades for the range to clear zero at this average: about ${mean > 0 ? Math.round((1.96 * st.seDay * Math.sqrt(n) / mean) ** 2) : '—'}`);
-    // The same average in each half of the stretch: a real effect should not live in one half only.
-    const half = Math.floor(n / 2);
-    const avg = (xs) => (xs.length ? xs.reduce((s, t) => s + t.r, 0) / xs.length : 0);
-    console.log(`   first half ${avg(trades.slice(0, half)).toFixed(3)}R (${half} trades, to ${trades[half - 1] ? trades[half - 1].at.slice(0, 10) : '—'}) · second half ${avg(trades.slice(half)).toFixed(3)}R (${n - half})`);
-    if (has('list')) for (const t of trades) console.log(`   ${t.at} ${t.side} ${t.conf} netR ${t.netR} → ${t.how} ${t.r.toFixed(2)}R after ${t.bars} bars`);
+/**
+ * The report's blocks. Figures from different kinds of years are never added
+ * together (LEARNING-PLAN.md rule 2): the development years, 2025 (held back,
+ * clean) and 2026 (seen while the 1.5R rule was chosen) each get their own
+ * block, so a --holdout run over 2025–26 prints 2025 and 2026 apart and no
+ * combined figure. A range inside one kind of year prints one block, exactly
+ * as before. The alert pass runs once over the whole range (an alert never
+ * outlives its day, so nothing carries across a block's edge) and its trades
+ * are split by the day they were sent.
+ */
+const BLOCKS = [
+  { from: -Infinity, to: HOLDOUT_FROM, label: 'development years, to 2024' },
+  { from: HOLDOUT_FROM, to: YEAR_2026, label: '2025, held back' },
+  { from: YEAR_2026, to: Infinity, label: '2026, already seen (decision 26)' },
+].filter((b) => fromMs < b.to && toMs >= b.from);
+
+/**
+ * desk/conditions.mjs's conditionReport export, or null when that file does
+ * not exist yet. Only its absence means "not built": a syntax error, a failing
+ * import inside it or a throw while it loads stops the run (found in review,
+ * 16 Oct 2026, when every error was read as "not built yet").
+ */
+async function conditionsHook() {
+  const file = fileURLToPath(new URL('./conditions.mjs', import.meta.url));
+  try {
+    return (await import(pathToFileURL(file).href)).conditionReport;
+  } catch (e) {
+    if (e && e.code === 'ERR_MODULE_NOT_FOUND' && !existsSync(file)) return null;
+    throw e;
   }
-  if (has('by-condition')) {
-    // The by-condition table (LEARNING-PLAN.md Part 2) is desk/conditions.mjs,
-    // built separately. It is handed every read and this rule's alerts, and
-    // returns the lines to print. Until it exists the flag says so.
-    let report = null;
-    try { ({ conditionReport: report } = await import('./conditions.mjs')); } catch { /* not built yet */ }
-    if (typeof report !== 'function') console.log('   by condition: not built yet (desk/conditions.mjs, export conditionReport).');
-    else {
-      const out = await report({ reads, trades, rule, cfg, bars, settings });
-      console.log([].concat(out).join('\n'));
+}
+
+/** The first index whose bar opens at or after `ms` (bars are sorted by time). */
+function barsBefore(ms) {
+  let lo = 0, hi = bars.length;
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (bars[mid].t < ms) lo = mid + 1; else hi = mid; }
+  return lo;
+}
+
+for (const rule of rules) {
+  const all = alertPass(reads, bars, { cfg, rule, bothTouched, tfMinutes: tf.minutes, pair }).trades;
+  for (const block of BLOCKS) {
+    const inBlock = (ms) => ms >= block.from && ms < block.to;
+    const blockReads = reads.filter((r) => inBlock(r.closeMs));
+    const trades = all.filter((t) => inBlock(t.closeMs));
+    const kinds = {};
+    for (const r of blockReads) { const kind = kindFor(r, rule); kinds[kind] = (kinds[kind] || 0) + 1; }
+    const n = trades.length;
+    const st = clusteredByDay(trades);
+    const mean = st ? st.mean : 0, sd = st ? st.sd : 0;
+    const start = Math.max(fromMs, block.from);
+    const weeks = (Math.min(toMs, block.to, bars[bars.length - 1].t) - start) / (7 * 86400e3);
+    const by = (f) => trades.reduce((m, t) => (m[f(t)] = (m[f(t)] || 0) + 1, m), {});
+    console.log(`\n== rule ${rule}${BLOCKS.length > 1 ? ` · ${block.label}` : ''}: ${blockReads.length} checks in the window → ${n} alerts (${(n / weeks).toFixed(1)} a week)`);
+    console.log('   reads:', JSON.stringify(kinds));
+    if (n) {
+      console.log(`   outcome: ${JSON.stringify(by((t) => t.how))} · sides ${JSON.stringify(by((t) => t.side))}`);
+      console.log(`   average ${mean >= 0 ? '+' : ''}${mean.toFixed(3)}R a trade, 95% range ${st.range[0].toFixed(3)} to ${st.range[1].toFixed(3)} · total ${trades.reduce((s, t) => s + t.r, 0).toFixed(1)}R`);
+      // Trades on the same day share the same market, so they are not independent:
+      // the range is also given with the uncertainty clustered by day (desk/stats.mjs).
+      console.log(`   clustered by day: 95% range ${st.clustered[0].toFixed(3)} to ${st.clustered[1].toFixed(3)} · spread of results ${sd.toFixed(2)}R · trades for the range to clear zero at this average: about ${mean > 0 ? Math.round((1.96 * st.seDay * Math.sqrt(n) / mean) ** 2) : '—'}`);
+      // The same average in each half of the stretch: a real effect should not live in one half only.
+      const half = Math.floor(n / 2);
+      const avg = (xs) => (xs.length ? xs.reduce((s, t) => s + t.r, 0) / xs.length : 0);
+      console.log(`   first half ${avg(trades.slice(0, half)).toFixed(3)}R (${half} trades, to ${trades[half - 1] ? trades[half - 1].at.slice(0, 10) : '—'}) · second half ${avg(trades.slice(half)).toFixed(3)}R (${n - half})`);
+      if (has('list')) for (const t of trades) console.log(`   ${t.at} ${t.side} ${t.conf} netR ${t.netR} → ${t.how} ${t.r.toFixed(2)}R after ${t.bars} bars`);
+    }
+    if (has('by-condition')) {
+      // The by-condition table (LEARNING-PLAN.md Part 2) is desk/conditions.mjs,
+      // built separately. It is handed this block's reads and alerts, and the
+      // bars only up to the close of the last check's session — what those
+      // alerts were followed on, and nothing after — never the whole cache.
+      // It returns the lines to print.
+      const report = await conditionsHook();
+      if (report === null) console.log('   by condition: not built yet (desk/conditions.mjs).');
+      else if (typeof report !== 'function') console.log('   by condition: desk/conditions.mjs has no conditionReport function to call.');
+      else {
+        const last = blockReads[blockReads.length - 1];
+        const until = last ? windowState(last.closeMs, cfg.window).closesAtMs : start;
+        const out = await report({ reads: blockReads, trades, rule, cfg, bars: bars.slice(0, barsBefore(until)), settings, block: block.label });
+        console.log([].concat(out).join('\n'));
+      }
     }
   }
 }
