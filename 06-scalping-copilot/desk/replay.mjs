@@ -33,6 +33,7 @@ import { spawnSync } from 'node:child_process';
 import { liveRead, shouldAlert, alertState, COOLDOWN_BARS } from './live.mjs';
 import { withDefaults, pairOf, costFor } from './lib.mjs';
 import { clusteredByDay } from './stats.mjs';
+import { outcome } from './outcome.mjs';
 import { windowState } from '../src/sessions.js';
 import { tfInfo } from '../src/timeframes.js';
 import { INSTRUMENTS } from '../src/instruments.js';
@@ -75,37 +76,6 @@ async function history(start, end) {
   return bars;
 }
 
-/**
- * Follow one alert forward to the stop, the target, or the window's close.
- * Returns R after costs, where 1R is what the stop actually loses. A buy pays
- * the spread in its fill (ask), so its stop loses stopDist + spread and its
- * target makes tp1Dist - spread. A sell fills at the bid and pays the spread
- * in its exits triggering on the ask — sooner, but for exactly the distances.
- */
-function outcome(bars, k, rec, spread, comm) {
-  const buy = rec.side === 'buy';
-  const entryBid = bars[k].c;
-  const sl = buy ? entryBid - rec.stopDist : entryBid + rec.stopDist;
-  const tp = buy ? entryBid + rec.tp1Dist : entryBid - rec.tp1Dist;
-  const riskPx = (buy ? rec.stopDist + spread : rec.stopDist) + comm;
-  const winPx = (buy ? rec.tp1Dist - spread : rec.tp1Dist) - comm;
-  const close = windowState(rec.barCloseMs, cfg.window).closesAtMs;
-  for (let j = k + 1; j < bars.length; j++) {
-    const b = bars[j];
-    const lo = buy ? b.l : b.l + spread, hi = buy ? b.h : b.h + spread;   // the side the levels trigger on
-    const hitSl = buy ? lo <= sl : hi >= sl;
-    const hitTp = buy ? hi >= tp : lo <= tp;
-    if (hitSl) return { r: -1, how: 'stop', bars: j - k };
-    if (hitTp) return { r: winPx / riskPx, how: 'target', bars: j - k };
-    if (b.t + tf.minutes * 60000 >= close) {
-      const exit = buy ? b.c : b.c + spread;
-      const pnl = buy ? exit - (entryBid + spread) : entryBid - exit;
-      return { r: (pnl - comm) / riskPx, how: 'window', bars: j - k };
-    }
-  }
-  return null;
-}
-
 const bars = process.env.SCALP_DESK_BARS ? JSON.parse(readFileSync(process.env.SCALP_DESK_BARS, 'utf8'))[pair] : await history(fromMs, toMs);
 const inst = INSTRUMENTS[pair];
 const spread = inst.typicalSpread.observed;
@@ -129,7 +99,7 @@ for (const rule of rules) {
     const res = r.result;
     state.lastAlert[pair] = alertState({ side: res.decision, barCloseMs: r.barCloseMs, refPrice: res.entry, stopDist: res.stopDistance, tp1Dist: Math.abs(res.takeProfit1 - res.entry) });
     const rec = { side: res.decision, stopDist: res.stopDistance, tp1Dist: Math.abs(res.takeProfit1 - res.entry), barCloseMs: r.barCloseMs };
-    const o = outcome(bars, k, rec, spread, comm);
+    const o = outcome(bars, k, rec, { spread, comm, closesAtMs: windowState(rec.barCloseMs, cfg.window).closesAtMs, tfMinutes: tf.minutes });
     if (o) trades.push({ at: new Date(closeMs).toISOString().slice(0, 16), side: rec.side, conf: res.confidence, netR: res.netR, ...o });
   }
   const n = trades.length;
