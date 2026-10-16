@@ -1,7 +1,7 @@
 # Handoff — M5 Scalp Desk
 
 Everything needed to pick this up in a fresh session without re-deriving it.
-Last updated 14 October 2026. Read this whole file before changing anything —
+Last updated 17 October 2026. Read this whole file before changing anything —
 several decisions below look like mistakes and are not.
 
 ---
@@ -44,7 +44,44 @@ container it uses the preinstalled headless_shell under `/opt/pw-browsers`.
 **Run the smoke test after any UI change.** The unit suites do not touch the DOM
 and stayed fully green twice while the page was broken.
 
-### Where we stopped (14 Oct 2026, ~22:15 London) — PAUSED by the user; read this first
+### Where we stopped (17 Oct 2026, ~00:30 London) — BUILDING the learning plan; read this first
+
+**Resumed 16 Oct; the user is waiting for the bitcoin results.** Work follows
+`06-scalping-copilot/LEARNING-PLAN.md` (reviewed by three critics on 16 Oct; its "Engineering"
+section has the build order). Done and pushed:
+- Step 0 foundation (`df60b1f`, `f413203`): `desk/reads.mjs` (one read per check, worker threads,
+  read store with slice fingerprints, serial alert pass with a predicate), `desk/net.mjs`,
+  formatter cache (65 ms → ~5 ms a check), replay `--workers/--cost/--calendar/--both-touched/
+  --holdout` with holdout discipline, volumeBucket fix (moved nothing), release dates 2017–2025
+  in src/news-calendar.js from `data/calendar-history.json` (two 2026 dates corrected: Jan NFP
+  11 Feb, Jan CPI 13 Feb → 2026 1.5R figure +0.028R → +0.029R; decision 26 note).
+- Step 1 modules, reviewed and fixed: `desk/history.mjs`, `desk/features.mjs`,
+  `desk/conditions.mjs` (cherry-picked into the branch). 556 unit assertions pass.
+- In progress (17 Oct, 00:30): `desk/learn.mjs`, `desk/dataset.mjs`, `desk/features-extra.mjs`
+  (uncommitted in the main checkout while agents build them) and the journal's last fix on branch
+  `worktree-wf_b57a6c58-cf4-3` (worktree under `.claude/worktrees/`; merge it when its check passes).
+
+**Still to do, in order:** integration (desk.mjs `journal`/`learn` commands and now/brief on the
+proxy path; live.mjs METHOD_VERSION + method-hash test, journal entries, footer; `account.mode`;
+`.gitattributes` union merge for desk/journal.jsonl; the `conditionReport` adapter replay.mjs
+calls; SKILL.md, README, this file); the minor findings left by the module re-checks (history:
+deadline overflow, opts prototype guard, head drop when nowMs < first bar, Twelve Data spacing
+vs short deadlines, re-read shorter-file check; features: analysis provenance check, live reads
+999 closed bars vs replay 1,000 — fix FETCH_BARS+1 or slice k−998; conditions: refuse 'fresh'
+rows before a complete sample, footer wording, splitByPeriod drops, `at` = bar close semantics,
+import the lists from features.mjs; plan text: 30 cells not 32, journal.jsonl and `PAIR-TF-ms`
+ids, the feature list's 960-value ATR rank and log features); then build bitcoin rows, run the
+walk-forward on dev years, **commit desk/model.json with the recipe**, run `learn final` ONCE,
+independent review, rebuild/smoke/republish the page, report to the user in the plan's shape,
+and ask the sample question (about 190 alerts, scored on mean R).
+
+**Flagged by agents, not changed (need a decision or a later pass):** the weekly claims holiday
+rule may be wrong (DOL may move the release only when Thursday itself is closed; today any
+earlier holiday moves it to Wednesday, live too); 2026 PCE January–June missing from the table;
+monthly ADP lands on Tuesday when NFP is on a Thursday; FOMC minutes table is 2026-only; the
+history cache now runs to 2026-10-16 (an agent extended it — it only grows).
+
+### The pause of 14 Oct 2026 (~22:15 London), for reference
 
 **The user said "pause everything till I resume".** All work is stopped; nothing is running and
 nothing is half-written in code. The code is exactly as the 12 Oct section below describes (436
