@@ -1,0 +1,1191 @@
+{
+  "_meta": {
+    "generated": "2026-10-16",
+    "method": "Primary sites (bls.gov, bea.gov, federalreserve.gov, opm.gov, alfred/fraser.stlouisfed.org, wikipedia, archive.org) were all blocked from this environment (proxy 403 for curl; DNS failure for WebFetch). Every date below comes from WebSearch result extracts that quote or link those sites, or from secondary news/calendar sources. A bls.gov archive URL of the form empsit_MMDDYYYY / an ALFRED URL of the form release?rd=YYYY-MM-DD&rid=N, seen in a result list, is counted as evidence of that release date.",
+    "field_rules": {
+      "dates": "Only dates supported by at least one source found in this session. Never filled by rule.",
+      "unsourcedCandidates": "Dates recalled from model memory (not derived by rule) that NO source in this session confirmed. Do NOT treat as sourced. Provided only so a later pass can confirm or reject them; a backtest that uses them should mark them unverified.",
+      "confidence": "verified = two independent sources agree or a primary page was quoted in an extract; likely = one good source; unverified = none.",
+      "times": "All times America/New_York. NFP/CPI 08:30 unless noted; FOMC statement 14:00 and press conference 14:30 unless noted; PIO 08:30 unless noted (several 2025 PIO releases were 10:00)."
+    }
+  },
+  "nfp": {
+    "2025": {
+      "dates": [
+        "2025-01-10",
+        "2025-02-07",
+        "2025-03-07",
+        "2025-04-04",
+        "2025-05-02",
+        "2025-06-06",
+        "2025-07-03",
+        "2025-08-01",
+        "2025-09-05",
+        "2025-11-20",
+        "2025-12-16"
+      ],
+      "times": {
+        "2025-12-16": "08:30 (Tuesday)",
+        "2025-11-20": "08:30 (Thursday)",
+        "2025-07-03": "08:30 (Thursday, July 4 holiday)"
+      },
+      "confidence": "verified (Jan 10, Feb 7, May 2, Jun 6, Jul 3, Aug 1, Nov 20, Dec 16); likely (Mar 7, Apr 4, Sep 5 - one third-party calendar each)",
+      "sources": [
+        "https://www.bls.gov/schedule/2025 (extract: Jan 10 and Feb 7 2025 at 08:30)",
+        "https://www.bls.gov/schedule/2025/05_sched_list.htm (extract: Fri May 2 2025 08:30)",
+        "https://www.bls.gov/schedule/2025/06_sched_list.htm (extract: Fri Jun 6 2025 08:30)",
+        "https://www.mass.gov/doc/2025-data-release-schedule/download (national release dates incl. 5/2, 6/6, 7/3/2025)",
+        "https://cdle.colorado.gov/dlss/labor-market-information-lmi/lmi-press-releases-and-schedules (June 2025 data: July 3, 2025)",
+        "https://fortune.com/2025/08/01/trump-fires-erika-mcentarfer-bureau-labor-statistics-chief (July report released Aug 1 2025)",
+        "https://equalsmoney.com/economic-calendar/events/us-employment-data (Mar 7, Apr 4, Sep 5 2025)",
+        "https://www.bloomberg.com/news/articles/2025-11-14/bls-says-september-jobs-report-will-be-released-nov-20",
+        "https://www.bls.gov/news.release/archives/empsit_11202025.pdf (archive file dated 11/20/2025)",
+        "https://www.bls.gov/news.release/archives/empsit_12162025.htm (archive file dated 12/16/2025)",
+        "https://www.nbcnews.com/business/economy/october-jobs-report-canceled-rcna244828",
+        "https://www.bls.gov/bls/2025-lapse-revised-release-dates.htm (via search extract)"
+      ],
+      "notes": "Shutdown Oct 1 - Nov 12 2025. Sept report moved from Oct 3 to Thu Nov 20. October report (scheduled Fri Nov 7) was NOT published: October household survey never collected; October establishment (payroll) data were published inside the November report. November report moved from Fri Dec 5 to Tue Dec 16. December 2025 report came out 2026-01-09 (already in the 2026 table). Jan 10 2025 followed the Jan 9 2025 Carter national day of mourning (federal offices closed) and was not moved."
+    },
+    "2024": {
+      "dates": [
+        "2024-01-05",
+        "2024-02-02",
+        "2024-03-08",
+        "2024-09-06",
+        "2024-10-04",
+        "2024-12-06"
+      ],
+      "unsourcedCandidates": [
+        "2024-04-05",
+        "2024-05-03",
+        "2024-06-07",
+        "2024-07-05",
+        "2024-08-02",
+        "2024-11-01"
+      ],
+      "confidence": "likely for the six sourced dates (BLS monthly schedule pages via one extract each); remaining six unverified",
+      "sources": [
+        "https://blsmon1.bls.gov/schedule/2024/02_sched.htm, https://www.bls.gov/schedule/2024/10_sched.htm, https://blsmon1.bls.gov/schedule/2024/12_sched_list.htm, https://blsmon1.bls.gov/schedule/2024/09_sched.htm (search extract: Jan 5, Mar 8, Sep 6, Oct 4, Dec 6 2024)",
+        "https://semiotic.nteract.io/stories/jobs-report/ces-2024-2025-3c54450c09ec-v1/raw/retrieval.json (quotes BLS archive URL empsit_02022024)"
+      ],
+      "notes": "Incomplete. Not first-Friday: 2024-03-08 (second Friday)."
+    },
+    "2023": {
+      "dates": [],
+      "unsourcedCandidates": [
+        "2023-01-06",
+        "2023-02-03",
+        "2023-03-10",
+        "2023-04-07",
+        "2023-05-05",
+        "2023-06-02",
+        "2023-07-07",
+        "2023-08-04",
+        "2023-09-01",
+        "2023-10-06",
+        "2023-11-03",
+        "2023-12-08"
+      ],
+      "confidence": "unverified",
+      "sources": [],
+      "notes": "No source found in the time box."
+    },
+    "2022": {
+      "dates": [],
+      "unsourcedCandidates": [
+        "2022-01-07",
+        "2022-02-04",
+        "2022-03-04",
+        "2022-04-01",
+        "2022-05-06",
+        "2022-06-03",
+        "2022-07-08",
+        "2022-08-05",
+        "2022-09-02",
+        "2022-10-07",
+        "2022-11-04",
+        "2022-12-02"
+      ],
+      "confidence": "unverified",
+      "sources": [],
+      "notes": "No source found in the time box."
+    },
+    "2021": {
+      "dates": [],
+      "unsourcedCandidates": [
+        "2021-01-08",
+        "2021-02-05",
+        "2021-03-05",
+        "2021-04-02",
+        "2021-05-07",
+        "2021-06-04",
+        "2021-07-02",
+        "2021-08-06",
+        "2021-09-03",
+        "2021-10-08",
+        "2021-11-05",
+        "2021-12-03"
+      ],
+      "confidence": "unverified",
+      "sources": [],
+      "notes": "No source found in the time box. 2021-04-02 was Good Friday (markets closed, release still went out) - recalled, not verified."
+    },
+    "2020": {
+      "dates": [
+        "2020-07-02"
+      ],
+      "unsourcedCandidates": [
+        "2020-01-10",
+        "2020-02-07",
+        "2020-03-06",
+        "2020-04-03",
+        "2020-05-08",
+        "2020-06-05",
+        "2020-08-07",
+        "2020-09-04",
+        "2020-10-02",
+        "2020-11-06",
+        "2020-12-04"
+      ],
+      "confidence": "verified for 2020-07-02 only; rest unverified",
+      "sources": [
+        "https://www.cnbc.com/2020/07/02/jobs-report-june-2020.html",
+        "https://www.axios.com/2020/07/02/june-jobs-report-coronavirus",
+        "https://www.calculatedriskblog.com/2020/07/june-employment-report-48-million-jobs.html"
+      ],
+      "notes": "2020-07-02 was a THURSDAY (Friday July 3 was the observed Independence Day holiday)."
+    },
+    "2019": {
+      "dates": [
+        "2019-01-04",
+        "2019-08-02"
+      ],
+      "unsourcedCandidates": [
+        "2019-02-01",
+        "2019-03-08",
+        "2019-04-05",
+        "2019-05-03",
+        "2019-06-07",
+        "2019-07-05",
+        "2019-09-06",
+        "2019-10-04",
+        "2019-11-01",
+        "2019-12-06"
+      ],
+      "confidence": "likely for the two sourced dates; rest unverified",
+      "sources": [
+        "https://www.bls.gov/schedule/2019/home.htm (extract: Employment Situation for December 2018, Fri Jan 4 2019 08:30)",
+        "https://www.bls.gov/news.release/archives/empsit_08022019.pdf (archive file dated 08/02/2019)"
+      ],
+      "notes": "BLS was funded during the Dec 22 2018 - Jan 25 2019 shutdown, so NFP was not delayed (recalled; consistent with the Jan 4 and Feb 1 dates)."
+    },
+    "2018": {
+      "dates": [
+        "2018-08-03"
+      ],
+      "unsourcedCandidates": [
+        "2018-01-05",
+        "2018-02-02",
+        "2018-03-09",
+        "2018-04-06",
+        "2018-05-04",
+        "2018-06-01",
+        "2018-07-06",
+        "2018-09-07",
+        "2018-10-05",
+        "2018-11-02",
+        "2018-12-07"
+      ],
+      "confidence": "likely for 2018-08-03; rest unverified",
+      "sources": [
+        "https://www.bls.gov/news.release/archives/empsit_08032018.pdf (archive file dated 08/03/2018)"
+      ],
+      "notes": "Incomplete."
+    },
+    "2017": {
+      "dates": [
+        "2017-01-06",
+        "2017-02-03",
+        "2017-04-07",
+        "2017-06-02",
+        "2017-07-07",
+        "2017-08-04"
+      ],
+      "unsourcedCandidates": [
+        "2017-03-10",
+        "2017-05-05",
+        "2017-09-01",
+        "2017-10-06",
+        "2017-11-03",
+        "2017-12-08"
+      ],
+      "confidence": "likely for the six sourced dates; rest unverified",
+      "sources": [
+        "https://www.bls.gov/schedule/2017/home.htm (extract: Fri Jan 6 and Fri Feb 3 2017 08:30)",
+        "https://www.bls.gov/news.release/archives/jec_04072017.htm (Commissioner's statement on the Employment Situation, dated 04/07/2017)",
+        "https://www.bls.gov/news.release/archives/empsit_06022017.htm (archive dated 06/02/2017; text says June report scheduled Fri July 7 2017 08:30)",
+        "https://www.bls.gov/news.release/archives/empsit_08042017.pdf (archive dated 08/04/2017)"
+      ],
+      "notes": "Incomplete."
+    }
+  },
+  "cpi": {
+    "2025": {
+      "dates": [
+        "2025-01-15",
+        "2025-02-12",
+        "2025-03-12",
+        "2025-04-10",
+        "2025-05-13",
+        "2025-06-11",
+        "2025-07-15",
+        "2025-08-12",
+        "2025-09-11",
+        "2025-10-24",
+        "2025-12-18"
+      ],
+      "times": {
+        "2025-10-24": "08:30 (Friday)",
+        "2025-12-18": "08:30 (Thursday)"
+      },
+      "confidence": "verified (May 13, Aug 12, Sep 11, Oct 24, Dec 18); likely (Jan 15, Feb 12, Mar 12, Apr 10 - one schedule page, with fedprimerate/JEC coverage of Mar 12 and Apr 10; Jun 11 - one report; Jul 15 - one preview)",
+      "sources": [
+        "https://www.usinflationcalculator.com/inflation/consumer-price-index-release-schedule (Jan 15, Feb 12, Mar 12, Apr 10, May 13 2025 at 08:30)",
+        "https://economy.fedprimerate.com/2025/03/USA--Hard--Data--INFLATION--Consumer--Price--Index--CPI--FEBRUARY--2025.html (Wed Mar 12 2025)",
+        "https://economy.fedprimerate.com/2025/04/USA--Hard--Data--INFLATION--Consumer--Price--Index--CPI--MARCH--2025.html (Thu Apr 10 2025)",
+        "https://alfred.stlouisfed.org/release?rd=2025-05-13&rid=10 (ALFRED CPI release date 2025-05-13)",
+        "https://equalsmoney.com/economic-calendar/events/us-cpi (Jun 11 2025 released; Jul 15 2025 scheduled)",
+        "https://www.jpmorgan.com/insights/outlook/economic-outlook/cpi-report-july-2025 and https://www.newschannel6now.com/2025/08/12/report-shows-us-consumer-prices-increased-27-july (Aug 12 2025)",
+        "https://investinglive.com/news/us-august-cpi-29-yy-vs-29-expected-20250911/amp and https://www.stephens.com/uploads/shared/documents/PCG-Docs/CPI-Updates/CPI-Update_9-11-25.pdf (Sep 11 2025)",
+        "https://www.usinflationcalculator.com/inflation/bls-delays-september-inflation-report-to-october-24/100066061/ and https://www.kitco.com/news/off-the-wire/2025-10-10/us-publish-september-cpi-report-month-despite-government-shutdown and https://alfred.stlouisfed.org/release?rd=2025-10-24&rid=10 (Oct 24 2025)",
+        "https://news.bloomberglaw.com/us-law-week/bls-axes-us-october-cpi-report-sets-dec-18-for-november-data and https://newsquawk.com/headlines/us-bls-cancels-october-cpi-report-will-publish-the-november-2025-cpi-on-december-18th-2025-21-11-2025 (Oct CPI cancelled; Nov CPI Dec 18)"
+      ],
+      "notes": "September CPI moved from Wed Oct 15 to Fri Oct 24 (BLS recalled staff because Social Security COLA depends on it). October 2025 CPI was CANCELLED - no all-items or core index for October was ever published (first time in BLS history per reports); a few non-survey October series were published with the November release. November CPI moved from Wed Dec 10 to Thu Dec 18 (after the Dec 10 FOMC) and carried no 1-month changes where October was missing. December CPI returned to schedule on 2026-01-13."
+    },
+    "2024": {
+      "dates": [],
+      "unsourcedCandidates": [
+        "2024-01-11",
+        "2024-02-13",
+        "2024-03-12",
+        "2024-04-10",
+        "2024-05-15",
+        "2024-06-12",
+        "2024-07-11",
+        "2024-08-14",
+        "2024-09-11",
+        "2024-10-10",
+        "2024-11-13",
+        "2024-12-11"
+      ],
+      "confidence": "unverified",
+      "sources": [],
+      "notes": "No source found in the time box."
+    },
+    "2023": {
+      "dates": [
+        "2023-07-12"
+      ],
+      "unsourcedCandidates": [
+        "2023-01-12",
+        "2023-02-14",
+        "2023-03-14",
+        "2023-04-12",
+        "2023-05-10",
+        "2023-06-13",
+        "2023-08-10",
+        "2023-09-13",
+        "2023-10-12",
+        "2023-11-14",
+        "2023-12-12"
+      ],
+      "confidence": "likely for 2023-07-12; rest unverified",
+      "sources": [
+        "https://alfred.stlouisfed.org/release?pageID=4&rd=2023-07-12&rid=10"
+      ],
+      "notes": "Incomplete."
+    },
+    "2022": {
+      "dates": [
+        "2022-05-11",
+        "2022-10-13",
+        "2022-12-13"
+      ],
+      "unsourcedCandidates": [
+        "2022-01-12",
+        "2022-02-10",
+        "2022-03-10",
+        "2022-04-12",
+        "2022-06-10",
+        "2022-07-13",
+        "2022-08-10",
+        "2022-09-13",
+        "2022-11-10"
+      ],
+      "confidence": "likely for the three sourced dates (ALFRED release-date URLs); rest unverified",
+      "sources": [
+        "https://alfred.stlouisfed.org/release?rd=2022-05-11&rid=10",
+        "https://alfred.stlouisfed.org/release?rd=2022-10-13&rid=10",
+        "https://alfred.stlouisfed.org/release?rd=2022-12-13&rid=10"
+      ],
+      "notes": "Incomplete. 2022-12-13 fell on day 1 of the Dec 13-14 FOMC meeting."
+    },
+    "2021": {
+      "dates": [
+        "2021-05-12",
+        "2021-12-10"
+      ],
+      "unsourcedCandidates": [
+        "2021-01-13",
+        "2021-02-10",
+        "2021-03-10",
+        "2021-04-13",
+        "2021-06-10",
+        "2021-07-13",
+        "2021-08-11",
+        "2021-09-14",
+        "2021-10-13",
+        "2021-11-10"
+      ],
+      "confidence": "likely for the two sourced dates; rest unverified",
+      "sources": [
+        "https://alfred.stlouisfed.org/release?rd=2021-05-12&rid=10",
+        "https://alfred.stlouisfed.org/release?rd=2021-12-10&rid=10"
+      ],
+      "notes": "Incomplete."
+    },
+    "2020": {
+      "dates": [
+        "2020-02-13",
+        "2020-12-10"
+      ],
+      "unsourcedCandidates": [
+        "2020-01-14",
+        "2020-03-11",
+        "2020-04-10",
+        "2020-05-12",
+        "2020-06-10",
+        "2020-07-14",
+        "2020-08-12",
+        "2020-09-11",
+        "2020-10-13",
+        "2020-11-12"
+      ],
+      "confidence": "likely for the two sourced dates; rest unverified",
+      "sources": [
+        "https://www.bls.gov/schedule/2020/02_sched_list.htm (Thu Feb 13 2020)",
+        "https://www.bls.gov/schedule/2020/12_sched_list.htm (Thu Dec 10 2020)"
+      ],
+      "notes": "Incomplete. An archived 2017-era advance list showed different 2020 dates (Feb 19, Mar 12) - superseded; do not use."
+    },
+    "2019": {
+      "dates": [
+        "2019-04-10"
+      ],
+      "unsourcedCandidates": [
+        "2019-01-11",
+        "2019-02-13",
+        "2019-03-12",
+        "2019-05-10",
+        "2019-06-12",
+        "2019-07-11",
+        "2019-08-13",
+        "2019-09-12",
+        "2019-10-10",
+        "2019-11-13",
+        "2019-12-11"
+      ],
+      "confidence": "likely for 2019-04-10; rest unverified",
+      "sources": [
+        "https://www.bls.gov/schedule/2019/home.htm (extract: CPI for March 2019, Wed Apr 10 2019 08:30)"
+      ],
+      "notes": "Incomplete."
+    },
+    "2018": {
+      "dates": [
+        "2018-02-14",
+        "2018-03-13",
+        "2018-06-12"
+      ],
+      "unsourcedCandidates": [
+        "2018-01-12",
+        "2018-04-11",
+        "2018-05-10",
+        "2018-07-12",
+        "2018-08-10",
+        "2018-09-13",
+        "2018-10-11",
+        "2018-11-14",
+        "2018-12-12"
+      ],
+      "confidence": "likely for Mar 13 and Jun 12 (ALFRED CPI release-date URLs); 2018-02-14 indirect only (ALFRED Experimental CPI release date + an unlabeled Feb 14 entry in the BLS 2018 schedule extract); rest unverified",
+      "sources": [
+        "https://alfred.stlouisfed.org/release?rd=2018-03-13&rid=10",
+        "https://alfred.stlouisfed.org/release?rd=2018-06-12&rid=10",
+        "https://alfred.stlouisfed.org/release?rid=345&rd=2018-02-14",
+        "https://www.bls.gov/schedule/2018/home.htm"
+      ],
+      "notes": "Incomplete."
+    },
+    "2017": {
+      "dates": [
+        "2017-01-18",
+        "2017-02-15"
+      ],
+      "unsourcedCandidates": [
+        "2017-03-15",
+        "2017-04-14",
+        "2017-05-12",
+        "2017-06-14",
+        "2017-07-14",
+        "2017-08-11",
+        "2017-09-14",
+        "2017-10-13",
+        "2017-11-15",
+        "2017-12-13"
+      ],
+      "confidence": "likely for the two sourced dates; rest unverified",
+      "sources": [
+        "https://www.bls.gov/schedule/2017/home.htm (extract: CPI for Dec 2016 on Jan 18 2017; CPI for Jan 2017 on Wed Feb 15 2017)"
+      ],
+      "notes": "Incomplete. 2017-03-15 (unsourced) would coincide with the FOMC decision day."
+    }
+  },
+  "fomc": {
+    "2025": {
+      "dates": [
+        "2025-01-29",
+        "2025-03-19",
+        "2025-05-07",
+        "2025-06-18",
+        "2025-07-30",
+        "2025-09-17",
+        "2025-10-29",
+        "2025-12-10"
+      ],
+      "pressConference": "all",
+      "sep": [
+        "2025-03-19",
+        "2025-06-18",
+        "2025-09-17",
+        "2025-12-10"
+      ],
+      "confidence": "verified",
+      "sources": [
+        "https://www.texasbankers.com/fomc-releases-meeting-schedule-for-2025/",
+        "https://www.federalreserve.gov/monetarypolicy/fomcpresconf20250129.htm",
+        "https://www.federalreserve.gov/monetarypolicy/fomcpresconf20250917.htm"
+      ],
+      "notes": "Second day of each two-day meeting. Not affected by the Oct-Nov 2025 shutdown (the Fed is self-funded); the Oct 29 meeting went ahead. Press conference after every meeting (policy announced by Powell on 2018-06-13, effective January 2019)."
+    },
+    "2024": {
+      "dates": [
+        "2024-01-31",
+        "2024-03-20",
+        "2024-05-01",
+        "2024-06-12",
+        "2024-07-31",
+        "2024-09-18",
+        "2024-11-07",
+        "2024-12-18"
+      ],
+      "pressConference": "all",
+      "sep": [
+        "2024-03-20",
+        "2024-06-12",
+        "2024-09-18",
+        "2024-12-18"
+      ],
+      "confidence": "verified",
+      "sources": [
+        "https://trust.cnb.bank/The-Federal-Reserves-Key-Meeting-Dates-in-2024.c10197.htm",
+        "https://www.communityfirstcu.org/cfcu-you/blog/2024/2/the-federal-reserve-s-key-meeting-dates-in-2024",
+        "https://primerate.fedprimerate.com/search/label/fomc_meeting_schedule"
+      ],
+      "notes": "2024-11-07 is a THURSDAY (Wed-Thu meeting after the Nov 5 election)."
+    },
+    "2023": {
+      "dates": [
+        "2023-02-01",
+        "2023-03-22",
+        "2023-05-03",
+        "2023-06-14",
+        "2023-07-26",
+        "2023-09-20",
+        "2023-11-01",
+        "2023-12-13"
+      ],
+      "pressConference": "all",
+      "sep": [
+        "2023-03-22",
+        "2023-06-14",
+        "2023-09-20",
+        "2023-12-13"
+      ],
+      "confidence": "verified",
+      "sources": [
+        "https://findbullionprices.com/blog/?p=1010",
+        "https://www.federalreserve.gov/newsevents/pressreleases/monetary20230322b.htm",
+        "https://www.federalreserve.gov/monetarypolicy/fomcpresconf20230920.htm"
+      ],
+      "notes": ""
+    },
+    "2022": {
+      "dates": [
+        "2022-01-26",
+        "2022-03-16",
+        "2022-05-04",
+        "2022-06-15",
+        "2022-07-27",
+        "2022-09-21",
+        "2022-11-02",
+        "2022-12-14"
+      ],
+      "pressConference": "all",
+      "sep": [
+        "2022-03-16",
+        "2022-06-15",
+        "2022-09-21",
+        "2022-12-14"
+      ],
+      "confidence": "verified",
+      "sources": [
+        "https://www.federalreserve.gov/newsevents/pressreleases/monetary20210604a.htm (tentative 2022 schedule)",
+        "https://www.econoday.com/econoday-news-articles/page/33 (Dec 13-14 2022 meeting)"
+      ],
+      "notes": "Held as scheduled per sources; no unscheduled rate action found."
+    },
+    "2021": {
+      "dates": [
+        "2021-01-27",
+        "2021-03-17",
+        "2021-04-28",
+        "2021-06-16",
+        "2021-07-28",
+        "2021-09-22",
+        "2021-11-03",
+        "2021-12-15"
+      ],
+      "pressConference": "all",
+      "sep": [
+        "2021-03-17",
+        "2021-06-16",
+        "2021-09-22",
+        "2021-12-15"
+      ],
+      "confidence": "verified",
+      "sources": [
+        "https://www.federalreserve.gov/newsevents/pressreleases/monetary20200702a.htm (2021 schedule)",
+        "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm (2021 section; minutes of Jul 27-28 released Aug 18 2021)"
+      ],
+      "notes": ""
+    },
+    "2020": {
+      "dates": [
+        "2020-01-29",
+        "2020-03-15",
+        "2020-04-29",
+        "2020-06-10",
+        "2020-07-29",
+        "2020-09-16",
+        "2020-11-05",
+        "2020-12-16"
+      ],
+      "pressConference": "all scheduled meetings; also the unscheduled 2020-03-03 and 2020-03-15 actions",
+      "sep": [
+        "2020-06-10",
+        "2020-09-16",
+        "2020-12-16"
+      ],
+      "confidence": "verified for Jan 29, Mar 15, Apr 29, Jun 10, Sep 16, Nov 5 (Fed agendas/pages); likely for Jul 29 and Dec 16 (Fed tentative schedule + third party only)",
+      "sources": [
+        "https://www.federalreserve.gov/newsevents/pressreleases/monetary20190517a.htm (tentative 2020 schedule)",
+        "https://www.federalreserve.gov/monetarypolicy/fomcpresconf20200129.htm",
+        "https://www.federalreserve.gov/monetarypolicy/files/FOMC20200315Agenda.pdf",
+        "https://www.federalreserve.gov/monetarypolicy/files/FOMC20200429Agenda.pdf",
+        "https://www.federalreserve.gov/monetarypolicy/fomcpresconf20200610.htm",
+        "https://www.federalreserve.gov/monetarypolicy/files/FOMC20200916Agenda.pdf",
+        "https://primerate.fedprimerate.com/2019/09/usa-banks-banking-fed-fomc-meeting-schedule-2020.html"
+      ],
+      "notes": "The scheduled Mar 17-18 meeting was replaced by the unscheduled Sunday Mar 15 meeting (listed here because it was the March policy meeting; also in 'unscheduled'). No SEP in March 2020 (recalled, not verified). 2020-11-05 is a THURSDAY."
+    },
+    "2019": {
+      "dates": [
+        "2019-01-30",
+        "2019-03-20",
+        "2019-05-01",
+        "2019-06-19",
+        "2019-07-31",
+        "2019-09-18",
+        "2019-10-30",
+        "2019-12-11"
+      ],
+      "pressConference": "all",
+      "sep": [
+        "2019-03-20",
+        "2019-06-19",
+        "2019-09-18",
+        "2019-12-11"
+      ],
+      "confidence": "verified",
+      "sources": [
+        "https://www.federalreserve.gov/newsevents/pressreleases/monetary20180525a.htm",
+        "https://www.federalreserve.gov/publications/2019-ar-content.htm",
+        "https://www.federalreserve.gov/monetarypolicy/fomcpresconf20190320.htm",
+        "https://www.federalreserve.gov/monetarypolicy/fomcpresconf20190501.htm",
+        "https://www.federalreserve.gov/monetarypolicy/fomcpresconf20190918.htm",
+        "https://www.bnnbloomberg.ca/powell-to-hold-press-conferences-at-every-fomc-meeting-next-year-1.1092459"
+      ],
+      "notes": "First year with a press conference after every meeting."
+    },
+    "2018": {
+      "dates": [
+        "2018-01-31",
+        "2018-03-21",
+        "2018-05-02",
+        "2018-06-13",
+        "2018-08-01",
+        "2018-09-26",
+        "2018-11-08",
+        "2018-12-19"
+      ],
+      "pressConference": [
+        "2018-03-21",
+        "2018-06-13",
+        "2018-09-26",
+        "2018-12-19"
+      ],
+      "sep": [
+        "2018-03-21",
+        "2018-06-13",
+        "2018-09-26",
+        "2018-12-19"
+      ],
+      "confidence": "verified",
+      "sources": [
+        "https://www.federalreserve.gov/newsevents/pressreleases/monetary20170511b.htm",
+        "https://FEDERALRESERVE.GOV/monetarypolicy/files/FOMC20180613Agenda.pdf",
+        "https://FEDERALRESERVE.GOV/monetarypolicy/files/FOMC20180926Agenda.pdf",
+        "https://FEDERALRESERVE.GOV/monetarypolicy/files/FOMC20181219Agenda.pdf",
+        "https://www.forexlive.com/centralbank/!/another-sign-the-fed-is-watching-politics-closer-than-ever-20170511"
+      ],
+      "notes": "Press conferences ONLY after Mar, Jun, Sep, Dec meetings in 2018. 2018-11-08 is a THURSDAY (Wed-Thu meeting after the Nov 6 midterms)."
+    },
+    "2017": {
+      "dates": [
+        "2017-02-01",
+        "2017-03-15",
+        "2017-05-03",
+        "2017-06-14",
+        "2017-07-26",
+        "2017-09-20",
+        "2017-11-01",
+        "2017-12-13"
+      ],
+      "pressConference": [
+        "2017-03-15",
+        "2017-06-14",
+        "2017-09-20",
+        "2017-12-13"
+      ],
+      "sep": [
+        "2017-03-15",
+        "2017-06-14",
+        "2017-09-20",
+        "2017-12-13"
+      ],
+      "confidence": "verified",
+      "sources": [
+        "https://www.federalreserve.gov/newsevents/pressreleases/monetary20160628a.htm",
+        "https://www.federalreserve.gov/newsevents/2017-february.htm",
+        "https://www.federalreserve.gov/newsevents/2017-july.htm",
+        "https://www.federalreserve.gov/newsevents/2017-november.htm",
+        "https://www.federalreserve.gov/monetarypolicy/fomcpresconf20170920.htm",
+        "https://www.haver.com/articles/archive-economy-fomc-lifts-interest-rates"
+      ],
+      "notes": "Press conferences ONLY after Mar, Jun, Sep, Dec meetings in 2017 (Yellen)."
+    },
+    "unscheduled": [
+      {
+        "date": "2019-10-11",
+        "kind": "notation vote announcing reserve-management Treasury bill purchases (~$60bn/month)",
+        "rateChange": false,
+        "time": "unverified",
+        "confidence": "verified",
+        "sources": [
+          "https://www.newyorkfed.org/markets/treasury-reinvestments-purchases-faq-191011",
+          "https://mondovisione.com/news/federal-reserve-statement-regarding-monetary-policy-implementation-20191011/"
+        ],
+        "notes": "Follows an unscheduled FOMC videoconference on Fri 2019-10-04 (no announcement that day). Balance-sheet/plumbing action, not a rate decision."
+      },
+      {
+        "date": "2020-03-03",
+        "kind": "emergency intermeeting rate cut, -50bp to 1.00-1.25%, with a press conference",
+        "rateChange": true,
+        "time": "statement mid-morning ET (commonly cited 10:00; NOT verified here); press conference followed late morning",
+        "confidence": "verified (date and action)",
+        "sources": [
+          "https://www.bankrate.com/banking/federal-reserve/fed-issues-emergency-rate-cut-march-2020",
+          "https://www.federalreserve.gov/monetarypolicy/files/FOMC20200302confcall.pdf",
+          "https://fraser.stlouisfed.org/title/677/item/586834/content/pdf/FOMCpresconf20200303_final"
+        ],
+        "notes": "Decided on a 2020-03-02 evening conference call; announced 2020-03-03."
+      },
+      {
+        "date": "2020-03-15",
+        "kind": "unscheduled Sunday meeting: cut to 0-0.25% and $700bn asset purchases; Powell press call that evening",
+        "rateChange": true,
+        "time": "evening ET, markets closed (statement ~17:00, press call ~18:00-18:30 per news; NOT verified)",
+        "confidence": "verified (date and action)",
+        "sources": [
+          "https://www.federalreserve.gov/monetarypolicy/files/FOMC20200315Agenda.pdf",
+          "https://www.federalreserve.gov/newsevents/pressreleases/monetary20200408a.htm",
+          "https://www.bankrate.com/banking/federal-reserve/fed-second-emergency-cut-zero-rates-coronavirus",
+          "https://wgbh.org/news/national/2020-03-15/fed-cuts-rates-to-near-zero-as-coronavirus-rips-through-economy"
+        ],
+        "notes": "Replaced the scheduled Mar 17-18 meeting. Sunday: impact lands at the Sunday-evening futures/FX open, not inside a weekday session."
+      },
+      {
+        "date": "2020-03-23",
+        "kind": "announcement of open-ended ('in the amounts needed') Treasury and MBS purchases",
+        "rateChange": false,
+        "time": "pre-market ET (commonly cited 08:00; NOT verified)",
+        "confidence": "likely (action and date); whether a formal FOMC meeting preceded it not verified",
+        "sources": [
+          "https://www.fool.com/investing/2020/03/23/federal-reserve-pledges-unlimited-quantitative-eas.aspx",
+          "https://www.wealthmanagement.com/fixed-income/fed-unbound-all-us-central-bank-s-corona-related-moves"
+        ],
+        "notes": "Major market mover but not a rate decision."
+      }
+    ]
+  },
+  "pce": {
+    "2025": {
+      "dates": [
+        "2025-02-28",
+        "2025-03-28",
+        "2025-04-30",
+        "2025-05-30",
+        "2025-06-27",
+        "2025-07-31",
+        "2025-08-29",
+        "2025-09-26",
+        "2025-12-05"
+      ],
+      "unsourcedCandidates": [
+        "2025-01-31"
+      ],
+      "times": {
+        "2025-04-30": "10:00 (GDP advance at 08:30 the same day)",
+        "2025-12-05": "10:00",
+        "others": "08:30"
+      },
+      "confidence": "verified (Feb 28, Mar 28, Jul 31, Sep 26, Dec 5); likely (Apr 30, May 30, Jun 27, Aug 29 - BEA 2025 schedule via one extract each); Jan 31 unverified",
+      "sources": [
+        "https://www.bea.gov/sites/default/files/2024-09/2025-News-Release-Schedule.pdf (Mar 28 08:30, Apr 30 10:00, May 30 08:30, Jun 27 08:30)",
+        "https://www.bea.gov/news/schedule/full-2025 (Feb 28, Jul 31, Aug 29 at 08:30)",
+        "https://mnimarkets.com/articles/the-macro-week-ahead-2nd-q4-gdp-and-january-pce-reports-1740167095413 (Feb 28)",
+        "https://www.calculatedriskblog.com/2025/03/friday-personal-income-outlays.html (Mar 28 08:30)",
+        "https://www.jec.senate.gov/public/vendor/_accounts/JEC-R/expenditures/Monthly%20Expenditures%20Update%20(PDF).pdf (June data, Jul 31)",
+        "https://www.bea.gov/news/2025/personal-income-and-outlays-august-2025 and https://www.calculatedriskblog.com/2025/09/personal-income-increased-04-in-august.html (Sep 26 08:30)",
+        "https://www.metalsmine.com/news/1372418-us-sept-pce-personal-income-report-rescheduled-for (Sep data moved to Dec 5 10:00)",
+        "https://bea.gov/news/blog/2025-12-18/economic-release-update-personal-income-and-outlays-september-2025",
+        "https://bea.gov/news/blog/2026-01-07/economic-release-schedule-updates-gdp-personal-income-and-outlays",
+        "https://www.bea.gov/news/2026/personal-income-and-outlays-december-2025"
+      ],
+      "notes": "2025-03-28: one extract claimed 10:00 but the BEA schedule PDF and CalculatedRisk both say 08:30 - use 08:30. Shutdown: September data (scheduled Oct 31) released Fri Dec 5 at 10:00. On Dec 23 2025 BEA issued a DATA-ONLY update of Jul-Sep PIO alongside the initial Q3 GDP estimate (no news release) - treat as a minor event. October data (scheduled Nov 26) and November data (scheduled Dec 19) were merged into one release on 2026-01-22 at 10:00. December 2025 data (scheduled 2026-01-29) released 2026-02-20 at 08:30. There was no PIO release in November 2025 at all."
+    }
+  },
+  "holidays": {
+    "2017": {
+      "dates": [
+        "2017-01-02",
+        "2017-01-16",
+        "2017-02-20",
+        "2017-05-29",
+        "2017-07-04",
+        "2017-09-04",
+        "2017-10-09",
+        "2017-11-10",
+        "2017-11-23",
+        "2017-12-25"
+      ],
+      "additionalClosures": [],
+      "confidence": "likely",
+      "sources": [
+        "python-holidays 0.106 (PyPI, holidays.US public category) - computed list, cross-checked against the statutory observed-day rule (5 U.S.C. 6103; Sat->Fri, Sun->Mon). OPM pages were not reachable.",
+        "Sanity check: the same package reproduces the file's US_HOLIDAYS_2026 exactly."
+      ],
+      "notes": "Statutory federal holidays as OBSERVED (weekday) only. Jan 1 (Sun) observed Mon Jan 2; Nov 11 (Sat) observed Fri Nov 10. Inauguration Day Fri Jan 20 2017 was a holiday only for federal employees in the DC area - not included. 'additionalClosures' are one-off executive-order closures; they are NOT federal holidays but shifted some weekly releases (e.g. jobless claims) and can matter for business-day rules."
+    },
+    "2018": {
+      "dates": [
+        "2018-01-01",
+        "2018-01-15",
+        "2018-02-19",
+        "2018-05-28",
+        "2018-07-04",
+        "2018-09-03",
+        "2018-10-08",
+        "2018-11-12",
+        "2018-11-22",
+        "2018-12-25"
+      ],
+      "additionalClosures": [
+        {
+          "date": "2018-12-05",
+          "why": "national day of mourning, President G.H.W. Bush (federal offices and US stock markets closed)",
+          "confidence": "unverified"
+        },
+        {
+          "date": "2018-12-24",
+          "why": "executive order closing federal agencies (Christmas Eve)",
+          "confidence": "unverified"
+        }
+      ],
+      "confidence": "likely",
+      "sources": [
+        "python-holidays 0.106 (PyPI, holidays.US public category) - computed list, cross-checked against the statutory observed-day rule (5 U.S.C. 6103; Sat->Fri, Sun->Mon). OPM pages were not reachable.",
+        "Sanity check: the same package reproduces the file's US_HOLIDAYS_2026 exactly."
+      ],
+      "notes": "Statutory federal holidays as OBSERVED (weekday) only. Nov 11 (Sun) observed Mon Nov 12. 'additionalClosures' are one-off executive-order closures; they are NOT federal holidays but shifted some weekly releases (e.g. jobless claims) and can matter for business-day rules."
+    },
+    "2019": {
+      "dates": [
+        "2019-01-01",
+        "2019-01-21",
+        "2019-02-18",
+        "2019-05-27",
+        "2019-07-04",
+        "2019-09-02",
+        "2019-10-14",
+        "2019-11-11",
+        "2019-11-28",
+        "2019-12-25"
+      ],
+      "additionalClosures": [
+        {
+          "date": "2019-12-24",
+          "why": "executive order closing federal agencies (Christmas Eve)",
+          "confidence": "unverified"
+        }
+      ],
+      "confidence": "likely",
+      "sources": [
+        "python-holidays 0.106 (PyPI, holidays.US public category) - computed list, cross-checked against the statutory observed-day rule (5 U.S.C. 6103; Sat->Fri, Sun->Mon). OPM pages were not reachable.",
+        "Sanity check: the same package reproduces the file's US_HOLIDAYS_2026 exactly."
+      ],
+      "notes": "Statutory federal holidays as OBSERVED (weekday) only.  'additionalClosures' are one-off executive-order closures; they are NOT federal holidays but shifted some weekly releases (e.g. jobless claims) and can matter for business-day rules."
+    },
+    "2020": {
+      "dates": [
+        "2020-01-01",
+        "2020-01-20",
+        "2020-02-17",
+        "2020-05-25",
+        "2020-07-03",
+        "2020-09-07",
+        "2020-10-12",
+        "2020-11-11",
+        "2020-11-26",
+        "2020-12-25"
+      ],
+      "additionalClosures": [
+        {
+          "date": "2020-12-24",
+          "why": "executive order closing federal agencies (Christmas Eve)",
+          "confidence": "unverified"
+        }
+      ],
+      "confidence": "likely",
+      "sources": [
+        "python-holidays 0.106 (PyPI, holidays.US public category) - computed list, cross-checked against the statutory observed-day rule (5 U.S.C. 6103; Sat->Fri, Sun->Mon). OPM pages were not reachable.",
+        "Sanity check: the same package reproduces the file's US_HOLIDAYS_2026 exactly."
+      ],
+      "notes": "Statutory federal holidays as OBSERVED (weekday) only. Jul 4 (Sat) observed Fri Jul 3 - which is why NFP was Thu Jul 2 2020. 'additionalClosures' are one-off executive-order closures; they are NOT federal holidays but shifted some weekly releases (e.g. jobless claims) and can matter for business-day rules."
+    },
+    "2021": {
+      "dates": [
+        "2021-01-01",
+        "2021-01-18",
+        "2021-02-15",
+        "2021-05-31",
+        "2021-06-18",
+        "2021-07-05",
+        "2021-09-06",
+        "2021-10-11",
+        "2021-11-11",
+        "2021-11-25",
+        "2021-12-24",
+        "2021-12-31"
+      ],
+      "additionalClosures": [],
+      "confidence": "likely",
+      "sources": [
+        "python-holidays 0.106 (PyPI, holidays.US public category) - computed list, cross-checked against the statutory observed-day rule (5 U.S.C. 6103; Sat->Fri, Sun->Mon). OPM pages were not reachable.",
+        "Sanity check: the same package reproduces the file's US_HOLIDAYS_2026 exactly."
+      ],
+      "notes": "Statutory federal holidays as OBSERVED (weekday) only. Juneteenth became a federal holiday on 2021-06-17 and was first observed Fri 2021-06-18 (one day's notice). Jul 4 (Sun) observed Mon Jul 5. Dec 25 (Sat) observed Fri Dec 24. New Year's Day 2022 (Sat) observed Fri 2021-12-31 - it belongs in the 2021 list. Inauguration Day Wed Jan 20 2021 was DC-area only - not included. 'additionalClosures' are one-off executive-order closures; they are NOT federal holidays but shifted some weekly releases (e.g. jobless claims) and can matter for business-day rules."
+    },
+    "2022": {
+      "dates": [
+        "2022-01-17",
+        "2022-02-21",
+        "2022-05-30",
+        "2022-06-20",
+        "2022-07-04",
+        "2022-09-05",
+        "2022-10-10",
+        "2022-11-11",
+        "2022-11-24",
+        "2022-12-26"
+      ],
+      "additionalClosures": [],
+      "confidence": "likely",
+      "sources": [
+        "python-holidays 0.106 (PyPI, holidays.US public category) - computed list, cross-checked against the statutory observed-day rule (5 U.S.C. 6103; Sat->Fri, Sun->Mon). OPM pages were not reachable.",
+        "Sanity check: the same package reproduces the file's US_HOLIDAYS_2026 exactly."
+      ],
+      "notes": "Statutory federal holidays as OBSERVED (weekday) only. No Jan 1 holiday on a 2022 weekday (observed 2021-12-31). Juneteenth (Sun) observed Mon Jun 20. Dec 25 (Sun) observed Mon Dec 26. 'additionalClosures' are one-off executive-order closures; they are NOT federal holidays but shifted some weekly releases (e.g. jobless claims) and can matter for business-day rules."
+    },
+    "2023": {
+      "dates": [
+        "2023-01-02",
+        "2023-01-16",
+        "2023-02-20",
+        "2023-05-29",
+        "2023-06-19",
+        "2023-07-04",
+        "2023-09-04",
+        "2023-10-09",
+        "2023-11-10",
+        "2023-11-23",
+        "2023-12-25"
+      ],
+      "additionalClosures": [],
+      "confidence": "likely",
+      "sources": [
+        "python-holidays 0.106 (PyPI, holidays.US public category) - computed list, cross-checked against the statutory observed-day rule (5 U.S.C. 6103; Sat->Fri, Sun->Mon). OPM pages were not reachable.",
+        "Sanity check: the same package reproduces the file's US_HOLIDAYS_2026 exactly."
+      ],
+      "notes": "Statutory federal holidays as OBSERVED (weekday) only. Jan 1 (Sun) observed Mon Jan 2; Nov 11 (Sat) observed Fri Nov 10. 'additionalClosures' are one-off executive-order closures; they are NOT federal holidays but shifted some weekly releases (e.g. jobless claims) and can matter for business-day rules."
+    },
+    "2024": {
+      "dates": [
+        "2024-01-01",
+        "2024-01-15",
+        "2024-02-19",
+        "2024-05-27",
+        "2024-06-19",
+        "2024-07-04",
+        "2024-09-02",
+        "2024-10-14",
+        "2024-11-11",
+        "2024-11-28",
+        "2024-12-25"
+      ],
+      "additionalClosures": [
+        {
+          "date": "2024-12-24",
+          "why": "executive order (Biden) giving federal employees Christmas Eve off",
+          "confidence": "likely (one passing mention)"
+        }
+      ],
+      "confidence": "likely",
+      "sources": [
+        "python-holidays 0.106 (PyPI, holidays.US public category) - computed list, cross-checked against the statutory observed-day rule (5 U.S.C. 6103; Sat->Fri, Sun->Mon). OPM pages were not reachable.",
+        "Sanity check: the same package reproduces the file's US_HOLIDAYS_2026 exactly."
+      ],
+      "notes": "Statutory federal holidays as OBSERVED (weekday) only.  'additionalClosures' are one-off executive-order closures; they are NOT federal holidays but shifted some weekly releases (e.g. jobless claims) and can matter for business-day rules."
+    },
+    "2025": {
+      "dates": [
+        "2025-01-01",
+        "2025-01-20",
+        "2025-02-17",
+        "2025-05-26",
+        "2025-06-19",
+        "2025-07-04",
+        "2025-09-01",
+        "2025-10-13",
+        "2025-11-11",
+        "2025-11-27",
+        "2025-12-25"
+      ],
+      "additionalClosures": [
+        {
+          "date": "2025-01-09",
+          "why": "national day of mourning, President Carter: executive order of 2024-12-30 closed all executive departments; OPM treated it as a holiday for pay; stock exchanges closed",
+          "confidence": "verified",
+          "sources": [
+            "https://www.eenews.net/articles/federal-agencies-to-close-jan-9-for-carters-funeral/",
+            "https://www.fedsmith.com/2024/12/30/day-of-mourning-jimmy-carter/"
+          ]
+        },
+        {
+          "date": "2025-12-24",
+          "why": "Executive Order 14371 (signed 2025-12-18) closing executive departments",
+          "confidence": "verified",
+          "sources": [
+            "https://www.eenews.net/articles/trump-gives-federal-workers-christmas-eve-and-dec-26-off/",
+            "https://seekingalpha.com/news/4533123-trump-closes-federal-government-on-christmas-eve-dec-26"
+          ]
+        },
+        {
+          "date": "2025-12-26",
+          "why": "Executive Order 14371 (signed 2025-12-18) closing executive departments",
+          "confidence": "verified",
+          "sources": [
+            "https://www.eenews.net/articles/trump-gives-federal-workers-christmas-eve-and-dec-26-off/",
+            "https://seekingalpha.com/news/4533123-trump-closes-federal-government-on-christmas-eve-dec-26"
+          ]
+        }
+      ],
+      "confidence": "likely",
+      "sources": [
+        "python-holidays 0.106 (PyPI, holidays.US public category) - computed list, cross-checked against the statutory observed-day rule (5 U.S.C. 6103; Sat->Fri, Sun->Mon). OPM pages were not reachable.",
+        "Sanity check: the same package reproduces the file's US_HOLIDAYS_2026 exactly."
+      ],
+      "notes": "Statutory federal holidays as OBSERVED (weekday) only. Inauguration Day Mon Jan 20 2025 coincided with MLK Day. 'additionalClosures' are one-off executive-order closures; they are NOT federal holidays but shifted some weekly releases (e.g. jobless claims) and can matter for business-day rules."
+    }
+  },
+  "exceptions": [
+    {
+      "event": "nfp",
+      "reference": "Sep 2025",
+      "scheduled": "2025-10-03",
+      "actual": "2025-11-20",
+      "note": "Thursday 08:30. Shutdown Oct 1 - Nov 12 2025.",
+      "confidence": "verified"
+    },
+    {
+      "event": "nfp",
+      "reference": "Oct 2025",
+      "scheduled": "2025-11-07",
+      "actual": null,
+      "note": "CANCELLED. No October Employment Situation release. October household survey never collected (no October unemployment rate exists); October payroll (establishment) data published inside the November report on 2025-12-16.",
+      "confidence": "verified"
+    },
+    {
+      "event": "nfp",
+      "reference": "Nov 2025",
+      "scheduled": "2025-12-05",
+      "actual": "2025-12-16",
+      "note": "Tuesday 08:30; included October establishment data.",
+      "confidence": "verified"
+    },
+    {
+      "event": "cpi",
+      "reference": "Sep 2025",
+      "scheduled": "2025-10-15",
+      "actual": "2025-10-24",
+      "note": "Friday 08:30; BLS recalled staff because the Social Security COLA depends on it.",
+      "confidence": "verified"
+    },
+    {
+      "event": "cpi",
+      "reference": "Oct 2025",
+      "scheduled": "2025-11 (exact original date not sourced)",
+      "actual": null,
+      "note": "CANCELLED. No all-items or core CPI for October 2025 was ever published; some non-survey October series came out with the November release.",
+      "confidence": "verified"
+    },
+    {
+      "event": "cpi",
+      "reference": "Nov 2025",
+      "scheduled": "2025-12-10",
+      "actual": "2025-12-18",
+      "note": "Thursday 08:30, after the Dec 10 FOMC; no 1-month changes where October was missing.",
+      "confidence": "verified"
+    },
+    {
+      "event": "pce",
+      "reference": "Sep 2025",
+      "scheduled": "2025-10-31",
+      "actual": "2025-12-05",
+      "note": "10:00 ET, not 08:30. Jul-Sep data then revised in a data-only update on 2025-12-23 with the initial Q3 GDP estimate (no news release).",
+      "confidence": "verified"
+    },
+    {
+      "event": "pce",
+      "reference": "Oct 2025",
+      "scheduled": "2025-11-26",
+      "actual": "2026-01-22",
+      "note": "Merged with November into one release, 10:00 ET.",
+      "confidence": "likely"
+    },
+    {
+      "event": "pce",
+      "reference": "Nov 2025",
+      "scheduled": "2025-12-19",
+      "actual": "2026-01-22",
+      "note": "Merged with October into one release, 10:00 ET.",
+      "confidence": "likely"
+    },
+    {
+      "event": "pce",
+      "reference": "Dec 2025",
+      "scheduled": "2026-01-29",
+      "actual": "2026-02-20",
+      "note": "08:30 ET.",
+      "confidence": "verified"
+    },
+    {
+      "event": "pce",
+      "reference": "Feb 2026",
+      "scheduled": "2026-03-27",
+      "actual": "2026-04-09",
+      "note": "08:30 ET. Outside the 2025 scope; BEA schedule still catching up. The file's 2026 PCE table only starts in July, so Jan-Jun 2026 PCE dates are missing there.",
+      "confidence": "likely"
+    },
+    {
+      "event": "nfp",
+      "reference": "Jan 2026",
+      "scheduled": "2026-02-06",
+      "actual": "2026-02-11",
+      "note": "AFFECTS THE LIVE 2026 TABLE in src/news-calendar.js, which still lists 2026-02-06. Brief partial federal shutdown from 2026-01-31. Wednesday 08:30; included annual benchmark revisions.",
+      "confidence": "verified",
+      "sources": [
+        "https://www.bloomberg.com/news/articles/2026-02-04/january-us-jobs-report-rescheduled-for-feb-11-bls-says",
+        "https://www.chase.com/personal/investments/learning-and-insights/article/january-2026-jobs-report-postponed",
+        "https://www.abnamro.com/research/en/our-research/key-macro-events-9-13-february-2026"
+      ]
+    },
+    {
+      "event": "cpi",
+      "reference": "Jan 2026",
+      "scheduled": "2026-02-11",
+      "actual": "2026-02-13",
+      "note": "AFFECTS THE LIVE 2026 TABLE, which still lists 2026-02-11. Same brief shutdown. Friday 08:30.",
+      "confidence": "likely",
+      "sources": [
+        "https://www.mexc.com/news/639090 (CNBC via MEXC)",
+        "https://www.abnamro.com/research/en/our-research/key-macro-events-9-13-february-2026"
+      ]
+    },
+    {
+      "event": "fomc",
+      "reference": "Mar 2020",
+      "scheduled": "2020-03-18",
+      "actual": "2020-03-15",
+      "note": "Scheduled Mar 17-18 meeting replaced by an unscheduled Sunday meeting; decision announced Sunday evening ET.",
+      "confidence": "verified"
+    },
+    {
+      "event": "fomc",
+      "reference": "2025",
+      "scheduled": "2025-10-29",
+      "actual": "2025-10-29",
+      "note": "Not an exception: the Fed is self-funded and met during the shutdown. Listed only to make that explicit.",
+      "confidence": "verified"
+    },
+    {
+      "event": "pce",
+      "reference": "Dec 2018 - Jan 2019",
+      "scheduled": null,
+      "actual": null,
+      "note": "Out of scope but relevant if PCE is ever back-filled: BEA (not BLS) was closed in the Dec 22 2018 - Jan 25 2019 shutdown, so PIO releases in early 2019 were delayed/merged. Dates NOT researched here.",
+      "confidence": "unverified"
+    }
+  ]
+}
