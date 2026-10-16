@@ -16,8 +16,9 @@
  *    trade's favour), so "momentum with the trade" is one feature for buys and
  *    sells alike, and long and short rows can be pooled with mirrored features.
  *  - NEVER LOOKS AHEAD. Only the bars handed in, and those must all have closed
- *    by `nowMs`; a bar still forming, or a history running past the engine's
- *    window, is refused with an error rather than quietly read.
+ *    by `nowMs`; a bar still forming is refused with an error rather than
+ *    quietly read. The engine's window is always the tail of that history, so
+ *    the two cannot end on different bars.
  *
  * Features exist for EVERY check, not only the ones the engine traded. A news
  * blackout or gold's dead zone makes analyse() return `stand-aside` or
@@ -33,17 +34,59 @@
  * learner reaches a live alert (the plan's rule 3), and a feature that looks
  * predictive on one stretch is the commonest way to fool yourself.
  *
+ * For the modules that store or learn from these numbers: a stored row is
+ * only comparable with rows made by the same definitions. FEATURES_VERSION is
+ * bumped whenever any definition here changes (a test hashes this file), so
+ * reads.mjs must put it in the read store's key and learn.mjs in the recipe it
+ * hashes into model.json. The heavy-tailed features (the ret_*, close_vs_* and
+ * level_* distances in ATRs) are stored as measured: dataset.mjs must clip them
+ * at each training fold's own 1st and 99th percentiles before standardising, so
+ * a few release bars cannot own the ridge coefficients. The two ratios with the
+ * longest tails are stored as logarithms here, which needs no fold to decide.
+ *
  * Pure: bars, the engine's analysis, the clock and the config are handed in.
  */
-import { analyse, WEIGHTS } from '../src/signal-engine.js';
-import { atr, valueAt } from '../src/indicators.js';
+import { analyse, WEIGHTS, MIN_BARS } from '../src/signal-engine.js';
+import { valueAt } from '../src/indicators.js';
 import { INSTRUMENTS } from '../src/instruments.js';
 import { tfInfo } from '../src/timeframes.js';
+import { closedBars } from '../src/data-feeds.js';
 import { sessionQuality, windowState, localHour, localWeekday } from '../src/sessions.js';
+
+/**
+ * The version of every definition in this file. Bump it (and re-pin the hash
+ * in test/features.test.mjs) whenever a feature's meaning changes — a new
+ * window, a new null rule, a new transform — so rows made before and after
+ * are never pooled, and a model fitted on one is never fed the other.
+ */
+export const FEATURES_VERSION = 1;
 
 /** Bars the engine reads, and bars of history behind it (desk/live.mjs ENGINE_BARS and FETCH_BARS). */
 export const WINDOW_BARS = 300;
 export const HISTORY_BARS = 1000;
+
+/**
+ * How many of the newest volatility values the ATR percentile ranks against:
+ * ten days of M15, the most a 999-bar history fills. A fixed count, not "the
+ * whole history", because the live feed's 1,000 bars usually include the bar
+ * still forming, leaving 999 closed, while the replay and the dataset hold
+ * 1,000; ranking over all of them made the same moment read differently live
+ * and in the dataset. The values ranked are a plain 14-bar mean of the true
+ * range over price, each from its own 14 bars: Wilder's ATR depends on where
+ * its series starts, and one bar's difference in the start was still moving
+ * the early values by 1% two hundred bars later.
+ */
+export const ATR_RANK_BARS = 960;
+
+/**
+ * The hour bands and weekdays are London's, whatever the user's window is set
+ * to: the plan defines the conditions as London 08–10 … 14–16, and a model
+ * trained on London bands must be fed London bands live.
+ */
+export const BANDS_TZ = 'Europe/London';
+
+/** A zero-volume bar has relative volume 0, whose logarithm is −∞; it is floored here. */
+const REL_VOLUME_FLOOR = 0.01;
 
 /** Every regime detectRegime() can return, in the order of the one-hot features. */
 export const REGIMES = Object.freeze(['trending', 'ranging', 'compressed', 'mixed']);
@@ -71,14 +114,15 @@ const DIRECTIONAL_BUCKETS = ['trend', 'momentum', 'structure', 'location', 'volu
  * The feature names, in a fixed order. A dataset row is these values in this
  * order, so the order is part of the file format: append, never reorder or
  * rename, or every stored row and fitted model silently means something else.
- * test/features.test.mjs pins it.
+ * test/features.test.mjs pins it. (Two names were changed once, to log_*, as
+ * FEATURES_VERSION 1 was set and before any row was stored.)
  */
 export const FEATURE_NAMES = Object.freeze([
   // The engine's own read, recomputed so it exists for every state.
   'net', 'confidence',
   'b_trend', 'b_momentum', 'b_structure', 'b_location', 'b_volume', 'volume_abstain',
   // Volatility: whether the conditions suit a scalp at all. Directionless.
-  'b_volatility', 'atr_change_1h', 'bb_width_pctile', 'adx',
+  'b_volatility', 'log_atr_change_1h', 'bb_width_pctile', 'adx',
   'atr_over_price', 'atr_pctile',
   // Regime, as the engine named it.
   'regime_trending', 'regime_ranging', 'regime_compressed', 'regime_mixed',
@@ -92,7 +136,7 @@ export const FEATURE_NAMES = Object.freeze([
   'bar_range', 'bar_body',
   // Room to the nearest clustered level, from a buyer's point of view.
   'level_ahead', 'level_behind', 'level_ahead_none', 'level_behind_none',
-  'rel_volume',
+  'log_rel_volume',
   // When.
   ...HOUR_BANDS.map((b) => b.key),
   ...WEEKDAYS.map((d) => d.key),
@@ -130,27 +174,50 @@ export const SWAPPED = Object.freeze([
  * engine itself could not read the chart (fewer than its minimum bars), every
  * feature is null: such checks are skipped by the watcher anyway.
  */
+const ATR_ZERO = 'or ATR is zero (a frozen feed), when no distance can be put in ATRs';
 export const WHY_NULL = Object.freeze({
-  atr_change_1h: 'needs ATR from an hour earlier, which the first bars of the window do not have',
+  log_atr_change_1h: 'needs a non-zero ATR now and an hour earlier, which the first bars of the window (or a frozen feed) do not have',
   bb_width_pctile: 'needs more than 20 Bollinger widths in the engine\'s lookback',
-  adx: 'needs about 28 bars before ADX exists',
-  atr_pctile: 'needs at least 100 bars of ATR in the history to rank against',
+  adx: 'needs about 28 bars before ADX exists, and some movement: a frozen feed has none to measure',
+  atr_pctile: 'needs at least 115 bars of history, for 100 fourteen-bar ranges to rank against',
   efficiency: 'needs 21 closes',
   h1_bias: 'needs 30 closed H1 bars behind the check',
   h4_bias: 'needs 30 closed H4 bars (480 M15 bars) behind the check',
   htf_agree: 'needs both higher-timeframe biases',
-  ret_1: 'needs 2 bars', ret_4: 'needs 5 bars', ret_16: 'needs 17 bars', ret_96: 'needs 97 bars',
-  close_vs_ema21: 'needs 21 bars', close_vs_ema50: 'needs 50 bars',
-  rsi_m50: 'needs 15 bars', bb_pctb_m05: 'needs 20 bars',
-  level_ahead: 'no clustered level above price in the window (level_ahead_none is then 1)',
-  level_behind: 'no clustered level below price in the window (level_behind_none is then 1)',
-  rel_volume: 'the newest bar has fewer than two earlier same-slot bars to compare with, or the feed has no volume',
-  // Any ATR-scaled feature is also null when ATR is zero or missing (a frozen feed).
+  ret_1: `needs 2 bars, ${ATR_ZERO}`, ret_4: `needs 5 bars, ${ATR_ZERO}`,
+  ret_16: `needs 17 bars, ${ATR_ZERO}`, ret_96: `needs 97 bars, ${ATR_ZERO}`,
+  close_vs_ema21: `needs 21 bars, ${ATR_ZERO}`, close_vs_ema50: `needs 50 bars, ${ATR_ZERO}`,
+  close_vs_vwap: `needs a session VWAP, ${ATR_ZERO}`,
+  rsi_m50: 'needs 15 bars', bb_pctb_m05: 'needs 20 bars, or a window so flat the bands have no width',
+  bar_range: ATR_ZERO.replace(/^or /, ''), bar_body: ATR_ZERO.replace(/^or /, ''),
+  level_ahead: `no clustered level above price in the window (level_ahead_none is then 1), ${ATR_ZERO}`,
+  level_behind: `no clustered level below price in the window (level_behind_none is then 1), ${ATR_ZERO}`,
+  log_rel_volume: 'the newest bar has fewer than two earlier same-slot bars to compare with, or the feed has no volume',
 });
 
 const NUM = (x) => (typeof x === 'number' && Number.isFinite(x) ? x : null);
 
 /* -------------------------------------------------------- the re-read */
+
+/**
+ * The history and window every function here reads: the last HISTORY_BARS of
+ * `closed`, and the last WINDOW_BARS of those. Both functions cut the same way,
+ * so a dataset may hand in all bars up to the check and get exactly what the
+ * watcher's 1,000-bar fetch gives (and stay linear: nothing reads the rest).
+ * `closed` is required. A missing history used to fall back to the window,
+ * which ranked the ATR percentile over 300 bars instead of 1,000 without a word.
+ */
+function historyOf(args, who) {
+  if (args.window !== undefined) {
+    throw new Error(`${who} takes no window: it is always the last ${WINDOW_BARS} bars of \`closed\``);
+  }
+  const { closed } = args;
+  if (!Array.isArray(closed) || !closed.length) {
+    throw new Error(`${who} needs \`closed\`: the closed bars up to the check (it reads the last ${HISTORY_BARS})`);
+  }
+  const hist = closed.slice(-HISTORY_BARS);
+  return { hist, win: hist.slice(-WINDOW_BARS) };
+}
 
 /**
  * analyse() on the watcher's inputs, with the two overrides that withhold a
@@ -160,40 +227,56 @@ const NUM = (x) => (typeof x === 'number' && Number.isFinite(x) ? x : null);
  * window, the same 1,000-bar history for the higher timeframes and relative
  * volume, the same final-stretch flag, the same spread.
  *
- * FEATURES ONLY. The result must never be traded, alerted or shown: it is
- * what the engine saw at a moment the live desk would have sat out.
+ * FEATURES ONLY, and the result says so: { state: 'features-only',
+ * featuresOnly: true, price, atr, regime, htf, buckets, indicators }. The
+ * bias, stop, targets, spread verdict and wording are dropped, because this is
+ * what the engine saw at a moment the live desk may have sat out. Handing it to
+ * toPlan(), outcome() or a formatter would name or score a lean the desk
+ * withheld (rule 7; decisions 2 and 22), or give a blocked row a label (a).
+ * With too few bars it is { state: 'insufficient-data', featuresOnly: true }.
  */
-export function analysisForFeatures({ window = null, closed, pair, cfg, nowMs, tf = null, spreadNum = null }) {
+export function analysisForFeatures(args) {
+  const { pair, cfg, nowMs, tf = null, spreadNum = null } = args;
   const t = tfInfo(tf ?? cfg.timeframe);
   const inst = INSTRUMENTS[pair];
   if (!inst) throw new Error(`unknown instrument ${pair}`);
-  const hist = closed || window || [];
-  const win = window || hist.slice(-WINDOW_BARS);
-  checkInputs(win, hist, nowMs, t);
+  const { hist, win } = historyOf(args, 'analysisForFeatures');
+  checkInputs(hist, nowMs, t);
   const lastStretch = windowState(nowMs, cfg.window).phase === 'last-30';
   let session = { ...sessionQuality(nowMs, pair, cfg.window), lastStretch };
   if (session.band === 'dead') session = { ...session, band: 'red' };
-  return analyse({
+  const a = analyse({
     bars: win, htfBars: hist, instrument: inst,
     spread: spreadNum ?? inst.typicalSpread.observed,
     blackout: null, session, nowMs, timeframe: t.id,
   });
+  if (a.state === 'insufficient-data') return { state: 'insufficient-data', featuresOnly: true };
+  const { price, atr: atrNow, regime, htf, buckets, indicators } = a;
+  return { state: 'features-only', featuresOnly: true, price, atr: atrNow, regime, htf, buckets, indicators };
 }
 
 /**
- * The look-ahead guard. The window's last bar must have closed by `nowMs`, and
- * the history must end on that same bar — a history running further would put
- * later bars into the H4 bias, relative volume and the ATR percentile.
+ * The look-ahead and sanity guard, over the history actually read. Bars must
+ * rise strictly in time (a duplicated bar, the commonest merge bug in an
+ * incremental cache, would set ret_1 to 0 and drag the ATR); the last one must
+ * have closed by `nowMs`; and `nowMs` must be no more than two bars after that
+ * close — liveRead's own 'stale' rule — or the hour band and weekday would
+ * describe a moment the bars do not.
  */
-function checkInputs(window, closed, nowMs, t) {
-  if (!window.length) return;
-  const last = window[window.length - 1];
+function checkInputs(hist, nowMs, t) {
   if (!Number.isFinite(nowMs)) throw new Error('features need the moment of the check (nowMs)');
-  if (last.t + t.minutes * 60000 > nowMs) {
+  for (let i = 1; i < hist.length; i++) {
+    if (!(hist[i].t > hist[i - 1].t)) {
+      throw new Error(`bars must rise strictly in time; the bar at ${new Date(hist[i].t).toISOString()} repeats or goes back`);
+    }
+  }
+  const last = hist[hist.length - 1];
+  const closeMs = last.t + t.minutes * 60000;
+  if (closeMs > nowMs) {
     throw new Error(`the bar opened at ${new Date(last.t).toISOString()} had not closed by the check; pass closed bars only`);
   }
-  if (closed && closed.length && closed[closed.length - 1].t !== last.t) {
-    throw new Error('the history must end on the same bar as the engine\'s window');
+  if (nowMs - closeMs > 2 * t.minutes * 60000) {
+    throw new Error(`the newest bar closed at ${new Date(closeMs).toISOString()}, more than two bars before the check: the history is stale for this moment`);
   }
 }
 
@@ -244,32 +327,71 @@ export function engineScore(analysis, { windowLength, lastStretch = false }) {
 const allNull = () => Object.fromEntries(FEATURE_NAMES.map((n) => [n, null]));
 
 /**
+ * The mean true range of each `period` bars over that bar's close, for every
+ * bar with `period` true ranges behind it. Each mean is summed afresh from its
+ * own bars, never as a running total, so a value depends on those bars alone
+ * and is bit-for-bit the same whatever the history started on.
+ */
+function rangeOverPrice(bars, period) {
+  const tr = [];
+  for (let i = 1; i < bars.length; i++) {
+    const b = bars[i], pc = bars[i - 1].c;
+    tr.push(Math.max(b.h - b.l, Math.abs(b.h - pc), Math.abs(b.l - pc)));
+  }
+  const out = [];
+  for (let i = period - 1; i < tr.length; i++) {
+    let sum = 0;
+    for (let j = i - period + 1; j <= i; j++) sum += tr[j];
+    const c = bars[i + 1].c;
+    if (c > 0) out.push(sum / period / c);
+  }
+  return out;
+}
+
+/**
  * The features of one check: { [name]: number | null }, keys in FEATURE_NAMES
- * order. `window` is the engine's window (the last 300 closed bars), `closed`
- * the history behind it (up to 1,000 closed bars, ending on the same bar),
+ * order. `closed` is the closed bars up to and including the check's bar (the
+ * last 1,000 are read; the engine's window is the last 300 of those),
  * `analysis` analyse()'s result on that window — from the live path or from
  * analysisForFeatures(), the two give the same features — and `nowMs` the
  * moment of the check (bar close + 20 s on the watcher). `pair` is accepted
  * so a caller can hand both functions the same arguments; no feature depends
  * on it, which is the point of being price-free: one learner can read both.
+ *
+ * It refuses rather than guesses. No `closed`, no analysis (liveRead's
+ * 'blocked' and 'no-data' results carry none: use analysisForFeatures), an
+ * analysis without buckets, or one made on a different window, all throw. The
+ * all-null row is kept for one case only, an analysis whose state is
+ * 'insufficient-data' on a window that really is too short: a missing input
+ * must never look like a genuine "the engine could not read" row, or the
+ * dataset would quietly impute every feature on it.
  */
-export function featuresAt({ window = null, closed = null, analysis, nowMs, cfg, pair = null, tf = null }) {
+export function featuresAt(args) {
+  const { analysis, nowMs, cfg, tf = null } = args;
   const t = tfInfo(tf ?? cfg.timeframe);
-  const hist = (closed || window || []).slice(-HISTORY_BARS);
-  const win = window || hist.slice(-WINDOW_BARS);
-  checkInputs(win, hist, nowMs, t);
+  const { hist, win } = historyOf(args, 'featuresAt');
+  checkInputs(hist, nowMs, t);
+  if (!analysis || typeof analysis.state !== 'string') {
+    throw new Error('featuresAt needs the engine\'s analysis of this window (a blocked or no-data live read has none: use analysisForFeatures)');
+  }
+  if (analysis.state === 'insufficient-data') {
+    if (win.length >= MIN_BARS) throw new Error(`the analysis says too few bars, but the window holds ${win.length}: it was not made on this window`);
+    return allNull();
+  }
+  const ind = analysis.indicators;
+  if (!ind || !analysis.buckets || !analysis.regime) {
+    throw new Error(`the analysis (state '${analysis.state}') carries no indicators, buckets or regime to describe`);
+  }
   const out = allNull();
-  const ind = analysis && analysis.indicators;
-  if (!win.length || !ind || !analysis.buckets || !analysis.regime) return out;
 
   const last = win[win.length - 1];
   const price = last.c;
   // The analysis must be of this window, or every feature below is of a different moment.
-  if (analysis.price !== undefined && analysis.price !== price) {
+  if (analysis.price !== price) {
     throw new Error('the analysis was not made on this window (its price differs from the last close)');
   }
   const a = NUM(analysis.atr);
-  const perAtr = (x) => (a && a > 0 && NUM(x) !== null ? x / a : null);
+  const perAtr = (x) => (a !== null && a > 0 && NUM(x) !== null ? x / a : null);
 
   // --- the engine's read
   const lastStretch = windowState(nowMs, cfg.window).phase === 'last-30';
@@ -281,21 +403,21 @@ export function featuresAt({ window = null, closed = null, analysis, nowMs, cfg,
 
   // --- volatility
   out.b_volatility = NUM(analysis.buckets.volatility && analysis.buckets.volatility.score);
-  const aPrev = valueAt(ind.atr, t.barsPerHour);
-  out.atr_change_1h = a && aPrev ? a / aPrev - 1 : null;
+  // As a logarithm: a release bar can multiply ATR several times in an hour,
+  // and a plain ratio's right tail would own the coefficient.
+  const aPrev = NUM(valueAt(ind.atr, t.barsPerHour));
+  out.log_atr_change_1h = a !== null && a > 0 && aPrev !== null && aPrev > 0 ? Math.log(a / aPrev) : null;
   out.bb_width_pctile = NUM(analysis.regime.widthPercentile);
   out.adx = NUM(analysis.regime.adx);
-  out.atr_over_price = a && price > 0 ? a / price : null;
-  // Where today's volatility sits in the last ~10 days' (1,000 M15 bars). The
-  // history's own ATR series is used, so the ranking is like with like; it
-  // counts the share of the history's values strictly below the newest, as the
-  // engine's Bollinger-width percentile does.
-  const histAtr = atr(hist, 14);
-  const ratios = [];
-  for (let i = 0; i < hist.length; i++) if (histAtr[i] !== null && hist[i].c > 0) ratios.push(histAtr[i] / hist[i].c);
-  if (ratios.length >= 100) {
-    const now = ratios[ratios.length - 1];
-    out.atr_pctile = ratios.filter((r) => r < now).length / ratios.length;
+  // A frozen feed's ATR is genuinely 0; only the divisions by it are undefined.
+  out.atr_over_price = a !== null && price > 0 ? a / price : null;
+  // Where today's volatility sits among the last ATR_RANK_BARS values of the
+  // history (see ATR_RANK_BARS for why a plain mean): the share strictly below
+  // the newest, as the engine's Bollinger-width percentile counts.
+  const vol = rangeOverPrice(hist, 14).slice(-ATR_RANK_BARS);
+  if (vol.length >= 100) {
+    const now = vol[vol.length - 1];
+    out.atr_pctile = vol.filter((v) => v < now).length / vol.length;
   }
 
   // --- regime
@@ -335,19 +457,35 @@ export function featuresAt({ window = null, closed = null, analysis, nowMs, cfg,
   out.level_ahead_none = above === null ? 1 : 0;
   out.level_behind_none = below === null ? 1 : 0;
 
-  // The NEWEST bar's relative volume. The engine's volume bucket reads the last
-  // bar that had a baseline (a known quirk, LEARNING-PLAN.md), which can be an
+  // The NEWEST bar's relative volume, as a logarithm (a ratio around 1 whose
+  // release bars run to 20–50×). The engine's volume bucket reads the last bar
+  // that had a baseline (a known quirk, LEARNING-PLAN.md), which can be an
   // older bar; the feature does not inherit that.
-  out.rel_volume = newest(ind.relVol);
+  const rv = newest(ind.relVol);
+  out.log_rel_volume = rv === null ? null : Math.log(Math.max(rv, REL_VOLUME_FLOOR));
 
-  // --- when (the check's moment on the user's clock)
-  const tz = cfg.window.tz;
-  const h = localHour(nowMs, tz);
+  // --- when: London's clock, never cfg.window.tz (see BANDS_TZ)
+  const h = localHour(nowMs, BANDS_TZ);
   for (const b of HOUR_BANDS) out[b.key] = h >= b.from && h < b.to ? 1 : 0;
-  const dow = localWeekday(nowMs, tz);
+  const dow = localWeekday(nowMs, BANDS_TZ);
   for (const d of WEEKDAYS) out[d.key] = dow === d.day ? 1 : 0;
 
   return out;
+}
+
+/**
+ * The features of a check from the bars a feed returned, which may include
+ * the bar still forming: closedBars() at `nowMs`, the last 1,000, then
+ * featuresAt(). `analysis` is the live read's own when there is one (an idea);
+ * without it (a blocked moment) the features-only re-read is made here. One
+ * place for the live path to build features, so it can never hand in a bare
+ * window or a different history from the dataset's.
+ */
+export function featuresFromBars({ bars, nowMs, cfg, pair, tf = null, analysis = null, spreadNum = null }) {
+  const t = tfInfo(tf ?? cfg.timeframe);
+  const closed = closedBars(bars || [], t.minutes, nowMs).slice(-HISTORY_BARS);
+  const an = analysis ?? analysisForFeatures({ closed, pair, cfg, nowMs, tf: t.id, spreadNum });
+  return featuresAt({ closed, analysis: an, nowMs, cfg, pair, tf: t.id });
 }
 
 /* ---------------------------------------------------- for a given side */
@@ -373,34 +511,53 @@ export function sideSigned(raw, side) {
 
 /* -------------------------------------------------- the condition cell */
 
-const confidenceLabel = (c) => (c === null ? null : c < 0.3 ? 'low' : c < 0.55 ? 'moderate' : 'firm');
+const confidenceLabel = (c) => (c < 0.3 ? 'low' : c < 0.55 ? 'moderate' : 'firm');
 const sgn = (v) => (v === null || v === undefined ? null : Math.sign(v) + 0);
 
 /**
- * The coarse condition a check falls in, for the by-condition table: regime;
- * confidence in the engine's words (low < 0.3 ≤ moderate < 0.55 ≤ firm);
- * H1 and H4 bias and every directional bucket as a sign RELATIVE TO THE SIDE
- * (+1 points the trade's way, −1 against, 0 flat; market direction when no
- * side is given); whether H1 and H4 agree with each other; the hour band and
- * weekday on the user's clock (null outside them); and the side as 'buy' or
- * 'sell'. A bucket that abstained is null, not 0: "no data" is not "no lean".
+ * The coarse condition a check falls in, for the by-condition table
+ * (desk/conditions.mjs reads exactly this, and nothing else builds it):
+ *
+ *   { regime, confidenceLabel, h1, h4, agree,
+ *     buckets: { trend, momentum, structure, location, volume },
+ *     hourBand, weekday, side }
+ *
+ *  - regime: one of REGIMES (detectRegime's names).
+ *  - confidenceLabel: the engine's words, low < 0.3 ≤ moderate < 0.55 ≤ firm.
+ *  - h1, h4: −1, 0 or +1 RELATIVE TO THE SIDE (+1 points the trade's way).
+ *    A bias the history was too short to measure reads 0: the engine itself
+ *    gives it no weight, and counts the pair as not agreeing.
+ *  - agree: true or false, the engine's htf.agree (false when either is missing).
+ *  - buckets: each directional bucket's sign relative to the side, or null
+ *    when it abstained ("no data" is not "no lean"). Volatility is not here:
+ *    it has no direction.
+ *  - hourBand '08-10' | '10-12' | '12-14' | '14-16', weekday 'Mon'…'Fri', both
+ *    on London's clock, null outside them.
+ *  - side: 'buy' or 'sell'. Required: a cell is a trade's, and a sign "relative
+ *    to the side" means nothing without one.
+ *
+ * A row the engine could not read (all null) has no cell, and throws.
  */
-export function conditionOf(raw, { side = null } = {}) {
-  const s = side === null ? null : sideNum(side);
-  if (side !== null && s === null) throw new Error(`side must be +1 or -1 (or buy/sell), not ${side}`);
-  const f = s === null ? raw : sideSigned(raw, s);
+export function conditionOf(raw, { side } = {}) {
+  const s = sideNum(side);
+  if (s === null) throw new Error(`conditionOf needs the trade's side (buy/sell or +1/-1), not ${side}`);
+  const regime = REGIMES.find((r) => raw[`regime_${r}`] === 1);
+  if (!regime || NUM(raw.confidence) === null) {
+    throw new Error('this row has no regime or confidence (the engine could not read the chart), so it has no condition');
+  }
+  const f = sideSigned(raw, s);
   const buckets = {};
   for (const name of DIRECTIONAL_BUCKETS) buckets[name] = sgn(f[`b_${name}`]);
   if (raw.volume_abstain === 1) buckets.volume = null;
   return {
-    regime: REGIMES.find((r) => raw[`regime_${r}`] === 1) || null,
+    regime,
     confidenceLabel: confidenceLabel(raw.confidence),
-    h1: sgn(f.h1_bias),
-    h4: sgn(f.h4_bias),
-    agree: raw.htf_agree === null || raw.htf_agree === undefined ? null : raw.htf_agree === 1,
+    h1: sgn(f.h1_bias) ?? 0,
+    h4: sgn(f.h4_bias) ?? 0,
+    agree: raw.htf_agree === 1,
     buckets,
     hourBand: (HOUR_BANDS.find((b) => raw[b.key] === 1) || {}).label || null,
     weekday: (WEEKDAYS.find((d) => raw[d.key] === 1) || {}).label || null,
-    side: s === 1 ? 'buy' : s === -1 ? 'sell' : null,
+    side: s === 1 ? 'buy' : 'sell',
   };
 }
