@@ -13,6 +13,7 @@ import {
   loadHistory, mergeBars, gapsIn, gapInWindow, gapsDuring, historyPath, historyPair,
   BINANCE_PAGE, TWELVE_PAGE, TWELVE_SPACING_MS, TWELVE_LIMIT_WAIT_MS, MAX_RETRIES,
 } from '../desk/history.mjs';
+import { pairOf } from '../desk/lib.mjs';
 
 let passed = 0, failed = 0;
 const pending = [];
@@ -32,6 +33,12 @@ const writeCacheFile = (h, bars, pair = 'BTCUSD', tf = 'M15') => {
   mkdirSync(join(h, 'history'), { recursive: true });
   writeFileSync(historyPath(pair, tf, h), JSON.stringify(bars));
 };
+const writeMetaFile = (h, meta, pair = 'BTCUSD', tf = 'M15') => {
+  mkdirSync(join(h, 'history'), { recursive: true });
+  writeFileSync(historyPath(pair, tf, h).replace(/\.json$/, '.meta.json'), JSON.stringify(meta));
+};
+/** The sidecar as this module writes it for a last bar it saved knowing it had closed. */
+const sureOf = (b) => ({ closedThrough: b.t, closedBar: { t: b.t, o: b.o, h: b.h, l: b.l, c: b.c, v: b.v ?? 0 } });
 
 /** A made-up market: one bar every `ms` from `t0`, `n` of them, prices from the index. */
 function market(t0, n, ms = M15, price = 60000) {
@@ -49,37 +56,42 @@ const json = (body, status = 200) => ({ ok: status >= 200 && status < 300, statu
  * like the real one it includes the bar still forming at `nowMs`.
  */
 function binanceStub(bars, nowMs, { fail = () => null } = {}) {
-  const calls = [];
-  const fetchImpl = async (url) => {
+  const calls = [], inits = [];
+  const fetchImpl = async (url, init) => {
     const u = new URL(url);
-    calls.push(u);
+    calls.push(u); inits.push(init);
     const f = fail(calls.length, u);
     if (f) return f();
     const start = Number(u.searchParams.get('startTime')), limit = Number(u.searchParams.get('limit'));
     const page = bars.filter((b) => b.t >= start && b.t <= nowMs).slice(0, limit);
     return json(page.map((b) => [b.t, String(b.o), String(b.h), String(b.l), String(b.c), String(b.v), b.t + M15 - 1]));
   };
-  return { fetchImpl, calls };
+  return { fetchImpl, calls, inits };
 }
 
 const tdTime = (s) => Date.parse(s.replace(' ', 'T') + 'Z');
 const tdStamp = (t) => new Date(t).toISOString().slice(0, 19).replace('T', ' ');
 /**
  * Twelve Data's time_series as the stand-in: newest first, `outputsize` at
- * most, end_date inclusive (so paging back overlaps one bar), no volume for
- * gold, prices as strings. `script` may answer a call instead.
+ * most, end_date inclusive (so paging back overlaps one bar) unless
+ * `endExclusive`, no volume for gold, prices as strings. `oldestFirst` plays
+ * the feared misbehaviour: the oldest page of everything it holds, whatever
+ * end_date says. `script` may answer a call instead.
  */
-function twelveStub(bars, nowMs, { script = () => null } = {}) {
-  const calls = [];
-  const fetchImpl = async (url) => {
+function twelveStub(bars, nowMs, { script = () => null, endExclusive = false, oldestFirst = false } = {}) {
+  const calls = [], inits = [];
+  const fetchImpl = async (url, init) => {
     const u = new URL(url);
-    calls.push(u);
+    calls.push(u); inits.push(init);
     const s = script(calls.length, u);
     if (s) return s();
     const start = u.searchParams.get('start_date') ? tdTime(u.searchParams.get('start_date')) : -Infinity;
     const end = tdTime(u.searchParams.get('end_date'));
     const size = Number(u.searchParams.get('outputsize'));
-    const page = bars.filter((b) => b.t >= start && b.t <= end && b.t <= nowMs).sort((a, b) => b.t - a.t).slice(0, size);
+    const inRange = bars.filter((b) => b.t >= start && (oldestFirst || (endExclusive ? b.t < end : b.t <= end)) && b.t <= nowMs);
+    const page = oldestFirst
+      ? inRange.sort((a, b) => a.t - b.t).slice(0, size).reverse()
+      : inRange.sort((a, b) => b.t - a.t).slice(0, size);
     if (!page.length) return json({ code: 400, message: 'No data is available on the specified dates. Try setting different start/end dates.', status: 'error' });
     return json({
       meta: { symbol: 'XAU/USD', interval: u.searchParams.get('interval') },
@@ -87,7 +99,7 @@ function twelveStub(bars, nowMs, { script = () => null } = {}) {
       status: 'ok',
     });
   };
-  return { fetchImpl, calls };
+  return { fetchImpl, calls, inits };
 }
 const sleeper = () => { const waits = []; return { waits, sleep: async (ms) => { waits.push(ms); } }; };
 
@@ -97,6 +109,7 @@ test('the path is <home>/history/<PAIR>-<TF>.json, whatever the instrument and t
   assert.equal(historyPath('XAU/USD', 'm5', '/h'), '/h/history/XAUUSD-M5.json');
   assert.equal(historyPair('gold'), 'XAUUSD');
   assert.equal(historyPair('EURUSD'), null);
+  assert.equal(historyPair, pairOf);                     // lib.mjs's, not a copy that can drift
   assert.throws(() => historyPath('EURUSD', 'M15', '/h'));
 });
 test('mergeBars dedupes by t, sorts, lets the second list win a tie, and changes neither input', () => {
@@ -208,7 +221,7 @@ test('an earlier start fetches only the missing head, from the start up to the f
   const bars = market(t0, 1500);
   writeCacheFile(h, bars.slice(1200));
   const nowMs = t0 + 1500 * M15;
-  writeFileSync(historyPath('BTCUSD', 'M15', h).replace(/\.json$/, '.meta.json'), JSON.stringify({ closedThrough: bars[1499].t }));
+  writeMetaFile(h, sureOf(bars[1499]));
   const { fetchImpl, calls } = binanceStub(bars, nowMs);
   const r = await loadHistory('BTCUSD', 'M15', { fromMs: t0, home: h, fetchImpl, nowMs });
   assert.equal(r.ok, true, r.reason);
@@ -256,7 +269,7 @@ test('a failure part-way keeps the pages that join onto the cache, and drops a h
   // Head: the first page of the earlier bars arrives, the rest fails. It would not reach the cache: dropped.
   const h2 = home();
   writeCacheFile(h2, bars.slice(2500));
-  writeFileSync(historyPath('BTCUSD', 'M15', h2).replace(/\.json$/, '.meta.json'), JSON.stringify({ closedThrough: bars[2999].t }));
+  writeMetaFile(h2, sureOf(bars[2999]));
   const head = binanceStub(bars, nowMs, { fail: (n) => (n >= 2 ? () => json({}, 500) : null) });
   const r2 = await loadHistory('BTCUSD', 'M15', { fromMs: t0, home: h2, fetchImpl: head.fetchImpl, nowMs, sleep: sleeper().sleep });
   assert.equal(r2.ok, false);
@@ -300,7 +313,7 @@ test('pages backwards 5,000 at a time, each page ending on the oldest bar of the
   const t0 = Date.UTC(2026, 3, 1);
   const bars = market(t0, 12000, M15, 4000).map(({ v, ...b }) => b);
   const nowMs = t0 + 12000 * M15;
-  const { fetchImpl, calls } = twelveStub(bars, nowMs);
+  const { fetchImpl, calls, inits } = twelveStub(bars, nowMs);
   const z = sleeper();
   const r = await loadHistory('XAUUSD', 'M15', { fromMs: t0, home: h, fetchImpl, keys: { twelvedata: 'KEY' }, nowMs, sleep: z.sleep, clock: () => 0 });
   assert.equal(r.ok, true, r.reason);
@@ -312,9 +325,11 @@ test('pages backwards 5,000 at a time, each page ending on the oldest bar of the
     assert.equal(u.searchParams.get('interval'), '15min');
     assert.equal(u.searchParams.get('timezone'), 'UTC');
     assert.equal(u.searchParams.get('outputsize'), String(TWELVE_PAGE));
-    assert.equal(u.searchParams.get('apikey'), 'KEY');
-    assert.equal(tdTime(u.searchParams.get('start_date')), t0);
+    assert.equal(u.searchParams.get('apikey'), null);              // the key is never in the address
+    assert.equal(u.searchParams.get('start_date'), null);          // paged by end_date alone
+    assert.ok(!u.href.includes('KEY'));
   }
+  for (const init of inits) assert.equal(init.headers.Authorization, 'apikey KEY');
   assert.equal(tdTime(calls[0].searchParams.get('end_date')), nowMs);
   assert.equal(tdTime(calls[1].searchParams.get('end_date')), bars[7000].t);     // the oldest bar of page one
   assert.equal(tdTime(calls[2].searchParams.get('end_date')), bars[2001].t);
@@ -419,6 +434,313 @@ test('a check whose 1,000-bar slice holds a gap is flagged, and so is a trade ru
   assert.equal(gapInWindow(bars, gaps, 300)(1500 + 299), false);
   assert.equal(gapsDuring(gaps, bars[1495].t, bars[1505].t).length, 1);
   assert.equal(gapsDuring(gaps, bars[1500].t, bars[1505].t).length, 0);
+});
+
+console.log('\nthe sidecar is believed only about the bars it names');
+test('a cache replaced by a shorter one (the legacy replay writer) has its start fetched again', async () => {
+  const h = home();
+  const t0 = Date.UTC(2026, 0, 1);
+  const bars = market(t0, 3000);
+  const nowMs = t0 + 3000 * M15;
+  const r1 = await loadHistory('BTCUSD', 'M15', { fromMs: 0, home: h, fetchImpl: binanceStub(bars, nowMs).fetchImpl, nowMs });
+  assert.equal(r1.ok, true, r1.reason);
+  assert.equal(readMetaFile(h).headCheckedFrom, 0);
+  writeCacheFile(h, bars.slice(2500));                        // rewritten from later on; the sidecar left behind
+  const s = binanceStub(bars, nowMs);
+  const r2 = await loadHistory('BTCUSD', 'M15', { fromMs: 0, home: h, fetchImpl: s.fetchImpl, nowMs });
+  assert.equal(r2.ok, true, r2.reason);
+  assert.equal(r2.bars.length, 3000);
+  assert.equal(Number(s.calls[0].searchParams.get('startTime')), 0);
+});
+test('a cache moved aside and refilled from later on does not inherit the old "checked from"', async () => {
+  const h = home();
+  const t0 = Date.UTC(2026, 0, 1);
+  const bars = market(t0, 3000);
+  const nowMs = t0 + 3000 * M15;
+  await loadHistory('BTCUSD', 'M15', { fromMs: 0, home: h, fetchImpl: binanceStub(bars, nowMs).fetchImpl, nowMs });
+  writeCacheFile(h, []);
+  const narrow = await loadHistory('BTCUSD', 'M15', { fromMs: bars[2900].t, home: h, fetchImpl: binanceStub(bars, nowMs).fetchImpl, nowMs });
+  assert.equal(narrow.bars.length, 100);
+  assert.equal(readMetaFile(h).headCheckedFrom, bars[2900].t);   // not min(new, old 0)
+  const r = await loadHistory('BTCUSD', 'M15', { fromMs: 0, home: h, fetchImpl: binanceStub(bars, nowMs).fetchImpl, nowMs });
+  assert.equal(r.ok, true, r.reason);
+  assert.equal(r.bars.length, 3000);
+});
+test('a last bar rewritten at the same time with other prices is fetched again, not trusted', async () => {
+  const h = home();
+  const t0 = Date.UTC(2026, 0, 1);
+  const bars = market(t0, 100);
+  const nowMs = t0 + 100 * M15;
+  await loadHistory('BTCUSD', 'M15', { fromMs: t0, home: h, fetchImpl: binanceStub(bars, nowMs).fetchImpl, nowMs });
+  const cache = readCacheFile(h);
+  cache[99] = { ...cache[99], h: 1, c: 1 };                    // an older writer's forming copy
+  writeCacheFile(h, cache);
+  const s = binanceStub(bars, nowMs + 60000);
+  const r = await loadHistory('BTCUSD', 'M15', { fromMs: t0, home: h, fetchImpl: s.fetchImpl, nowMs: nowMs + 60000 });
+  assert.equal(s.calls.length, 1);
+  assert.equal(Number(s.calls[0].searchParams.get('startTime')), bars[99].t);
+  assert.deepEqual(r.bars[99], bars[99]);
+  assert.equal(r.fetched, 1);                                   // the one bar that changed
+});
+
+console.log('\nthe options');
+test('the range is never positional, and a bad time is refused rather than read as "everything"', async () => {
+  const h = home();
+  const t0 = Date.UTC(2026, 0, 1), nowMs = t0 + 10 * M15;
+  const s = binanceStub(market(t0, 10), nowMs);
+  await assert.rejects(loadHistory('BTCUSD', 'M15', t0, nowMs, { home: h, fetchImpl: s.fetchImpl }), TypeError);
+  await assert.rejects(loadHistory('BTCUSD', 'M15', t0), TypeError);
+  for (const bad of [{ fromMs: Date.parse('2026-13-45') }, { toMs: 'tomorrow' }, { nowMs: null }, { fromMs: Infinity }]) {
+    const r = await loadHistory('BTCUSD', 'M15', { nowMs, ...bad, home: h, fetchImpl: s.fetchImpl });
+    assert.equal(r.ok, false, JSON.stringify(bad));
+    assert.match(r.reason, /must be a time in milliseconds/);
+  }
+  const r = await loadHistory('BTCUSD', 'M15', { fromMs: t0, nowMs, deadlineMs: -1, home: h, fetchImpl: s.fetchImpl });
+  assert.equal(r.ok, false);
+  assert.equal(s.calls.length, 0);
+  assert.ok(!existsSync(join(h, 'history')));
+});
+test('a toMs between bar opens still gets the bar that opened before it', async () => {
+  const h = home();
+  const t0 = Date.UTC(2026, 0, 1);
+  const bars = market(t0, 300);
+  writeCacheFile(h, bars.slice(0, 100));
+  writeMetaFile(h, sureOf(bars[99]));
+  const s = binanceStub(bars, t0 + 200 * M15);
+  const r = await loadHistory('BTCUSD', 'M15', { fromMs: t0, toMs: bars[100].t + 5 * 60000, nowMs: t0 + 200 * M15, home: h, fetchImpl: s.fetchImpl });
+  assert.equal(r.ok, true, r.reason);
+  assert.equal(r.bars.length, 101);
+  assert.equal(r.coverage.last, bars[100].t);
+});
+
+console.log('\ncancelling and time limits');
+test('the signal reaches every fetch, and a cancel stops at once with no retries', async () => {
+  const t0 = Date.UTC(2026, 0, 1), nowMs = t0 + 20 * M15;
+  const ac = new AbortController();
+  const z = sleeper();
+  const s = binanceStub(market(t0, 20), nowMs, { fail: () => () => { ac.abort(); const e = new Error('This operation was aborted'); e.name = 'AbortError'; throw e; } });
+  const r = await loadHistory('BTCUSD', 'M15', { fromMs: t0, home: home(), fetchImpl: s.fetchImpl, nowMs, sleep: z.sleep, signal: ac.signal });
+  assert.equal(r.ok, false);
+  assert.equal(r.aborted, true);
+  assert.match(r.reason, /stopped before it finished \(it was cancelled\)/);
+  assert.equal(s.calls.length, 1);
+  assert.deepEqual(z.waits, []);
+  assert.ok(s.inits[0].signal instanceof AbortSignal);
+  // An abort from inside the fetch itself (a wrapper's own timer, say) is not a network blip to retry.
+  const z3 = sleeper();
+  const s3 = binanceStub(market(t0, 20), nowMs, { fail: () => () => { throw Object.assign(new Error('The operation timed out'), { name: 'TimeoutError' }); } });
+  const r3 = await loadHistory('BTCUSD', 'M15', { fromMs: t0, home: home(), fetchImpl: s3.fetchImpl, nowMs, sleep: z3.sleep });
+  assert.equal(r3.aborted, true);
+  assert.equal(s3.calls.length, 1);
+  assert.deepEqual(z3.waits, []);
+  // Already cancelled: no call at all.
+  const s2 = binanceStub(market(t0, 20), nowMs);
+  const r2 = await loadHistory('BTCUSD', 'M15', { fromMs: t0, home: home(), fetchImpl: s2.fetchImpl, nowMs, signal: AbortSignal.abort() });
+  assert.equal(r2.aborted, true);
+  assert.equal(s2.calls.length, 0);
+});
+test('a deadline: no wait is started that would pass it, and a fetch that hangs is cut off', async () => {
+  const t0 = Date.UTC(2026, 0, 1), nowMs = t0 + 20 * M15;
+  let clockMs = 0;
+  const waits = [];
+  const sleep = async (ms) => { waits.push(ms); clockMs += ms; };
+  const down = binanceStub([], nowMs, { fail: () => () => json({}, 503) });
+  const r = await loadHistory('BTCUSD', 'M15', { fromMs: t0, home: home(), fetchImpl: down.fetchImpl, nowMs, sleep, clock: () => clockMs, deadlineMs: 5000 });
+  assert.equal(r.aborted, true);
+  assert.deepEqual(waits, [1000, 2000]);                         // the 4 s wait would pass 5 s
+  assert.equal(down.calls.length, 3);
+  // Gold's minute-long wait after a per-minute refusal is not started inside a 5 s budget.
+  const limited = () => json({ code: 429, message: 'You have run out of API credits for the current minute.', status: 'error' });
+  const z = sleeper();
+  const td = twelveStub([], nowMs, { script: () => limited });
+  const r2 = await loadHistory('XAUUSD', 'M15', { fromMs: t0, home: home(), fetchImpl: td.fetchImpl, keys: { twelvedata: 'K' }, nowMs, sleep: z.sleep, clock: () => 0, deadlineMs: 5000 });
+  assert.equal(r2.aborted, true);
+  assert.equal(td.calls.length, 1);
+  assert.ok(!z.waits.includes(TWELVE_LIMIT_WAIT_MS));
+  // A fetch that never answers, and ignores its signal, still ends at the deadline (really waited: 40 ms).
+  let guard;
+  const hung = new Promise((resolve) => { guard = setTimeout(() => resolve('still waiting after 1.5 s'), 1500); });
+  const r3 = await Promise.race([loadHistory('BTCUSD', 'M15', { fromMs: t0, home: home(), fetchImpl: () => new Promise(() => {}), nowMs, deadlineMs: 40 }), hung]);
+  clearTimeout(guard);
+  assert.notEqual(r3, 'still waiting after 1.5 s');
+  assert.equal(r3.aborted, true);
+  assert.match(r3.reason, /time allowed ran out/);
+});
+test('a cancel part-way keeps the bitcoin pages that join onto the cache', async () => {
+  const t0 = Date.UTC(2026, 0, 1);
+  const bars = market(t0, 3000);
+  const nowMs = t0 + 3000 * M15;
+  const h = home();
+  writeCacheFile(h, bars.slice(0, 500));
+  const ac = new AbortController();
+  const s = binanceStub(bars, nowMs, { fail: (n) => (n >= 2 ? () => { ac.abort(); throw Object.assign(new Error('aborted'), { name: 'AbortError' }); } : null) });
+  const r = await loadHistory('BTCUSD', 'M15', { fromMs: t0, home: h, fetchImpl: s.fetchImpl, nowMs, signal: ac.signal });
+  assert.equal(r.aborted, true);
+  assert.equal(readCacheFile(h).length, 1499);
+});
+
+console.log('\nthe key');
+test('the key never reaches a reason or a log line, even when an error repeats the address', async () => {
+  const t0 = Date.UTC(2026, 3, 1), nowMs = t0 + 40 * M15;
+  const key = 'sekret-123';
+  const lines = [];
+  const s = twelveStub([], nowMs, { script: () => () => { throw new Error(`fetch failed for https://api.twelvedata.com/time_series?apikey=${key}`); } });
+  const r = await loadHistory('XAUUSD', 'M15', { fromMs: t0, home: home(), fetchImpl: s.fetchImpl, keys: { twelvedata: key }, nowMs, sleep: sleeper().sleep, clock: () => 0, log: (l) => lines.push(l) });
+  assert.equal(r.ok, false);
+  assert.ok(!r.reason.includes(key), r.reason);
+  assert.ok(lines.length && lines.every((l) => !l.includes(key)));
+  const s2 = twelveStub([], nowMs, { script: () => () => json({ code: 401, message: `**${key}** is not a valid API key`, status: 'error' }) });
+  const r2 = await loadHistory('XAUUSD', 'M15', { fromMs: t0, home: home(), fetchImpl: s2.fetchImpl, keys: { twelvedata: key }, nowMs, sleep: sleeper().sleep });
+  assert.ok(!r2.reason.includes(key), r2.reason);
+});
+
+console.log('\nTwelve Data\'s paging, untested live, so guarded');
+test('an end_date that leaves out its own bar pages just as well', async () => {
+  const h = home();
+  const t0 = Date.UTC(2026, 3, 1);
+  const bars = market(t0, 12000, M15, 4000);
+  const nowMs = t0 + 12000 * M15;
+  const s = twelveStub(bars, nowMs, { endExclusive: true });
+  const r = await loadHistory('XAUUSD', 'M15', { fromMs: t0, home: h, fetchImpl: s.fetchImpl, keys: { twelvedata: 'K' }, nowMs, sleep: sleeper().sleep, clock: () => 0 });
+  assert.equal(r.ok, true, r.reason);
+  assert.equal(r.bars.length, 12000);
+  assert.equal(gapsIn(r.bars, 15).length, 0);
+});
+test('a full page far older than asked for is refused, and nothing of it is saved', async () => {
+  const h = home();
+  const t0 = Date.UTC(2025, 0, 1);
+  const bars = market(t0, 12000, M15, 4000);
+  const nowMs = t0 + 12000 * M15;
+  const s = twelveStub(bars, nowMs, { oldestFirst: true });
+  const r = await loadHistory('XAUUSD', 'M15', { fromMs: t0, home: h, fetchImpl: s.fetchImpl, keys: { twelvedata: 'K' }, nowMs, sleep: sleeper().sleep, clock: () => 0 });
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /that page was not saved/);
+  assert.ok(!existsSync(historyPath('XAUUSD', 'M15', h)));
+});
+test('bars off the timeframe grid (another zone or offset) are refused whole', async () => {
+  const h = home();
+  const t0 = Date.UTC(2026, 3, 1);
+  const bars = market(t0 + 7 * 60000, 40, M15, 4000);
+  const nowMs = t0 + 41 * M15;
+  const s = twelveStub(bars, nowMs);
+  const r = await loadHistory('XAUUSD', 'M15', { fromMs: t0, home: h, fetchImpl: s.fetchImpl, keys: { twelvedata: 'K' }, nowMs, sleep: sleeper().sleep });
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /off the 15-minute grid/);
+  assert.ok(!existsSync(historyPath('XAUUSD', 'M15', h)));
+});
+test('newer bars that do not meet the cache on its last bar are not saved', async () => {
+  const h = home();
+  const t0 = Date.UTC(2026, 3, 1);                 // a Wednesday
+  const bars = market(t0, 200, M15, 4000);
+  writeCacheFile(h, bars.slice(0, 100), 'XAUUSD');
+  const nowMs = t0 + 200 * M15;
+  const s = twelveStub(bars.slice(101), nowMs);   // the feed no longer has the cache's last bar
+  const r = await loadHistory('XAUUSD', 'M15', { fromMs: t0, home: h, fetchImpl: s.fetchImpl, keys: { twelvedata: 'K' }, nowMs, sleep: sleeper().sleep });
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /did not include the last saved one/);
+  assert.equal(readCacheFile(h, 'XAUUSD').length, 100);
+});
+test('the day\'s limit says what was kept: a gold tail cut short keeps nothing, a head keeps its pages', async () => {
+  const t0 = Date.UTC(2026, 0, 5);
+  const bars = market(t0, 12000, M15, 4000);
+  const nowMs = t0 + 12000 * M15;
+  const daily = () => json({ code: 429, message: 'You have run out of API credits for the day.', status: 'error' });
+  const h = home();
+  writeCacheFile(h, bars.slice(0, 101), 'XAUUSD');
+  const s = twelveStub(bars, nowMs, { script: (n) => (n === 2 ? daily : null) });
+  const r = await loadHistory('XAUUSD', 'M15', { fromMs: t0, home: h, fetchImpl: s.fetchImpl, keys: { twelvedata: 'K' }, nowMs, sleep: sleeper().sleep, clock: () => 0 });
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /Nothing from this fetch could be saved/);
+  assert.equal(readCacheFile(h, 'XAUUSD').length, 101);
+  const h2 = home();
+  writeCacheFile(h2, bars.slice(11000), 'XAUUSD');
+  writeMetaFile(h2, sureOf(bars[11999]), 'XAUUSD');
+  const s2 = twelveStub(bars, nowMs, { script: (n) => (n === 2 ? daily : null) });
+  const r2 = await loadHistory('XAUUSD', 'M15', { fromMs: t0, home: h2, fetchImpl: s2.fetchImpl, keys: { twelvedata: 'K' }, nowMs, sleep: sleeper().sleep, clock: () => 0 });
+  assert.match(r2.reason, /The bars fetched before that are saved/);
+  assert.equal(readCacheFile(h2, 'XAUUSD').length, 1000 + 4999);       // one page back, one bar overlapping
+});
+
+console.log('\nnothing spent when nothing changed');
+test('a fetch that brings nothing new counts nothing and writes nothing', async () => {
+  const h = home();
+  const t0 = Date.UTC(2026, 0, 1);
+  const bars = market(t0, 100);
+  writeCacheFile(h, bars);                                     // an older writer's file: the last bar is in doubt
+  const file = historyPath('BTCUSD', 'M15', h);
+  const before = readFileSync(file, 'utf8').replace(/,/g, ', ');
+  writeFileSync(file, before);                                // same bars, different text: a rewrite would show
+  const s = binanceStub(bars, t0 + 100 * M15 + 60000);
+  const r = await loadHistory('BTCUSD', 'M15', { fromMs: t0, home: h, fetchImpl: s.fetchImpl, nowMs: t0 + 100 * M15 + 60000 });
+  assert.equal(r.ok, true, r.reason);
+  assert.equal(s.calls.length, 1);
+  assert.equal(r.fetched, 0);
+  assert.equal(readFileSync(file, 'utf8'), before);
+  assert.equal(readMetaFile(h).closedThrough, bars[99].t);    // but now it is known to be final
+});
+test('gold over the weekend: no call is spent, and no key is needed to serve what is saved', async () => {
+  const h = home();
+  const fri = Date.UTC(2026, 9, 9, 20, 45);                    // the last bar before Friday's 17:00 New York close
+  const bars = market(fri - 499 * M15, 500, M15, 4000);
+  const sat = Date.UTC(2026, 9, 10, 12, 0);
+  const first = await loadHistory('XAUUSD', 'M15', { fromMs: bars[0].t, home: h, fetchImpl: twelveStub(bars, sat).fetchImpl, keys: { twelvedata: 'K' }, nowMs: sat, sleep: sleeper().sleep });
+  assert.equal(first.ok, true, first.reason);
+  const s = twelveStub(bars, sat + 3600e3);
+  const r = await loadHistory('XAUUSD', 'M15', { fromMs: bars[0].t, home: h, fetchImpl: s.fetchImpl, keys: { twelvedata: 'K' }, nowMs: sat + 3600e3 });
+  assert.equal(s.calls.length, 0);
+  assert.equal(r.fetched, 0);
+  const r2 = await loadHistory('XAUUSD', 'M15', { fromMs: bars[0].t, home: h, fetchImpl: s.fetchImpl, keys: {}, nowMs: sat + 3600e3 });
+  assert.equal(r2.ok, true, r2.reason);
+  assert.equal(r2.needKey, undefined);
+  assert.equal(r2.bars.length, 500);
+  // Monday, still no key: the saved bars are served, flagged as stale, rather than nothing.
+  const mon = Date.UTC(2026, 9, 12, 10, 0);
+  const r3 = await loadHistory('XAUUSD', 'M15', { fromMs: bars[0].t, home: h, fetchImpl: s.fetchImpl, keys: {}, nowMs: mon });
+  assert.equal(r3.ok, true, r3.reason);
+  assert.equal(r3.stale, true);
+  assert.equal(r3.needKey, true);
+  assert.match(r3.note, /TWELVEDATA_API_KEY/);
+  assert.equal(r3.bars.length, 500);
+  assert.equal(s.calls.length, 0);
+  // An earlier start without a key is still a refusal: those bars were never saved.
+  const r4 = await loadHistory('XAUUSD', 'M15', { fromMs: bars[0].t - 30 * 86400e3, home: h, fetchImpl: s.fetchImpl, keys: {}, nowMs: mon });
+  assert.equal(r4.ok, false);
+  assert.equal(r4.needKey, true);
+});
+
+console.log('\ngold\'s closures by the New York clock');
+const pairGap = (a, b, tf = 15) => gapsIn([{ t: a }, { t: b }], tf, { pair: 'XAUUSD' });
+test('a hole mid-session is listed however short a closure it resembles', () => {
+  const tue = Date.UTC(2026, 9, 13, 10, 0);
+  assert.deepEqual(pairGap(tue, tue + 8 * M15), [{ afterT: tue, nextT: tue + 8 * M15, missingBars: 7 }]);
+  assert.equal(pairGap(tue, tue + 23 * M5, 5).length, 1);                         // 22 bars on M5
+  assert.equal(gapsIn([{ t: tue }, { t: tue + 8 * M15 }], 15, { pair: 'BTCUSD' }).length, 1);
+});
+test('the daily break follows New York\'s clock through the change of hour', () => {
+  const winter = Date.UTC(2026, 0, 13, 21, 55);                                  // 16:55 EST
+  assert.deepEqual(pairGap(winter, winter + 65 * 60000, 5), []);
+  const summer = Date.UTC(2026, 6, 14, 21, 55);                                  // 17:55 EDT: not the break
+  assert.equal(pairGap(summer, summer + 65 * 60000, 5).length, 1);
+});
+test('US holiday early closes are the market shut; a whole trading day missing is not', () => {
+  // Thanksgiving: 13:00 to 18:00 EST.
+  assert.deepEqual(pairGap(Date.UTC(2026, 10, 26, 17, 45), Date.UTC(2026, 10, 26, 23, 0)), []);
+  // Labor Day: 13:00 to 18:00 EDT.
+  assert.deepEqual(pairGap(Date.UTC(2026, 8, 7, 16, 45), Date.UTC(2026, 8, 7, 22, 0)), []);
+  // Christmas on a Wednesday: Tuesday 13:45 to Wednesday 18:00 EST.
+  assert.deepEqual(pairGap(Date.UTC(2024, 11, 24, 18, 30), Date.UTC(2024, 11, 25, 23, 0)), []);
+  // Christmas on a Friday stretches the weekend: Thursday 13:45 to Sunday 18:00 EST, 76¼ hours.
+  assert.deepEqual(pairGap(Date.UTC(2020, 11, 24, 18, 30), Date.UTC(2020, 11, 27, 23, 0)), []);
+  // Tuesday's close to Wednesday's restart: a trading day the feed lost.
+  assert.equal(pairGap(Date.UTC(2026, 9, 13, 20, 45), Date.UTC(2026, 9, 14, 22, 0)).length, 1);
+});
+test('a hole in Friday\'s or Monday\'s London session is listed even beside the weekend', () => {
+  assert.equal(pairGap(Date.UTC(2026, 9, 9, 10, 0), Date.UTC(2026, 9, 11, 22, 0)).length, 1);
+  assert.equal(pairGap(Date.UTC(2026, 9, 9, 20, 45), Date.UTC(2026, 9, 12, 10, 0)).length, 1);
+});
+test('gapsIn needs the timeframe: without it every pair of bars would be a gap', () => {
+  assert.throws(() => gapsIn(market(Date.UTC(2026, 0, 1), 5)), TypeError);
+  assert.deepEqual(gapsIn(market(Date.UTC(2026, 0, 1), 5), 'M15'), []);
 });
 
 for (const r of pending) await r();
