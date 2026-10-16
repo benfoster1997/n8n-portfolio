@@ -16,7 +16,7 @@
  * and 08:00-16:00 UTC in winter; neither is "the" answer.
  */
 
-import { zonedTimeToUtc, tzOffsetMs } from './timezone.js';
+import { zonedTimeToUtc, tzOffsetMs, zoneFormatter } from './timezone.js';
 
 /** The user's window. Editable in Setup; this is the London default. */
 export const DEFAULT_WINDOW = {
@@ -33,12 +33,16 @@ export function localHour(atMs, tz) {
   return (((d.getUTCHours() + d.getUTCMinutes() / 60 + d.getUTCSeconds() / 3600) + off) % 24 + 24) % 24;
 }
 
-/** Local calendar date in a named zone, as {y, m, d}. */
+/**
+ * Local calendar date in a named zone, as {y, m, d}. The formatter is built
+ * once per zone (timezone.js zoneFormatter): this runs several times for every
+ * bar the history replay checks, and building it each time was most of the cost.
+ */
 export function localDate(atMs, tz) {
   const p = {};
-  for (const { type, value } of new Intl.DateTimeFormat('en-US', {
-    timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
-  }).formatToParts(new Date(atMs))) p[type] = value;
+  for (const { type, value } of zoneFormatter('date', tz, (zone) => new Intl.DateTimeFormat('en-US', {
+    timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit',
+  })).formatToParts(new Date(atMs))) p[type] = value;
   return { y: +p.year, m: +p.month, d: +p.day };
 }
 

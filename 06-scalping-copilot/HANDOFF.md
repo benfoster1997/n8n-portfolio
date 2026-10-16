@@ -30,10 +30,10 @@ refuse a plain publish and would otherwise create a *second* page. Do this:
 
 ```
 node build.mjs            # inline src/*.js into index.html; refuses on name collisions
-node test/run-all.mjs     # 436 assertions across 11 suites — unit level only
+node test/run-all.mjs     # 449 assertions across 12 suites — unit level only
 node desk/desk.mjs now    # the in-chat desk; see .claude/skills/scalp-desk/SKILL.md
 node desk/desk.mjs scan --pair bitcoin   # one live read now (watch = poll each bar close)
-node desk/replay.mjs --pair bitcoin --from 2026-01-01   # the watcher over history, with outcomes
+node desk/replay.mjs --pair bitcoin --from 2026-01-01 --to 2026-10-11   # the watcher over history (decision 26's stretch; 2025-01-01 on is held back, see LEARNING-PLAN.md)
 node test/smoke.mjs       # real browser, 7 frozen moments x both views, fills in the brief; fails on page errors, overflow, "undefined"/"NaN"
 ```
 
@@ -653,6 +653,24 @@ A fresh session is likely to "fix" some of these. Don't, without reading why.
       and its minimum stop is scaled by √3 so its stop always clears the desk's floor.
       Relative volume now votes on M15 (300 bars ≈ 3 days of slots); decision 19's "only the
       last 300" still holds for the page's M5 engine.
+    - **16 Oct 2026: the replay rebuilt, and the volume fix — the figures did not move.**
+      `desk/replay.mjs` now runs on `desk/reads.mjs` (each check's read computed once, in
+      parallel, all three rules from one engine run; the alert sequence applied serially after).
+      Before anything else changed it was checked against the old replay: 1 Jan – 11 Oct 2026,
+      fixed $6, legacy both-touched rule, `--workers 1` and `--workers 4` both print exactly
+      6,464 checks; reads none 2,600 / rejected 3,291 / idea 359 / blocked 214; 120 alerts;
+      window 55 / stop 41 / target 24; buys 55, sells 65; +0.028R (95% −0.162 to 0.218,
+      clustered −0.169 to 0.225; halves −0.037R / +0.092R) — and all three rules' full trade
+      lists matched the old replay line for line. **Then** `volumeBucket` in
+      src/signal-engine.js was fixed: it read the last bar that had a relative-volume baseline
+      (`lastOf`) instead of the newest bar, so on a bar with none it paired an older bar's
+      volume with the newest bar's direction; it now abstains there. Re-run with the default
+      settings, **nothing moved**: level 50 alerts +0.038R, 1.5R 120 alerts +0.028R, 2R 117
+      alerts +0.041R, every read count and every listed trade identical. Why: inside the
+      08:00–16:00 weekday window the 1,000-bar history always holds five earlier weekdays of
+      the same slot, so the newest bar always had a baseline (0 of 634 sampled 2026 reads
+      lacked one). The fix matters for weekend reads, the start of a history, and the page's
+      M5 engine, not for these figures. Decision 26 stands as written.
 
 ---
 

@@ -109,18 +109,27 @@ export function clockCheckLine(nowMs, cfg) {
 /** The desk's chart timeframe: one named for this read, else the setting. */
 export const timeframeFor = (cfg, named = null) => timeframeOf(named) || timeframeOf(cfg.timeframe) || DEFAULT_TIMEFRAME;
 
-/** The same gate the page's screenshot card applies (app.js currentShotGate). */
-export function gateFor(pair, nowMs, cfg, tf = timeframeFor(cfg)) {
+/**
+ * The same gate the page's screenshot card applies (app.js currentShotGate).
+ *
+ * Two options exist for the history replay, and live callers pass neither:
+ *   calendar  'full' (live) | 'rules' | 'none' — which news events exist
+ *             (news-calendar.js CALENDAR_MODES); both the blackout and the
+ *             "major release soon" caution honour it.
+ *   blackout  the blackout already looked up for this moment and calendar, so
+ *             liveRead does not compute it twice (it is the same call either way).
+ */
+export function gateFor(pair, nowMs, cfg, tf = timeframeFor(cfg), { calendar = 'full', blackout } = {}) {
   const win = cfg.window;
   const inst = INSTRUMENTS[pair];
   const w = windowState(nowMs, win);
   const q = sessionQuality(nowMs, pair, win);
   const band = remainingBands(nowMs, pair, win).find((b) => b.current);
-  const nextMajor = getUpcomingEvents(nowMs, tfInfo(tf).newsSoonMin / 60 + 1, pair, { includeContext: false })
+  const nextMajor = getUpcomingEvents(nowMs, tfInfo(tf).newsSoonMin / 60 + 1, pair, { includeContext: false, calendar })
     .filter((e) => e.tier === 1 && e.ts > nowMs)[0] || null;
   return shotGate({
     pair, weekend: w.phase === 'weekend',
-    blackout: getActiveBlackout(nowMs, pair, {}),
+    blackout: blackout !== undefined ? blackout : getActiveBlackout(nowMs, pair, {}, { calendar }),
     band: q.band, insideWindow: w.open, win,
     marketOpen: marketOpenNow(inst, nowMs, serverOffsetFor(nowMs, cfg)),
     bandEndsAtMs: band ? band.endsAtMs : null, nextMajor, nowMs, timeframe: tf,

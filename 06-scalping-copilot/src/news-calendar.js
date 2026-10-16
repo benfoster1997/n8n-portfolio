@@ -456,15 +456,43 @@ function occurrences(ev, fromMs, toMs) {
 /* ------------------------------------------------------------- the API */
 
 /**
+ * Calendar modes, for reading history.
+ *
+ * Live, the calendar is always 'full'. Over past years it is not the same
+ * calendar in every year: the date-listed events (NFP, CPI, FOMC, PCE, ECB,
+ * FOMC minutes, and the monthly ADP that is placed two days before each listed
+ * NFP) exist only where their dates were typed in from sources, while the
+ * rule-derived ones (weekly claims, ISM by business day, approximate retail
+ * sales and flash PMI, month-end expiries, the weekly ADP pulse) compute for
+ * any year. A multi-year history therefore states which it used:
+ *   'full'   every event, as live
+ *   'rules'  only the rule-derived events — the same calendar in every year
+ *   'none'   no events at all: no blackouts, no "major release soon"
+ * Which events count as table-driven is decided by their schedule kind, so an
+ * event added later is classified without anyone remembering to.
+ */
+export const CALENDAR_MODES = ['full', 'rules', 'none'];
+const TABLE_KINDS = new Set(['dates', 'daysAfterDates', 'weekdayBeforeEvent']);
+export function fromDateTable(ev) {
+  return TABLE_KINDS.has(ev.schedule.kind);
+}
+function inCalendar(ev, calendar) {
+  if (calendar === 'none') return false;
+  if (calendar === 'rules') return !fromDateTable(ev);
+  return true;
+}
+
+/**
  * Concrete upcoming events, sorted, for one pair.
  * `pair` is 'XAUUSD', 'BTCUSD', or null for both.
  */
 export function getUpcomingEvents(fromMs, horizonHours = 48, pair = null, opts = {}) {
-  const { includeContext = true, minTier = 3 } = opts;
+  const { includeContext = true, minTier = 3, calendar = 'full' } = opts;
   const toMs = fromMs + horizonHours * 3600e3;
   const rows = [];
 
   for (const ev of EVENTS) {
+    if (!inCalendar(ev, calendar)) continue;
     if (pair && ev.affects !== 'both' && ev.affects !== pair) continue;
     if (!includeContext && ev.tier === 'context') continue;
     if (typeof ev.tier === 'number' && ev.tier > minTier) continue;
@@ -496,10 +524,11 @@ export function getUpcomingEvents(fromMs, horizonHours = 48, pair = null, opts =
  *
  * Returns the single most severe active window, or null. `context` events never
  * produce a blackout however close they are — treating them as blockers would
- * keep a scalper out of good trades for no reason.
+ * keep a scalper out of good trades for no reason. `calendar` is one of
+ * CALENDAR_MODES; live callers leave it at 'full'.
  */
-export function getActiveBlackout(atMs, pair = null, overrides = {}) {
-  const candidates = getUpcomingEvents(atMs - 6 * 3600e3, 12, pair, { includeContext: false });
+export function getActiveBlackout(atMs, pair = null, overrides = {}, { calendar = 'full' } = {}) {
+  const candidates = getUpcomingEvents(atMs - 6 * 3600e3, 12, pair, { includeContext: false, calendar });
   let best = null;
 
   for (const ev of candidates) {

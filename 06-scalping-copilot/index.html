@@ -744,17 +744,42 @@ label.btn { display: flex; align-items: center; justify-content: center; text-al
  */
 
 /**
+ * One Intl.DateTimeFormat per zone and shape, built once and kept.
+ *
+ * Why: building a DateTimeFormat is expensive (ICU loads the zone's rules and
+ * the locale's patterns every time), while using one is cheap. These helpers
+ * run on every timezone conversion, and the history replay makes hundreds of
+ * those per bar it checks: measured on 16 Oct 2026, constructing formatters
+ * was about 95% of the replay's time (65 ms a check; ~8-10 ms once cached).
+ * A formatter holds no state between calls, so a cached one gives exactly the
+ * output a new one would — the 2026 replay was byte-identical either way.
+ * `shape` names the options `make` builds, so two shapes never share a slot.
+ */
+const ZONE_FORMATTERS = new Map();
+function zoneFormatter(shape, tz, make) {
+  const key = `${shape}|${tz}`;
+  let f = ZONE_FORMATTERS.get(key);
+  if (!f) {
+    // An invalid zone throws here, before anything is cached, exactly as an
+    // uncached `new Intl.DateTimeFormat` would have.
+    f = make(tz);
+    ZONE_FORMATTERS.set(key, f);
+  }
+  return f;
+}
+
+/**
  * Offset of `tz` from UTC, in milliseconds, at the instant `utcMs`.
  * Positive west of Greenwich is NOT the convention here: we return
  * (wall clock read in tz) - (utc), so New York in winter gives -5h.
  */
 function tzOffsetMs(utcMs, tz) {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: tz,
+  const parts = zoneFormatter('offset', tz, (zone) => new Intl.DateTimeFormat('en-US', {
+    timeZone: zone,
     hour12: false,
     year: 'numeric', month: '2-digit', day: '2-digit',
     hour: '2-digit', minute: '2-digit', second: '2-digit',
-  }).formatToParts(new Date(utcMs));
+  })).formatToParts(new Date(utcMs));
 
   const p = {};
   for (const { type, value } of parts) p[type] = value;
@@ -846,7 +871,7 @@ function localZone() {
 /** Short zone abbreviation (EST/EDT/BST/GMT) for display. */
 function zoneAbbr(utcMs, tz) {
   try {
-    const parts = new Intl.DateTimeFormat('en-US', { timeZone: tz, timeZoneName: 'short' })
+    const parts = zoneFormatter('abbr', tz, (zone) => new Intl.DateTimeFormat('en-US', { timeZone: zone, timeZoneName: 'short' }))
       .formatToParts(new Date(utcMs));
     const z = parts.find((p) => p.type === 'timeZoneName');
     return z ? z.value : '';
@@ -857,17 +882,17 @@ function zoneAbbr(utcMs, tz) {
 
 /** HH:MM in a given zone. */
 function formatHM(utcMs, tz) {
-  return new Intl.DateTimeFormat('en-GB', {
-    timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false,
-  }).format(new Date(utcMs));
+  return zoneFormatter('hm', tz, (zone) => new Intl.DateTimeFormat('en-GB', {
+    timeZone: zone, hour: '2-digit', minute: '2-digit', hour12: false,
+  })).format(new Date(utcMs));
 }
 
 /** "Fri 6 Nov, 13:30" in a given zone. */
 function formatDayTime(utcMs, tz) {
-  return new Intl.DateTimeFormat('en-GB', {
-    timeZone: tz, weekday: 'short', day: 'numeric', month: 'short',
+  return zoneFormatter('daytime', tz, (zone) => new Intl.DateTimeFormat('en-GB', {
+    timeZone: zone, weekday: 'short', day: 'numeric', month: 'short',
     hour: '2-digit', minute: '2-digit', hour12: false,
-  }).format(new Date(utcMs));
+  })).format(new Date(utcMs));
 }
 
 /** Compact countdown: "2d 04h", "3h 12m", "07:41", "now". */
@@ -3074,15 +3099,43 @@ function occurrences(ev, fromMs, toMs) {
 /* ------------------------------------------------------------- the API */
 
 /**
+ * Calendar modes, for reading history.
+ *
+ * Live, the calendar is always 'full'. Over past years it is not the same
+ * calendar in every year: the date-listed events (NFP, CPI, FOMC, PCE, ECB,
+ * FOMC minutes, and the monthly ADP that is placed two days before each listed
+ * NFP) exist only where their dates were typed in from sources, while the
+ * rule-derived ones (weekly claims, ISM by business day, approximate retail
+ * sales and flash PMI, month-end expiries, the weekly ADP pulse) compute for
+ * any year. A multi-year history therefore states which it used:
+ *   'full'   every event, as live
+ *   'rules'  only the rule-derived events — the same calendar in every year
+ *   'none'   no events at all: no blackouts, no "major release soon"
+ * Which events count as table-driven is decided by their schedule kind, so an
+ * event added later is classified without anyone remembering to.
+ */
+const CALENDAR_MODES = ['full', 'rules', 'none'];
+const TABLE_KINDS = new Set(['dates', 'daysAfterDates', 'weekdayBeforeEvent']);
+function fromDateTable(ev) {
+  return TABLE_KINDS.has(ev.schedule.kind);
+}
+function inCalendar(ev, calendar) {
+  if (calendar === 'none') return false;
+  if (calendar === 'rules') return !fromDateTable(ev);
+  return true;
+}
+
+/**
  * Concrete upcoming events, sorted, for one pair.
  * `pair` is 'XAUUSD', 'BTCUSD', or null for both.
  */
 function getUpcomingEvents(fromMs, horizonHours = 48, pair = null, opts = {}) {
-  const { includeContext = true, minTier = 3 } = opts;
+  const { includeContext = true, minTier = 3, calendar = 'full' } = opts;
   const toMs = fromMs + horizonHours * 3600e3;
   const rows = [];
 
   for (const ev of EVENTS) {
+    if (!inCalendar(ev, calendar)) continue;
     if (pair && ev.affects !== 'both' && ev.affects !== pair) continue;
     if (!includeContext && ev.tier === 'context') continue;
     if (typeof ev.tier === 'number' && ev.tier > minTier) continue;
@@ -3114,10 +3167,11 @@ function getUpcomingEvents(fromMs, horizonHours = 48, pair = null, opts = {}) {
  *
  * Returns the single most severe active window, or null. `context` events never
  * produce a blackout however close they are — treating them as blockers would
- * keep a scalper out of good trades for no reason.
+ * keep a scalper out of good trades for no reason. `calendar` is one of
+ * CALENDAR_MODES; live callers leave it at 'full'.
  */
-function getActiveBlackout(atMs, pair = null, overrides = {}) {
-  const candidates = getUpcomingEvents(atMs - 6 * 3600e3, 12, pair, { includeContext: false });
+function getActiveBlackout(atMs, pair = null, overrides = {}, { calendar = 'full' } = {}) {
+  const candidates = getUpcomingEvents(atMs - 6 * 3600e3, 12, pair, { includeContext: false, calendar });
   let best = null;
 
   for (const ev of candidates) {
@@ -3222,12 +3276,16 @@ function localHour(atMs, tz) {
   return (((d.getUTCHours() + d.getUTCMinutes() / 60 + d.getUTCSeconds() / 3600) + off) % 24 + 24) % 24;
 }
 
-/** Local calendar date in a named zone, as {y, m, d}. */
+/**
+ * Local calendar date in a named zone, as {y, m, d}. The formatter is built
+ * once per zone (timezone.js zoneFormatter): this runs several times for every
+ * bar the history replay checks, and building it each time was most of the cost.
+ */
 function localDate(atMs, tz) {
   const p = {};
-  for (const { type, value } of new Intl.DateTimeFormat('en-US', {
-    timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
-  }).formatToParts(new Date(atMs))) p[type] = value;
+  for (const { type, value } of zoneFormatter('date', tz, (zone) => new Intl.DateTimeFormat('en-US', {
+    timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit',
+  })).formatToParts(new Date(atMs))) p[type] = value;
   return { y: +p.year, m: +p.month, d: +p.day };
 }
 
@@ -4065,7 +4123,13 @@ function volatilityBucket(bars, ind, inst, tf) {
 
 function volumeBucket(bars, ind) {
   const reasons = [];
-  const rv = lastOf(ind.relVol);
+  // The NEWEST bar's relative volume, and only that. It used to be lastOf(),
+  // the last bar that had a baseline: on a bar with none (the first weekend
+  // slots, say) that was an older bar's volume, paired below with the newest
+  // bar's direction — a vote this comment already said must not happen.
+  // Fixed 16 Oct 2026, after the replay had been made to reproduce decision
+  // 26 exactly; HANDOFF decision 26 records what the fix moved.
+  const rv = valueAt(ind.relVol, 0);
   // No data is NOT the same as no direction. Relative volume needs several
   // days of history to compare like-for-like time slots; until it has them
   // this bucket abstains, and abstaining must not quietly redistribute its

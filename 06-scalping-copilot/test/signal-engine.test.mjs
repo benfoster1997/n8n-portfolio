@@ -274,6 +274,26 @@ test('abstention lowers confidence rather than being silently absorbed', () => {
     'with days of history the volume bucket should have data');
 });
 
+test('the volume bucket reads the newest bar: with no baseline for it, it abstains', () => {
+  // Five weekdays of M5 bars from Monday 14 Sep 2026, then the first hour of
+  // Saturday. Weekend slots are compared only with earlier weekends, and there
+  // are none, so the newest bar has no relative volume, while Friday's do.
+  // The engine used to take Friday 23:55's figure for Saturday's bar.
+  const bars = [];
+  for (let i = 0; i < 5 * 288 + 12; i++) {
+    const c = 3900 + i * 0.05 + Math.sin(i / 3) * 0.5;
+    bars.push({ t: Date.UTC(2026, 8, 14) + i * 300000, o: c - 0.2, h: c + 1, l: c - 1, c, v: 1000 + (i % 7) * 50 });
+  }
+  const sat = analyse({ bars: bars.slice(-300), htfBars: bars, instrument: XAU });
+  assert.equal(sat.indicators.relVol.at(-1), null, 'Saturday 00:55 has no earlier weekend to compare with');
+  assert.ok(sat.indicators.relVol.some((x) => x !== null), 'earlier bars in the window do have a baseline');
+  assert.equal(sat.buckets.volume.noData, true);
+  assert.ok(sat.abstained.includes('volume'));
+  const fri = analyse({ bars: bars.slice(-312, -12), htfBars: bars.slice(0, -12), instrument: XAU });
+  assert.ok(fri.indicators.relVol.at(-1) > 0, 'Friday 23:55 has its baseline');
+  assert.ok(!fri.abstained.includes('volume'), 'and there the bucket votes');
+});
+
 test('higher-timeframe bias uses only closed bars', () => {
   const r = analyse({ bars: trendingUp(), instrument: XAU });
   assert.ok(r.htf.m15 === null || r.htf.m15.closedBars > 0);

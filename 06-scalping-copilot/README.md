@@ -105,12 +105,15 @@ only when an idea passes every check; the session sends it and starts watching a
   When no level stands in the way it aims for 1.5× the risk (the engine's own fallback, 1×,
   can never pay the risk after costs). A level closer than that is never skipped.
 
-**What the history says.** `node desk/replay.mjs --pair bitcoin --from 2026-01-01` runs the
+**What the history says.** `node desk/replay.mjs --pair bitcoin --from 2026-01-01 --to 2026-10-11` runs the
 watcher over past bars and follows each alert to its stop, its target or 16:00. Over 2026 to
 11 October it gave 120 bitcoin alerts in the London window (about three a week), averaging
 +0.03R a trade with a 95% range of −0.17R to +0.23R (clustered by day), slightly negative in
 the first half of the year and positive in the second: **roughly break-even after the
-spread — no evidence of an edge.** Treat the alerts as demo practice.
+spread — no evidence of an edge.** Treat the alerts as demo practice. From 1 January 2025
+onward the replay reports nothing unless asked with `--holdout`, and every such run is recorded:
+those months are kept for one final test of the learning plan (LEARNING-PLAN.md). The 2026
+stretch above is the one exception, labelled as already seen.
 
 **What the watcher does not do.** It cannot see the broker's price, spread or fills. It has
 no track record: `desk/replay.mjs` replays history through it with outcomes, and that is the
@@ -686,10 +689,14 @@ desk/
   desk.mjs          the commands the chat session runs (now, brief, gate, check, size, plan…)
   live.mjs          the watcher: live bars through the same engine, gate and checks
   replay.mjs        the watcher over past bars, with what happened next
+  reads.mjs         the watcher's read at every past check, computed once and in parallel
+                    (reads-worker.mjs), kept in a read store; the serial alert pass
+  outcome.mjs       how one alert ended on a feed's bars (stop, target or 16:00), in R
   stats.mjs         the replay's averages, and its range clustered by day
+  net.mjs           re-runs a network command so Node's fetch uses the proxy
   config.json       account settings and the trade record, committed
 ../.claude/skills/scalp-desk/SKILL.md   how a session runs the desk
-test/               436 assertions; run-all.mjs runs the lot
+test/               449 assertions; run-all.mjs runs the lot
                     smoke.mjs loads the page in a real browser at seven
                     frozen session moments and fails on any page error
 HANDOFF.md          state, decisions and research, for picking this up cold

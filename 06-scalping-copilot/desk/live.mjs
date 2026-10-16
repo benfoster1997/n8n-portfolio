@@ -136,26 +136,58 @@ export function toPlan(a, pair, window, tf, targetRule = TARGET_RULE) {
  *         'none'     the engine sees no directional read
  *         'rejected' it leaned, but the idea failed a check
  *         'idea'     it passed every check
+ *
+ * Two options exist for the history replay (desk/reads.mjs); live callers
+ * leave both alone and get exactly the watcher's read:
+ *   spreadNum  the spread the read assumes. Default: the instrument's confirmed
+ *              usual spread. It is not only a cost line: it feeds the engine's
+ *              spread verdict, checkPlan's stop floor (10x the cost) and netR,
+ *              so a replay of years when bitcoin cost a fraction of $84,400 must
+ *              be able to say what the spread was then (LEARNING-PLAN.md,
+ *              engineering review).
+ *   calendar   'full' | 'rules' | 'none' — which news events exist (gate and
+ *              engine both; news-calendar.js CALENDAR_MODES).
+ * Every read past the gate records `blackoutId` (the event whose blackout was
+ * in force, or null) and `spreadNum` (the spread it used).
  */
-export function liveRead({ pair, bars, nowMs, cfg, plan = null, source = null, targetRule = TARGET_RULE }) {
+export function liveRead({ pair, bars, nowMs, cfg, plan = null, source = null, targetRule = TARGET_RULE, spreadNum = null, calendar = 'full' }) {
+  const core = engineRead({ pair, bars, nowMs, cfg, source, spreadNum, calendar });
+  if (core.done) return core.done;
+  const { result } = judgeLean(core, targetRule);
+  if (result.decision !== 'buy' && result.decision !== 'sell') return { ...core.out, kind: 'rejected', result };
+  return { ...core.out, kind: 'idea', result, plan };
+}
+
+/**
+ * liveRead's first half: everything up to and including the engine, which
+ * does not depend on the target rule. `done` is the finished read when there
+ * is nothing to judge (no-data, stale, blocked, none); otherwise `out` is the
+ * read so far and `a`, `window` what judgeLean needs. Split out so the replay
+ * can run the engine once and judge the same lean under every target rule.
+ */
+export function engineRead({ pair, bars, nowMs, cfg, source = null, spreadNum = null, calendar = 'full' }) {
   const tf = tfInfo(timeframeFor(cfg));
   const inst = INSTRUMENTS[pair];
   const closed = closedBars(bars || [], tf.minutes, nowMs);
   const base = { pair, tf: tf.id, nowMs, source };
-  if (closed.length < Math.max(MIN_BARS, minHistory(tf.id) - 1)) return { ...base, kind: 'no-data', reason: `only ${closed.length} closed ${tf.id} bars from the feed, too few for the ${tf.htf[1].id} trend` };
+  if (closed.length < Math.max(MIN_BARS, minHistory(tf.id) - 1)) return { done: { ...base, kind: 'no-data', reason: `only ${closed.length} closed ${tf.id} bars from the feed, too few for the ${tf.htf[1].id} trend` } };
   const last = closed[closed.length - 1];
   const lastCloseMs = last.t + tf.minutes * 60000;
   if (nowMs - lastCloseMs > 2 * tf.minutes * 60000) {
-    return { ...base, kind: 'stale', lastCloseMs, reason: `the feed's newest closed bar ended at ${formatHM(lastCloseMs, cfg.window.tz)} London` };
+    return { done: { ...base, kind: 'stale', lastCloseMs, reason: `the feed's newest closed bar ended at ${formatHM(lastCloseMs, cfg.window.tz)} London` } };
   }
 
-  const gate = gateFor(pair, nowMs, cfg, tf.id);
-  if (!gate.allowed) return { ...base, kind: 'blocked', gate };
+  // Looked up once and handed to both the gate and the engine (it used to be
+  // computed in each, identically, and was a large share of a replay's time).
+  const blackout = getActiveBlackout(nowMs, pair, {}, { calendar });
+  const blackoutId = blackout ? blackout.event.id : null;
+  const gate = gateFor(pair, nowMs, cfg, tf.id, { calendar, blackout });
+  if (!gate.allowed) return { done: { ...base, kind: 'blocked', gate, blackoutId } };
   // The screenshot path asks for the spread here; the watcher cannot, so it waits.
-  if (gate.needsSpread) return { ...base, kind: 'blocked', gate, spreadUnknown: true };
+  if (gate.needsSpread) return { done: { ...base, kind: 'blocked', gate, spreadUnknown: true, blackoutId } };
 
-  const spreadNum = inst.typicalSpread.observed;
-  const { cost } = costFor(pair, spreadNum, cfg);
+  const spread = Number.isFinite(spreadNum) ? spreadNum : inst.typicalSpread.observed;
+  const { cost } = costFor(pair, spread, cfg);
   const lastStretch = windowState(nowMs, cfg.window).phase === 'last-30';
   let session = { ...sessionQuality(nowMs, pair, cfg.window), lastStretch };
   // Bitcoin is read at any hour its market is open (decision 23): its quiet
@@ -165,23 +197,32 @@ export function liveRead({ pair, bars, nowMs, cfg, plan = null, source = null, t
 
   const window = closed.slice(-ENGINE_BARS);
   const a = analyse({
-    bars: window, htfBars: closed, instrument: inst, spread: spreadNum,
-    blackout: getActiveBlackout(nowMs, pair, {}), session, nowMs, timeframe: tf.id,
+    bars: window, htfBars: closed, instrument: inst, spread,
+    blackout, session, nowMs, timeframe: tf.id,
   });
-  const out = { ...base, gate, analysis: a, spreadNum, cost, barCloseMs: lastCloseMs, price: a.price, cfgWindow: cfg.window };
-  if (a.state !== 'read' || (a.bias !== 'long' && a.bias !== 'short')) return { ...out, kind: 'none' };
+  const out = { ...base, gate, analysis: a, spreadNum: spread, cost, barCloseMs: lastCloseMs, price: a.price, cfgWindow: cfg.window, blackoutId };
+  if (a.state !== 'read' || (a.bias !== 'long' && a.bias !== 'short')) return { done: { ...out, kind: 'none' }, out, a, window, closed };
+  return { done: null, out, a, window, closed, pair, tf: tf.id, inst, cost };
+}
 
-  const p = toPlan(a, pair, window, tf.id, targetRule);
+/**
+ * liveRead's second half: a lean from engineRead, under one target rule,
+ * through the plan shape and checkPlan(). Returns both: `result` is
+ * checkPlan's verdict, `plan` the levels it judged (a rejected idea's levels
+ * live only there).
+ */
+export function judgeLean(core, targetRule = TARGET_RULE) {
+  const { a, window, pair, tf, inst, cost } = core;
+  const p = toPlan(a, pair, window, tf, targetRule);
   // lastStretch is false here on purpose: the engine has already marked the
   // read down for the final stretch (×0.6). checkPlan's own step-down is for
   // screenshots, which have no engine; doing both turned every 15:30 and
   // 15:45 alert into a "low" that `take` then had to refuse.
   const result = checkPlan(p, [], {
     priceNow: a.price, cost, digits: digitsOf(pair), pair, minStopPct: inst.minStopPct,
-    asked: 0, lastStretch: false, timeframe: tf.id,
+    asked: 0, lastStretch: false, timeframe: tf,
   });
-  if (result.decision !== 'buy' && result.decision !== 'sell') return { ...out, kind: 'rejected', result };
-  return { ...out, kind: 'idea', result, plan };
+  return { plan: p, result };
 }
 
 /**

@@ -316,7 +316,13 @@ function volatilityBucket(bars, ind, inst, tf) {
 
 function volumeBucket(bars, ind) {
   const reasons = [];
-  const rv = lastOf(ind.relVol);
+  // The NEWEST bar's relative volume, and only that. It used to be lastOf(),
+  // the last bar that had a baseline: on a bar with none (the first weekend
+  // slots, say) that was an older bar's volume, paired below with the newest
+  // bar's direction — a vote this comment already said must not happen.
+  // Fixed 16 Oct 2026, after the replay had been made to reproduce decision
+  // 26 exactly; HANDOFF decision 26 records what the fix moved.
+  const rv = valueAt(ind.relVol, 0);
   // No data is NOT the same as no direction. Relative volume needs several
   // days of history to compare like-for-like time slots; until it has them
   // this bucket abstains, and abstaining must not quietly redistribute its

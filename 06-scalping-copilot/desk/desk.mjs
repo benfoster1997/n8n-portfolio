@@ -37,7 +37,7 @@
  *
  * Network commands re-run themselves with NODE_USE_ENV_PROXY=1 when the
  * environment has a proxy and it is not set: Node's fetch ignores HTTPS_PROXY
- * otherwise, and every request fails with ENOTFOUND. $SCALP_DESK_BARS (a JSON
+ * otherwise, and every request fails with ENOTFOUND (desk/net.mjs). $SCALP_DESK_BARS (a JSON
  * file of bars per instrument) stands in for the feeds under test, and
  * $SCALP_DESK_NOW sets the clock; under it the watcher's waits move the clock
  * on instead of sleeping.
@@ -46,7 +46,7 @@ import { readFileSync, writeFileSync, mkdirSync, renameSync, existsSync, rmSync 
 import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { spawnSync } from 'node:child_process';
+import { ensureProxy } from './net.mjs';
 import {
   withDefaults, pairOf, label, digitsOf, gateFor, gateWord, contextFor, formatBlocked, formatIdea,
   formatNow, formatBrief, formatNews, formatEdge, sizeFor, lotsOnlyLines, ticketLines,
@@ -673,11 +673,6 @@ const cmds = {
 const args = parseArgs(process.argv.slice(2));
 const cmd = cmds[args._[0]];
 if (!cmd) usage(`Commands: ${Object.keys(cmds).join(', ')}`);
-if (NET_CMDS.includes(args._[0]) && !process.env.SCALP_DESK_BARS && (process.env.HTTPS_PROXY || process.env.https_proxy) && !process.env.NODE_USE_ENV_PROXY) {
-  const r = spawnSync(process.execPath, [...process.execArgv, ...process.argv.slice(1)], {
-    stdio: 'inherit', env: { ...process.env, NODE_USE_ENV_PROXY: '1', NODE_NO_WARNINGS: '1' },
-  });
-  process.exit(r.status ?? 1);
-}
+ensureProxy({ when: NET_CMDS.includes(args._[0]) });
 mkdirSync(HOME, { recursive: true });
 await cmd(args);

@@ -17,17 +17,42 @@
  */
 
 /**
+ * One Intl.DateTimeFormat per zone and shape, built once and kept.
+ *
+ * Why: building a DateTimeFormat is expensive (ICU loads the zone's rules and
+ * the locale's patterns every time), while using one is cheap. These helpers
+ * run on every timezone conversion, and the history replay makes hundreds of
+ * those per bar it checks: measured on 16 Oct 2026, constructing formatters
+ * was about 95% of the replay's time (65 ms a check; ~8-10 ms once cached).
+ * A formatter holds no state between calls, so a cached one gives exactly the
+ * output a new one would — the 2026 replay was byte-identical either way.
+ * `shape` names the options `make` builds, so two shapes never share a slot.
+ */
+const ZONE_FORMATTERS = new Map();
+export function zoneFormatter(shape, tz, make) {
+  const key = `${shape}|${tz}`;
+  let f = ZONE_FORMATTERS.get(key);
+  if (!f) {
+    // An invalid zone throws here, before anything is cached, exactly as an
+    // uncached `new Intl.DateTimeFormat` would have.
+    f = make(tz);
+    ZONE_FORMATTERS.set(key, f);
+  }
+  return f;
+}
+
+/**
  * Offset of `tz` from UTC, in milliseconds, at the instant `utcMs`.
  * Positive west of Greenwich is NOT the convention here: we return
  * (wall clock read in tz) - (utc), so New York in winter gives -5h.
  */
 export function tzOffsetMs(utcMs, tz) {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: tz,
+  const parts = zoneFormatter('offset', tz, (zone) => new Intl.DateTimeFormat('en-US', {
+    timeZone: zone,
     hour12: false,
     year: 'numeric', month: '2-digit', day: '2-digit',
     hour: '2-digit', minute: '2-digit', second: '2-digit',
-  }).formatToParts(new Date(utcMs));
+  })).formatToParts(new Date(utcMs));
 
   const p = {};
   for (const { type, value } of parts) p[type] = value;
@@ -119,7 +144,7 @@ export function localZone() {
 /** Short zone abbreviation (EST/EDT/BST/GMT) for display. */
 export function zoneAbbr(utcMs, tz) {
   try {
-    const parts = new Intl.DateTimeFormat('en-US', { timeZone: tz, timeZoneName: 'short' })
+    const parts = zoneFormatter('abbr', tz, (zone) => new Intl.DateTimeFormat('en-US', { timeZone: zone, timeZoneName: 'short' }))
       .formatToParts(new Date(utcMs));
     const z = parts.find((p) => p.type === 'timeZoneName');
     return z ? z.value : '';
@@ -130,17 +155,17 @@ export function zoneAbbr(utcMs, tz) {
 
 /** HH:MM in a given zone. */
 export function formatHM(utcMs, tz) {
-  return new Intl.DateTimeFormat('en-GB', {
-    timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false,
-  }).format(new Date(utcMs));
+  return zoneFormatter('hm', tz, (zone) => new Intl.DateTimeFormat('en-GB', {
+    timeZone: zone, hour: '2-digit', minute: '2-digit', hour12: false,
+  })).format(new Date(utcMs));
 }
 
 /** "Fri 6 Nov, 13:30" in a given zone. */
 export function formatDayTime(utcMs, tz) {
-  return new Intl.DateTimeFormat('en-GB', {
-    timeZone: tz, weekday: 'short', day: 'numeric', month: 'short',
+  return zoneFormatter('daytime', tz, (zone) => new Intl.DateTimeFormat('en-GB', {
+    timeZone: zone, weekday: 'short', day: 'numeric', month: 'short',
     hour: '2-digit', minute: '2-digit', hour12: false,
-  }).format(new Date(utcMs));
+  })).format(new Date(utcMs));
 }
 
 /** Compact countdown: "2d 04h", "3h 12m", "07:41", "now". */

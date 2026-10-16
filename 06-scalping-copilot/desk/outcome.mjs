@@ -6,7 +6,13 @@
  *   - a buy fills at the ask (bid + spread); its stop and target trigger on the
  *     bid. A sell fills at the bid; its stop and target trigger on the ask.
  *   - a bar that touches both the stop and the target counts as the stop
- *     (flagged `bothTouched`, so a finer feed can settle it later).
+ *     (flagged `bothTouched`, so a finer feed can settle it later). That is
+ *     the replay's legacy rule, kept as the default so HANDOFF decision 26's
+ *     figures still reproduce. With `bothTouched: 'half'` such a bar is scored
+ *     as the average of the target's R and the stop's −1, and its `how` is
+ *     'both', so a report can say how many there were. On bitcoin's M15 bars
+ *     it happens on about 1% of trades, and calling every one a stop costs
+ *     about as much as the spread (LEARNING-PLAN.md, facts).
  *   - still open when the trading window closes: closed at that bar's close.
  * Results are in R after costs, where 1R is what the stop actually loses: a buy
  * pays the spread in its fill, so its stop loses stopDist + spread and its
@@ -22,9 +28,10 @@
  * bars: the feed's bars ({t,o,h,l,c}); k: index of the bar whose close is the
  * entry; rec: { side: 'buy'|'sell', stopDist, tp1Dist }; spread and comm in
  * price units; closesAtMs: when the trading window closes for this trade;
- * tfMinutes: the bar length. Returns null when the bars run out first.
+ * tfMinutes: the bar length; bothTouched: 'stop' (default) or 'half'.
+ * Returns null when the bars run out first.
  */
-export function outcome(bars, k, rec, { spread, comm, closesAtMs, tfMinutes }) {
+export function outcome(bars, k, rec, { spread, comm, closesAtMs, tfMinutes, bothTouched = 'stop' }) {
   const buy = rec.side === 'buy';
   const entryBid = bars[k].c;
   const sl = buy ? entryBid - rec.stopDist : entryBid + rec.stopDist;
@@ -42,6 +49,7 @@ export function outcome(bars, k, rec, { spread, comm, closesAtMs, tfMinutes }) {
     const hitSl = buy ? lo <= sl : hi >= sl;
     const hitTp = buy ? hi >= tp : lo <= tp;
     const path = { mfe: +mfe.toFixed(3), mae: +mae.toFixed(3) };
+    if (hitSl && hitTp && bothTouched === 'half') return { r: (winPx / riskPx - 1) / 2, how: 'both', bars: j - k, bothTouched: true, ...path };
     if (hitSl) return { r: -1, how: 'stop', bars: j - k, bothTouched: hitTp, ...path };
     if (hitTp) return { r: winPx / riskPx, how: 'target', bars: j - k, bothTouched: false, ...path };
     if (b.t + tfMinutes * 60000 >= closesAtMs) {
