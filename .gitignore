@@ -11,3 +11,6 @@ node_modules/
 
 # jobs-board-monitor runtime state (lives in the Actions cache, never committed)
 state.json
+
+# Claude Code worktrees for parallel agents (temporary checkouts, never committed)
+.claude/worktrees/
