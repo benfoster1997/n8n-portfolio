@@ -5,7 +5,7 @@
  * Kept small: about 200 reads in all, so the suite stays quick.
  */
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync, mkdtempSync, existsSync, cpSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdtempSync, existsSync, cpSync, rmSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -254,13 +254,19 @@ function scratchReplay(bars = BARS) {
     try { return execFileSync('node', [join(root, 'desk', 'replay.mjs'), ...args], { encoding: 'utf8', env, stdio: ['ignore', 'pipe', 'ignore'] }); } catch (x) { return `EXIT ${x.status}\n${x.stdout}`; }
   };
   const looks = () => (existsSync(join(root, 'model.json')) ? JSON.parse(readFileSync(join(root, 'model.json'), 'utf8')).looks : []);
-  return { root, run, looks, conditions: (code) => writeFileSync(join(root, 'desk', 'conditions.mjs'), code) };
+  return {
+    root, run, looks,
+    conditions: (code) => writeFileSync(join(root, 'desk', 'conditions.mjs'), code),
+    // The real desk/conditions.mjs now exists; this copy can still be made to lack it.
+    noConditions: () => rmSync(join(root, 'desk', 'conditions.mjs'), { force: true }),
+  };
 }
 const STUB = "export function conditionReport({ reads, trades, bars, block }) { return `STUB ${reads.length} reads, ${trades.length} trades, bars to ${new Date(bars[bars.length - 1].t).toISOString().slice(0, 16)} (${block})`; }\n";
 
 test('--by-condition on decision 26\'s stretch needs --holdout and is recorded; the hook sees no bar after the last session', () => {
   const r = scratchReplay();
   const range = ['--from', '2026-10-07', '--to', '2026-10-08T23:59', '--rule', '1.5R', '--workers', '1'];
+  r.noConditions();
   assert.match(r.run([...range, '--by-condition', '--holdout']), /by condition: not built yet/, 'before the file exists');
   r.conditions(STUB);
   assert.match(r.run(range), /already seen \(decision 26\)/, 'the plain report is still open');
