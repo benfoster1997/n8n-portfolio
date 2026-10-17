@@ -1,0 +1,2191 @@
+{
+  "recipe": {
+    "method": "ridge filter and ranking, walk-forward selected (LEARNING-PLAN.md Part 4)",
+    "pair": "BTCUSD",
+    "timeframe": "M15",
+    "targetRule": "1.5R",
+    "dataset": {
+      "fromMs": 1504224000000,
+      "toMs": 1735689599999,
+      "firstCloseMs": 1504249200000,
+      "lastCloseMs": 1735659900000,
+      "rows": 61039,
+      "sha256": "063e2833d83110de6c5dbc661e90a549fadb3a58406ea0ccf2be9ad68ccbf9ce",
+      "rowsKey": "95665cda1542718c",
+      "storeKey": "e7924c663df67342",
+      "settings": {
+        "pair": "BTCUSD",
+        "tf": "M15",
+        "cost": "scaled",
+        "calendar": "rules"
+      },
+      "source": "binance",
+      "holdout": false,
+      "featuresVersion": 1,
+      "labelVersion": 3
+    },
+    "config": {
+      "window": {
+        "start": {
+          "h": 8,
+          "m": 0
+        },
+        "end": {
+          "h": 16,
+          "m": 0
+        },
+        "tz": "Europe/London",
+        "label": "London session"
+      },
+      "broker": {
+        "serverOffset": "auto",
+        "fillMode": "ioc"
+      },
+      "timeframe": "M15",
+      "account": {
+        "gbpusd": 1.35,
+        "commissionPerSideGBP": null
+      }
+    },
+    "features": {
+      "names": [
+        "net",
+        "confidence",
+        "b_trend",
+        "b_momentum",
+        "b_structure",
+        "b_location",
+        "b_volume",
+        "volume_abstain",
+        "b_volatility",
+        "log_atr_change_1h",
+        "bb_width_pctile",
+        "adx",
+        "atr_over_price",
+        "atr_pctile",
+        "regime_trending",
+        "regime_ranging",
+        "regime_compressed",
+        "regime_mixed",
+        "efficiency",
+        "h1_bias",
+        "h4_bias",
+        "htf_agree",
+        "ret_1",
+        "ret_4",
+        "ret_16",
+        "ret_96",
+        "close_vs_ema21",
+        "close_vs_ema50",
+        "close_vs_vwap",
+        "rsi_m50",
+        "bb_pctb_m05",
+        "bar_range",
+        "bar_body",
+        "level_ahead",
+        "level_behind",
+        "level_ahead_none",
+        "level_behind_none",
+        "log_rel_volume",
+        "hour_08_10",
+        "hour_10_12",
+        "hour_12_14",
+        "hour_14_16",
+        "wd_mon",
+        "wd_tue",
+        "wd_wed",
+        "wd_thu",
+        "wd_fri"
+      ],
+      "version": 1,
+      "directional": [
+        "net",
+        "b_trend",
+        "b_momentum",
+        "b_structure",
+        "b_location",
+        "b_volume",
+        "h1_bias",
+        "h4_bias",
+        "ret_1",
+        "ret_4",
+        "ret_16",
+        "ret_96",
+        "close_vs_ema21",
+        "close_vs_ema50",
+        "close_vs_vwap",
+        "rsi_m50",
+        "bb_pctb_m05",
+        "bar_body"
+      ],
+      "swapped": [
+        [
+          "level_ahead",
+          "level_behind"
+        ],
+        [
+          "level_ahead_none",
+          "level_behind_none"
+        ]
+      ],
+      "sideSigned": "features.mjs sideSigned(f, side): +1 long, -1 short",
+      "nulls": "the training fold's mean (0 once standardised), no missing indicator",
+      "standardise": "fitted on each training fold only; features with no spread in the fold dropped",
+      "clip": {
+        "features": [
+          "ret_1",
+          "ret_4",
+          "ret_16",
+          "ret_96",
+          "close_vs_ema21",
+          "close_vs_ema50",
+          "close_vs_vwap",
+          "level_ahead",
+          "level_behind"
+        ],
+        "at": [
+          0.01,
+          0.99
+        ]
+      }
+    },
+    "labels": {
+      "a": "the watcher's own trade on the engine's lean, kinds idea and rejected only, the read's 1.5R-rule stop and first target (rejected rows from toPlan); gross = spread 0 and no commission, net = the read's spread and the pair's commission; keeps r, how, bars, mfe, mae",
+      "b": "a standard long and short at every check with features: stop = max(1.2 x ATR, the engine's noise-scaled minimum stop), target 1.5 x stop; same fills and window close; the result only (r, how), gross and net",
+      "bothTouched": "half",
+      "outcome": "desk/outcome.mjs outcome(): buys fill at the ask, exits trigger on the bid (sells the reverse), closed at the window's end"
+    },
+    "models": {
+      "penalty": "mean squared error + lambda x ||w||^2 on the mean loss; intercept unpenalised; exact solve (Cholesky)",
+      "filter": "trained on every check of kind idea or rejected with label (a), target a.gross.r, features signed by a.side",
+      "ranking": "trained on every check with label (b), long and short rows pooled with mirrored features, one intercept, no side term",
+      "predictedNet": "predicted gross R minus (spread + commission) / stop distance at the decision",
+      "threshold": "the (1 - q) quantile of training-period predicted net R among training checks the unfiltered watcher alerted on; kept when at or above",
+      "p2Threshold": "the ranking model's own: the (1 - share) quantile of the higher-side predicted net R over gate-open training checks (kinds none, idea, rejected) with label (b), share = (gate-open training checks alerted on / gate-open training checks) x q; traded when at or above"
+    },
+    "lambdaGrid": [
+      0.01,
+      0.1,
+      1,
+      10
+    ],
+    "qGrid": [
+      0.75,
+      0.6,
+      0.5
+    ],
+    "walkForward": {
+      "testYears": [
+        2019,
+        2020,
+        2021,
+        2022,
+        2023,
+        2024
+      ],
+      "purgeDays": 2,
+      "train": "London day before 1 January of the test year minus the purge, expanding",
+      "score": "mean net R of kept alerts over all test years, from the filtered watcher simulated through the alert sequence (reads.mjs alertPass with the predicate)",
+      "nearTie": "within one day-clustered SE (x sqrt(G/(G-1))) of the best: prefer the larger lambda, then the larger q",
+      "finalFit": "both models refitted on every development day before 2025-01-01 minus the purge, at the chosen lambda; both thresholds from those rows",
+      "gaps": "a check whose trade (label (a), or label (b) long or short, gross or net) would cross a hole of more than 4 bars on its way to its exit is gapAhead (dataset.mjs rowFor): not scored, so out of training, and left out of every alert pass (the predicate refuses it: it neither alerts nor starts a cooldown)"
+    },
+    "holdout": {
+      "from": "2025-01-01T00:00Z",
+      "seenFrom": "2026-01-01T00:00Z",
+      "to": "2026-10-14T20:45Z",
+      "rule": "looked at once. `final` checks everything that sees no outcome and records an armed entry to commit; `final --run` needs that entry committed, records started (model.json, $SCALP_DESK_HOME/learn/finals.log, ~/.scalp-desk/learn/finals.log and <git common dir>/scalp-desk-finals.log) immediately before the first outcome, then the results. A final that started or ran for an overlapping window, in any committed version of model.json, the working copy or any of the logs, refuses every later final and every refit. fit and final run only on <project>/desk/model.json and never in a shallow clone.",
+      "data": {
+        "barsBefore": 1000,
+        "maxMissingShare": 0.01,
+        "maxGapShare": 0.02,
+        "gapKinds": [
+          "gap",
+          "no-data",
+          "stale"
+        ],
+        "expected": "every bar close in the window that src/sessions.js windowState calls open on a weekday, at the timeframe"
+      },
+      "reads": "computed by the final itself (never dataset rows): reads.mjs at cost max, calendar full, rule 1.5R, with desk/features-extra.mjs",
+      "gaps": "the walk-forward's rule: a held-back check that dataset.mjs rowFor marks gapAhead (a trade crossing a hole of more than 4 bars) is left out of the unfiltered and kept passes (so of the coin-flip baseline), of T2's pairs and of P2"
+    },
+    "tests": {
+      "z": 2.241,
+      "T1": "filter: kept alerts' day-clustered lower bound of mean net R (x sqrt(G/(G-1))) above 0 at z, AND kept-minus-unfiltered mean net R per trade with a day-block-bootstrap lower bound (seed 20261016) above 0, AND at least 140 kept alerts; the filter applied before shouldAlert. Status becomes shadow only if T1 passes and the held-back window had not been looked at before (replay looks in model.json)",
+      "T2": "ranking: day-block-bootstrap lower bound (seed 20261017) of the correlation between side-aligned predicted net R and realised label-(b) net R, every holdout check with features, both sides, above 0; switches nothing on",
+      "P2": "exploratory only: the higher-predicted side where it is at or above P2's own threshold (models.p2Threshold), one position at a time, label (b), gate-open checks only",
+      "baselines": "the unfiltered watcher; a coin-flip side at each unfiltered alert = the average of the long and short outcomes with the alert's own distances, paired and day-clustered",
+      "bootstrap": {
+        "B": 2000,
+        "quantile": 0.0125,
+        "seed": 20261016,
+        "seeds": {
+          "T1": 20261016,
+          "T2": 20261017
+        },
+        "unit": "London day (UTC date of the alert)"
+      }
+    },
+    "floors": {
+      "minKeptAlerts": 140
+    },
+    "costs": {
+      "training": "gross (spread 0, no commission)",
+      "dataset": "scaled",
+      "holdoutEvaluation": "max: per check the larger of the fixed and the scaled spread, in the read and in the outcome"
+    },
+    "calendar": {
+      "training": "rules",
+      "holdout": "full",
+      "why": "walk-forward and training rows use 'rules', the same for every development year (2017-2024, whose tier-1 tables are incomplete); the one held-back evaluation (T1, T2, P2 and the baselines on 2025-01-01T00:00Z..2026-10-14T20:45Z) uses 'full', the live desk's calendar. Features do not depend on the calendar; only which checks are tradeable does"
+    },
+    "engine": {
+      "files": [
+        "desk/conditions.mjs",
+        "desk/dataset.mjs",
+        "desk/features-extra.mjs",
+        "desk/features.mjs",
+        "desk/history.mjs",
+        "desk/learn.mjs",
+        "desk/lib.mjs",
+        "desk/live.mjs",
+        "desk/net.mjs",
+        "desk/outcome.mjs",
+        "desk/reads-worker.mjs",
+        "desk/reads.mjs",
+        "desk/stats.mjs",
+        "src/brief.js",
+        "src/data-feeds.js",
+        "src/edge-test.js",
+        "src/indicators.js",
+        "src/instruments.js",
+        "src/news-calendar.js",
+        "src/risk.js",
+        "src/sessions.js",
+        "src/shot.js",
+        "src/signal-engine.js",
+        "src/timeframes.js",
+        "src/timezone.js"
+      ],
+      "hash": "90f60c8e735f78b7f2eee70aeb1023759a7d5bcd22f211e2666083069c76bfe6"
+    }
+  },
+  "recipeHash": "e79767125fa69a138ef4c5b3c4d06f7648965859c71bcb4669652200f0d97cff",
+  "walkForward": {
+    "at": "2026-10-17T05:20:16.578Z",
+    "rows": 61039,
+    "trainedOn": {
+      "from": "2017-09-01",
+      "to": "2024-12-27",
+      "rows": 60975
+    },
+    "grid": [
+      {
+        "lambda": 0.01,
+        "q": 0.75,
+        "n": 589,
+        "mean": 0.005362247962878973,
+        "days": 513,
+        "se": 0.04228410454020192,
+        "lo": -0.0775145969359168,
+        "hi": 0.08823909286167474
+      },
+      {
+        "lambda": 0.01,
+        "q": 0.6,
+        "n": 505,
+        "mean": 0.0006466462270084169,
+        "days": 445,
+        "se": 0.045923206091832675,
+        "lo": -0.08936283771298363,
+        "hi": 0.09065613016700046
+      },
+      {
+        "lambda": 0.01,
+        "q": 0.5,
+        "n": 433,
+        "mean": -0.0062442117459544045,
+        "days": 390,
+        "se": 0.04819354902984677,
+        "lo": -0.10070356784445408,
+        "hi": 0.08821514435254527
+      },
+      {
+        "lambda": 0.1,
+        "q": 0.75,
+        "n": 595,
+        "mean": -0.0007062060359210407,
+        "days": 515,
+        "se": 0.04176614414838917,
+        "lo": -0.08256784856676382,
+        "hi": 0.08115543649492173
+      },
+      {
+        "lambda": 0.1,
+        "q": 0.6,
+        "n": 513,
+        "mean": 0.0102146091889232,
+        "days": 452,
+        "se": 0.04530686998906858,
+        "lo": -0.07858685598965122,
+        "hi": 0.09901607436749761
+      },
+      {
+        "lambda": 0.1,
+        "q": 0.5,
+        "n": 442,
+        "mean": 0.008322052057930105,
+        "days": 395,
+        "se": 0.048227645545311636,
+        "lo": -0.0862041332108807,
+        "hi": 0.10284823732674091
+      },
+      {
+        "lambda": 1,
+        "q": 0.75,
+        "n": 580,
+        "mean": 0.0001831799305626375,
+        "days": 508,
+        "se": 0.04132045471116037,
+        "lo": -0.0808049113033117,
+        "hi": 0.08117127116443697
+      },
+      {
+        "lambda": 1,
+        "q": 0.6,
+        "n": 506,
+        "mean": 0.008353970889345672,
+        "days": 448,
+        "se": 0.04357457876447654,
+        "lo": -0.07705220348902835,
+        "hi": 0.09376014526771968
+      },
+      {
+        "lambda": 1,
+        "q": 0.5,
+        "n": 451,
+        "mean": 0.04023967623663776,
+        "days": 400,
+        "se": 0.04623985658241453,
+        "lo": -0.05039044266489471,
+        "hi": 0.13086979513817024
+      },
+      {
+        "lambda": 10,
+        "q": 0.75,
+        "n": 540,
+        "mean": 0.008943263582820252,
+        "days": 481,
+        "se": 0.03874744005934781,
+        "lo": -0.06700171893350146,
+        "hi": 0.08488824609914197
+      },
+      {
+        "lambda": 10,
+        "q": 0.6,
+        "n": 440,
+        "mean": 0.004438009650224334,
+        "days": 401,
+        "se": 0.03902779290155758,
+        "lo": -0.0720564644368285,
+        "hi": 0.08093248373727718
+      },
+      {
+        "lambda": 10,
+        "q": 0.5,
+        "n": 382,
+        "mean": 0.017535761766534444,
+        "days": 350,
+        "se": 0.040189620358879755,
+        "lo": -0.061235894136869876,
+        "hi": 0.09630741766993876
+      }
+    ],
+    "perYear": [
+      {
+        "year": 2019,
+        "train": {
+          "rows": 10978,
+          "filter": 5275,
+          "ranking": 18872,
+          "lastDay": "2018-12-28"
+        },
+        "threshold": -0.01469500747920213,
+        "unfiltered": {
+          "n": 93,
+          "mean": -0.008213788955714918
+        },
+        "kept": {
+          "n": 63,
+          "mean": 0.07028555787266554
+        },
+        "removed": {
+          "n": 32,
+          "mean": -0.09078536994355763
+        },
+        "rankCorr": 0.08368752224980305,
+        "rankPairs": 14098,
+        "alertedMismatch": 0,
+        "gapAheadLeftOut": 0
+      },
+      {
+        "year": 2020,
+        "train": {
+          "rows": 19259,
+          "filter": 8969,
+          "ranking": 32906,
+          "lastDay": "2019-12-27"
+        },
+        "threshold": 0.001955868682473605,
+        "unfiltered": {
+          "n": 126,
+          "mean": 0.024350088944097712
+        },
+        "kept": {
+          "n": 95,
+          "mean": 0.011719010908042539
+        },
+        "removed": {
+          "n": 34,
+          "mean": 0.06189915648002479
+        },
+        "rankCorr": 0.08270600949455177,
+        "rankPairs": 14254,
+        "alertedMismatch": 0,
+        "gapAheadLeftOut": 3
+      },
+      {
+        "year": 2021,
+        "train": {
+          "rows": 27612,
+          "filter": 12929,
+          "ranking": 47288,
+          "lastDay": "2020-12-29"
+        },
+        "threshold": 0.003323227558396375,
+        "unfiltered": {
+          "n": 118,
+          "mean": -0.036494680223892906
+        },
+        "kept": {
+          "n": 87,
+          "mean": -0.12257951235294022
+        },
+        "removed": {
+          "n": 31,
+          "mean": 0.2050982357511754
+        },
+        "rankCorr": 0.0528152616516916,
+        "rankPairs": 14102,
+        "alertedMismatch": 0,
+        "gapAheadLeftOut": 0
+      },
+      {
+        "year": 2022,
+        "train": {
+          "rows": 35956,
+          "filter": 16794,
+          "ranking": 61262,
+          "lastDay": "2021-12-29"
+        },
+        "threshold": 0.0036958294057551806,
+        "unfiltered": {
+          "n": 126,
+          "mean": -0.07524094059168028
+        },
+        "kept": {
+          "n": 103,
+          "mean": -0.04793772448734015
+        },
+        "removed": {
+          "n": 23,
+          "mean": -0.19751186488502984
+        },
+        "rankCorr": 0.041626491145278686,
+        "rankPairs": 16640,
+        "alertedMismatch": 0,
+        "gapAheadLeftOut": 0
+      },
+      {
+        "year": 2023,
+        "train": {
+          "rows": 44308,
+          "filter": 21238,
+          "ranking": 77966,
+          "lastDay": "2022-12-29"
+        },
+        "threshold": -0.00710601312370689,
+        "unfiltered": {
+          "n": 115,
+          "mean": 0.019218500036204386
+        },
+        "kept": {
+          "n": 87,
+          "mean": 0.07372402985039746
+        },
+        "removed": {
+          "n": 29,
+          "mean": -0.1794435549248646
+        },
+        "rankCorr": 0.03761771962163047,
+        "rankPairs": 16204,
+        "alertedMismatch": 0,
+        "gapAheadLeftOut": 0
+      },
+      {
+        "year": 2024,
+        "train": {
+          "rows": 52655,
+          "filter": 25836,
+          "ranking": 94234,
+          "lastDay": "2023-12-29"
+        },
+        "threshold": -0.01417444452550657,
+        "unfiltered": {
+          "n": 145,
+          "mean": 0.006610840406438911
+        },
+        "kept": {
+          "n": 105,
+          "mean": 0.08072455954664974
+        },
+        "removed": {
+          "n": 41,
+          "mean": -0.20774407057230695
+        },
+        "rankCorr": 0.04512634803849972,
+        "rankPairs": 16768,
+        "alertedMismatch": 0,
+        "gapAheadLeftOut": 0
+      }
+    ],
+    "pooled": {
+      "unfiltered": {
+        "n": 723,
+        "mean": -0.011499035385614293,
+        "days": 598,
+        "se": 0.03810644244268611,
+        "lo": -0.08618766257327906,
+        "hi": 0.06318959180205047
+      },
+      "kept": {
+        "n": 540,
+        "mean": 0.008943263582820252,
+        "days": 481,
+        "se": 0.03874744005934781,
+        "lo": -0.06700171893350146,
+        "hi": 0.08488824609914197
+      },
+      "removed": {
+        "n": 190,
+        "mean": -0.0668771478327785,
+        "days": 158,
+        "se": 0.09637831194260996,
+        "lo": -0.255778639240294,
+        "hi": 0.122024343574737
+      }
+    },
+    "chosen": {
+      "lambda": 10,
+      "q": 0.75,
+      "tiedWith": 11,
+      "nothingKept": false,
+      "best": {
+        "lambda": 1,
+        "q": 0.5,
+        "mean": 0.04023967623663776,
+        "se": 0.04623985658241453
+      }
+    },
+    "conditions": {
+      "kept": {
+        "rows": [
+          {
+            "cell": "regime:trending",
+            "group": "Regime",
+            "label": "Trending",
+            "n": 500,
+            "days": 451,
+            "mean": 0.019961172446220633,
+            "lo": -0.10456949007865378,
+            "hi": 0.14449183497109505,
+            "crit": 3.163097470428511,
+            "tooFew": false,
+            "why": null,
+            "clearsZero": false,
+            "clearsAt95": false
+          },
+          {
+            "cell": "regime:ranging",
+            "group": "Regime",
+            "label": "Ranging",
+            "n": 35,
+            "days": 33,
+            "mean": -0.15106664934118255,
+            "lo": -0.8120607718673671,
+            "hi": 0.5099274731850021,
+            "crit": 3.4333908561884527,
+            "tooFew": false,
+            "why": null,
+            "clearsZero": false,
+            "clearsAt95": false
+          },
+          {
+            "cell": "regime:compressed",
+            "group": "Regime",
+            "label": "Compressed",
+            "n": 1,
+            "days": 1,
+            "mean": null,
+            "lo": null,
+            "hi": null,
+            "crit": null,
+            "tooFew": true,
+            "why": "trades",
+            "clearsZero": false,
+            "clearsAt95": false
+          },
+          {
+            "cell": "regime:mixed",
+            "group": "Regime",
+            "label": "Mixed",
+            "n": 4,
+            "days": 4,
+            "mean": null,
+            "lo": null,
+            "hi": null,
+            "crit": null,
+            "tooFew": true,
+            "why": "trades",
+            "clearsZero": false,
+            "clearsAt95": false
+          },
+          {
+            "cell": "confidence:low",
+            "group": "Confidence",
+            "label": "Low",
+            "n": 0,
+            "days": 0,
+            "mean": null,
+            "lo": null,
+            "hi": null,
+            "crit": null,
+            "tooFew": true,
+            "why": "trades",
+            "clearsZero": false,
+            "clearsAt95": false
+          },
+          {
+            "cell": "confidence:moderate",
+            "group": "Confidence",
+            "label": "Moderate",
+            "n": 455,
+            "days": 420,
+            "mean": 0.015129626960903867,
+            "lo": -0.12104112443182899,
+            "hi": 0.15130037835363672,
+            "crit": 3.164520290164546,
+            "tooFew": false,
+            "why": null,
+            "clearsZero": false,
+            "clearsAt95": false
+          },
+          {
+            "cell": "confidence:firm",
+            "group": "Confidence",
+            "label": "Firm",
+            "n": 85,
+            "days": 81,
+            "mean": -0.024171975676333196,
+            "lo": -0.2914913927937586,
+            "hi": 0.24314744144109215,
+            "crit": 3.254325289927692,
+            "tooFew": false,
+            "why": null,
+            "clearsZero": false,
+            "clearsAt95": false
+          },
+          {
+            "cell": "htf:agree",
+            "group": "Higher timeframes",
+            "label": "Agree",
+            "n": 334,
+            "days": 295,
+            "mean": -0.06313569774313016,
+            "lo": -0.21736417644582123,
+            "hi": 0.09109278095956092,
+            "crit": 3.1733275283650073,
+            "tooFew": false,
+            "why": null,
+            "clearsZero": false,
+            "clearsAt95": false
+          },
+          {
+            "cell": "htf:differ",
+            "group": "Higher timeframes",
+            "label": "Do not agree",
+            "n": 206,
+            "days": 196,
+            "mean": 0.12580915233460388,
+            "lo": -0.07684182895284025,
+            "hi": 0.328460133622048,
+            "crit": 3.18841837925811,
+            "tooFew": false,
+            "why": null,
+            "clearsZero": false,
+            "clearsAt95": true
+          },
+          {
+            "cell": "trend:+",
+            "group": "Buckets",
+            "label": "Trend with the trade",
+            "n": 534,
+            "days": 479,
+            "mean": 0.016511276998044663,
+            "lo": -0.10593722836932425,
+            "hi": 0.13895978236541356,
+            "crit": 3.161971793736484,
+            "tooFew": false,
+            "why": null,
+            "clearsZero": false,
+            "clearsAt95": false
+          },
+          {
+            "cell": "trend:-",
+            "group": "Buckets",
+            "label": "Trend against the trade",
+            "n": 6,
+            "days": 6,
+            "mean": null,
+            "lo": null,
+            "hi": null,
+            "crit": null,
+            "tooFew": true,
+            "why": "trades",
+            "clearsZero": false,
+            "clearsAt95": false
+          },
+          {
+            "cell": "momentum:+",
+            "group": "Buckets",
+            "label": "Momentum with the trade",
+            "n": 504,
+            "days": 455,
+            "mean": 0.0042528700829104135,
+            "lo": -0.11516013097074293,
+            "hi": 0.12366587113656377,
+            "crit": 3.162928111812107,
+            "tooFew": false,
+            "why": null,
+            "clearsZero": false,
+            "clearsAt95": false
+          },
+          {
+            "cell": "momentum:-",
+            "group": "Buckets",
+            "label": "Momentum against the trade",
+            "n": 36,
+            "days": 34,
+            "mean": 0.07460877258155839,
+            "lo": -0.7731437512101739,
+            "hi": 0.9223612963732907,
+            "crit": 3.4239345909254553,
+            "tooFew": false,
+            "why": null,
+            "clearsZero": false,
+            "clearsAt95": false
+          },
+          {
+            "cell": "structure:+",
+            "group": "Buckets",
+            "label": "Structure with the trade",
+            "n": 398,
+            "days": 363,
+            "mean": 0.017533889389135502,
+            "lo": -0.13402988618614806,
+            "hi": 0.16909766496441905,
+            "crit": 3.1677767932606002,
+            "tooFew": false,
+            "why": null,
+            "clearsZero": false,
+            "clearsAt95": false
+          },
+          {
+            "cell": "structure:-",
+            "group": "Buckets",
+            "label": "Structure against the trade",
+            "n": 142,
+            "days": 136,
+            "mean": -0.015134687620795683,
+            "lo": -0.2252954232273783,
+            "hi": 0.19502604798578696,
+            "crit": 3.208536475670371,
+            "tooFew": false,
+            "why": null,
+            "clearsZero": false,
+            "clearsAt95": false
+          },
+          {
+            "cell": "location:+",
+            "group": "Buckets",
+            "label": "Location with the trade",
+            "n": 28,
+            "days": 26,
+            "mean": null,
+            "lo": null,
+            "hi": null,
+            "crit": null,
+            "tooFew": true,
+            "why": "trades",
+            "clearsZero": false,
+            "clearsAt95": false
+          },
+          {
+            "cell": "location:-",
+            "group": "Buckets",
+            "label": "Location against the trade",
+            "n": 512,
+            "days": 461,
+            "mean": 0.01997790021553927,
+            "lo": -0.10398347969736729,
+            "hi": 0.14393928012844584,
+            "crit": 3.1626796263508368,
+            "tooFew": false,
+            "why": null,
+            "clearsZero": false,
+            "clearsAt95": false
+          },
+          {
+            "cell": "volume:+",
+            "group": "Buckets",
+            "label": "Volume with the trade",
+            "n": 314,
+            "days": 295,
+            "mean": -0.026601700771683577,
+            "lo": -0.15693931081277232,
+            "hi": 0.10373590926940515,
+            "crit": 3.1733275283650073,
+            "tooFew": false,
+            "why": null,
+            "clearsZero": false,
+            "clearsAt95": false
+          },
+          {
+            "cell": "volume:-",
+            "group": "Buckets",
+            "label": "Volume against the trade",
+            "n": 18,
+            "days": 18,
+            "mean": null,
+            "lo": null,
+            "hi": null,
+            "crit": null,
+            "tooFew": true,
+            "why": "trades",
+            "clearsZero": false,
+            "clearsAt95": false
+          },
+          {
+            "cell": "hour:08-10",
+            "group": "Hour (London)",
+            "label": "08:00 to 10:00",
+            "n": 174,
+            "days": 171,
+            "mean": 0.05408119449971102,
+            "lo": -0.20209302938943743,
+            "hi": 0.3102554183888595,
+            "crit": 3.1950497656916923,
+            "tooFew": false,
+            "why": null,
+            "clearsZero": false,
+            "clearsAt95": false
+          },
+          {
+            "cell": "hour:10-12",
+            "group": "Hour (London)",
+            "label": "10:00 to 12:00",
+            "n": 100,
+            "days": 99,
+            "mean": 0.0069452941831921015,
+            "lo": -0.3114432833206709,
+            "hi": 0.32533387168705513,
+            "crit": 3.233537488386901,
+            "tooFew": false,
+            "why": null,
+            "clearsZero": false,
+            "clearsAt95": false
+          },
+          {
+            "cell": "hour:12-14",
+            "group": "Hour (London)",
+            "label": "12:00 to 14:00",
+            "n": 135,
+            "days": 133,
+            "mean": -0.0661710452297499,
+            "lo": -0.3047193679604582,
+            "hi": 0.1723772775009584,
+            "crit": 3.2100315777033757,
+            "tooFew": false,
+            "why": null,
+            "clearsZero": false,
+            "clearsAt95": false
+          },
+          {
+            "cell": "hour:14-16",
+            "group": "Hour (London)",
+            "label": "14:00 to 16:00",
+            "n": 131,
+            "days": 130,
+            "mean": 0.02792210824023086,
+            "lo": -0.15479371959829302,
+            "hi": 0.21063793607875475,
+            "crit": 3.2115975674851143,
+            "tooFew": false,
+            "why": null,
+            "clearsZero": false,
+            "clearsAt95": false
+          },
+          {
+            "cell": "weekday:Mon",
+            "group": "Weekday",
+            "label": "Monday",
+            "n": 133,
+            "days": 112,
+            "mean": -0.026889267261881893,
+            "lo": -0.2599862964432,
+            "hi": 0.20620776191943618,
+            "crit": 3.2228112524799144,
+            "tooFew": false,
+            "why": null,
+            "clearsZero": false,
+            "clearsAt95": false
+          },
+          {
+            "cell": "weekday:Tue",
+            "group": "Weekday",
+            "label": "Tuesday",
+            "n": 102,
+            "days": 96,
+            "mean": 0.035180593068093215,
+            "lo": -0.2679189870052287,
+            "hi": 0.3382801731414152,
+            "crit": 3.236440667079478,
+            "tooFew": false,
+            "why": null,
+            "clearsZero": false,
+            "clearsAt95": false
+          },
+          {
+            "cell": "weekday:Wed",
+            "group": "Weekday",
+            "label": "Wednesday",
+            "n": 118,
+            "days": 105,
+            "mean": 0.14549882154370644,
+            "lo": -0.13908609663094165,
+            "hi": 0.43008373971835456,
+            "crit": 3.2282456866350913,
+            "tooFew": false,
+            "why": null,
+            "clearsZero": false,
+            "clearsAt95": false
+          },
+          {
+            "cell": "weekday:Thu",
+            "group": "Weekday",
+            "label": "Thursday",
+            "n": 94,
+            "days": 83,
+            "mean": 0.010748798857428424,
+            "lo": -0.29925182724906685,
+            "hi": 0.32074942496392367,
+            "crit": 3.2515510554831053,
+            "tooFew": false,
+            "why": null,
+            "clearsZero": false,
+            "clearsAt95": false
+          },
+          {
+            "cell": "weekday:Fri",
+            "group": "Weekday",
+            "label": "Friday",
+            "n": 93,
+            "days": 85,
+            "mean": -0.14367778115212795,
+            "lo": -0.42442452661122,
+            "hi": 0.13706896430696405,
+            "crit": 3.248912867685249,
+            "tooFew": false,
+            "why": null,
+            "clearsZero": false,
+            "clearsAt95": false
+          },
+          {
+            "cell": "side:buy",
+            "group": "Side",
+            "label": "Buys",
+            "n": 301,
+            "days": 267,
+            "mean": 0.0815207875175089,
+            "lo": -0.07338543430008058,
+            "hi": 0.23642700933509836,
+            "crit": 3.176445740681629,
+            "tooFew": false,
+            "why": null,
+            "clearsZero": false,
+            "clearsAt95": false
+          },
+          {
+            "cell": "side:sell",
+            "group": "Side",
+            "label": "Sells",
+            "n": 239,
+            "days": 231,
+            "mean": -0.08246190254413076,
+            "lo": -0.2793521895280108,
+            "hi": 0.11442838443974927,
+            "crit": 3.181582564774544,
+            "tooFew": false,
+            "why": null,
+            "clearsZero": false,
+            "clearsAt95": false
+          }
+        ],
+        "all": {
+          "n": 540,
+          "days": 481,
+          "mean": 0.008943263582820252,
+          "lo": -0.11357212918730983,
+          "hi": 0.13145865635295034,
+          "crit": 3.16189643967391,
+          "tooFew": false,
+          "why": null,
+          "clearsZero": false,
+          "clearsAt95": false
+        },
+        "outside": {
+          "Regime": 0,
+          "Confidence": 0,
+          "Higher timeframes": 0,
+          "Hour (London)": 0,
+          "Weekday": 0,
+          "Side": 0
+        },
+        "bucketsNeither": {
+          "trend": {
+            "zero": 0,
+            "abstained": 0
+          },
+          "momentum": {
+            "zero": 0,
+            "abstained": 0
+          },
+          "structure": {
+            "zero": 0,
+            "abstained": 0
+          },
+          "location": {
+            "zero": 0,
+            "abstained": 0
+          },
+          "volume": {
+            "zero": 208,
+            "abstained": 0
+          }
+        },
+        "cells": 30,
+        "alpha": 0.05,
+        "z": 3.143980285047065,
+        "expectedByChance": 1.5,
+        "found": 0,
+        "foundAt95": 1,
+        "period": "dev",
+        "trades": 540,
+        "days": 481,
+        "from": "2019-01-02T14:00",
+        "to": "2024-12-31T13:30",
+        "skipped": {
+          "noCond": 0,
+          "noResult": 0
+        },
+        "minN": 30,
+        "minDays": 10,
+        "cluster": "day"
+      },
+      "removed": {
+        "rows": [
+          {
+            "cell": "regime:trending",
+            "group": "Regime",
+            "label": "Trending",
+            "n": 25,
+            "days": 24,
+            "mean": null,
+            "lo": null,
+            "hi": null,
+            "crit": null,
+            "tooFew": true,
+            "why": "trades",
+            "clearsZero": false,
+            "clearsAt95": false
+          },
+          {
+            "cell": "regime:ranging",
+            "group": "Regime",
+            "label": "Ranging",
+            "n": 163,
+            "days": 133,
+            "mean": -0.033931079387604486,
+            "lo": -0.38001015673302974,
+            "hi": 0.3121479979578208,
+            "crit": 3.2100315777033757,
+            "tooFew": false,
+            "why": null,
+            "clearsZero": false,
+            "clearsAt95": false
+          },
+          {
+            "cell": "regime:compressed",
+            "group": "Regime",
+            "label": "Compressed",
+            "n": 1,
+            "days": 1,
+            "mean": null,
+            "lo": null,
+            "hi": null,
+            "crit": null,
+            "tooFew": true,
+            "why": "trades",
+            "clearsZero": false,
+            "clearsAt95": false
+          },
+          {
+            "cell": "regime:mixed",
+            "group": "Regime",
+            "label": "Mixed",
+            "n": 1,
+            "days": 1,
+            "mean": null,
+            "lo": null,
+            "hi": null,
+            "crit": null,
+            "tooFew": true,
+            "why": "trades",
+            "clearsZero": false,
+            "clearsAt95": false
+          },
+          {
+            "cell": "confidence:low",
+            "group": "Confidence",
+            "label": "Low",
+            "n": 0,
+            "days": 0,
+            "mean": null,
+            "lo": null,
+            "hi": null,
+            "crit": null,
+            "tooFew": true,
+            "why": "trades",
+            "clearsZero": false,
+            "clearsAt95": false
+          },
+          {
+            "cell": "confidence:moderate",
+            "group": "Confidence",
+            "label": "Moderate",
+            "n": 188,
+            "days": 157,
+            "mean": -0.05855228723719989,
+            "lo": -0.37183016834117993,
+            "hi": 0.2547255938667801,
+            "crit": 3.199706617776428,
+            "tooFew": false,
+            "why": null,
+            "clearsZero": false,
+            "clearsAt95": false
+          },
+          {
+            "cell": "confidence:firm",
+            "group": "Confidence",
+            "label": "Firm",
+            "n": 2,
+            "days": 2,
+            "mean": null,
+            "lo": null,
+            "hi": null,
+            "crit": null,
+            "tooFew": true,
+            "why": "trades",
+            "clearsZero": false,
+            "clearsAt95": false
+          },
+          {
+            "cell": "htf:agree",
+            "group": "Higher timeframes",
+            "label": "Agree",
+            "n": 161,
+            "days": 132,
+            "mean": -0.12502652855903595,
+            "lo": -0.4410184066529208,
+            "hi": 0.1909653495348489,
+            "crit": 3.2105454528109476,
+            "tooFew": false,
+            "why": null,
+            "clearsZero": false,
+            "clearsAt95": false
+          },
+          {
+            "cell": "htf:differ",
+            "group": "Higher timeframes",
+            "label": "Do not agree",
+            "n": 29,
+            "days": 28,
+            "mean": null,
+            "lo": null,
+            "hi": null,
+            "crit": null,
+            "tooFew": true,
+            "why": "trades",
+            "clearsZero": false,
+            "clearsAt95": false
+          },
+          {
+            "cell": "trend:+",
+            "group": "Buckets",
+            "label": "Trend with the trade",
+            "n": 117,
+            "days": 103,
+            "mean": -0.059486408688870236,
+            "lo": -0.47601554634909693,
+            "hi": 0.35704272897135647,
+            "crit": 3.2299387491557354,
+            "tooFew": false,
+            "why": null,
+            "clearsZero": false,
+            "clearsAt95": false
+          },
+          {
+            "cell": "trend:-",
+            "group": "Buckets",
+            "label": "Trend against the trade",
+            "n": 72,
+            "days": 66,
+            "mean": -0.06592705932819574,
+            "lo": -0.5792007239235605,
+            "hi": 0.44734660526716896,
+            "crit": 3.280784949264671,
+            "tooFew": false,
+            "why": null,
+            "clearsZero": false,
+            "clearsAt95": false
+          },
+          {
+            "cell": "momentum:+",
+            "group": "Buckets",
+            "label": "Momentum with the trade",
+            "n": 49,
+            "days": 47,
+            "mean": -0.12720463752054642,
+            "lo": -0.7276820035399076,
+            "hi": 0.47327272849881474,
+            "crit": 3.340444696531449,
+            "tooFew": false,
+            "why": null,
+            "clearsZero": false,
+            "clearsAt95": false
+          },
+          {
+            "cell": "momentum:-",
+            "group": "Buckets",
+            "label": "Momentum against the trade",
+            "n": 141,
+            "days": 118,
+            "mean": -0.04591227552993711,
+            "lo": -0.41659271390548214,
+            "hi": 0.32476816284560794,
+            "crit": 3.2186817858155337,
+            "tooFew": false,
+            "why": null,
+            "clearsZero": false,
+            "clearsAt95": false
+          },
+          {
+            "cell": "structure:+",
+            "group": "Buckets",
+            "label": "Structure with the trade",
+            "n": 188,
+            "days": 156,
+            "mean": -0.05963929744506269,
+            "lo": -0.37065703695176283,
+            "hi": 0.25137844206163745,
+            "crit": 3.2000719592424502,
+            "tooFew": false,
+            "why": null,
+            "clearsZero": false,
+            "clearsAt95": false
+          },
+          {
+            "cell": "structure:-",
+            "group": "Buckets",
+            "label": "Structure against the trade",
+            "n": 2,
+            "days": 2,
+            "mean": null,
+            "lo": null,
+            "hi": null,
+            "crit": null,
+            "tooFew": true,
+            "why": "trades",
+            "clearsZero": false,
+            "clearsAt95": false
+          },
+          {
+            "cell": "location:+",
+            "group": "Buckets",
+            "label": "Location with the trade",
+            "n": 155,
+            "days": 127,
+            "mean": -0.09545547295507126,
+            "lo": -0.4451564282248264,
+            "hi": 0.2542454823146839,
+            "crit": 3.2132396084862194,
+            "tooFew": false,
+            "why": null,
+            "clearsZero": false,
+            "clearsAt95": false
+          },
+          {
+            "cell": "location:-",
+            "group": "Buckets",
+            "label": "Location against the trade",
+            "n": 35,
+            "days": 33,
+            "mean": 0.05968400628023244,
+            "lo": -0.705742031519079,
+            "hi": 0.8251100440795438,
+            "crit": 3.4333908561884527,
+            "tooFew": false,
+            "why": null,
+            "clearsZero": false,
+            "clearsAt95": false
+          },
+          {
+            "cell": "volume:+",
+            "group": "Buckets",
+            "label": "Volume with the trade",
+            "n": 33,
+            "days": 30,
+            "mean": -0.0009611578778794934,
+            "lo": -0.8767383273704158,
+            "hi": 0.8748160116146567,
+            "crit": 3.4660170934503185,
+            "tooFew": false,
+            "why": null,
+            "clearsZero": false,
+            "clearsAt95": false
+          },
+          {
+            "cell": "volume:-",
+            "group": "Buckets",
+            "label": "Volume against the trade",
+            "n": 5,
+            "days": 5,
+            "mean": null,
+            "lo": null,
+            "hi": null,
+            "crit": null,
+            "tooFew": true,
+            "why": "trades",
+            "clearsZero": false,
+            "clearsAt95": false
+          },
+          {
+            "cell": "hour:08-10",
+            "group": "Hour (London)",
+            "label": "08:00 to 10:00",
+            "n": 45,
+            "days": 43,
+            "mean": -0.10495393572686712,
+            "lo": -0.8062300265957127,
+            "hi": 0.5963221551419784,
+            "crit": 3.360299042294173,
+            "tooFew": false,
+            "why": null,
+            "clearsZero": false,
+            "clearsAt95": false
+          },
+          {
+            "cell": "hour:10-12",
+            "group": "Hour (London)",
+            "label": "10:00 to 12:00",
+            "n": 62,
+            "days": 60,
+            "mean": 0.11312212039501869,
+            "lo": -0.4636413410387671,
+            "hi": 0.6898855818288044,
+            "crit": 3.2952971279346457,
+            "tooFew": false,
+            "why": null,
+            "clearsZero": false,
+            "clearsAt95": false
+          },
+          {
+            "cell": "hour:12-14",
+            "group": "Hour (London)",
+            "label": "12:00 to 14:00",
+            "n": 49,
+            "days": 48,
+            "mean": -0.1486284897908989,
+            "lo": -0.8123062078610277,
+            "hi": 0.5150492282792298,
+            "crit": 3.3360374251251415,
+            "tooFew": false,
+            "why": null,
+            "clearsZero": false,
+            "clearsAt95": false
+          },
+          {
+            "cell": "hour:14-16",
+            "group": "Hour (London)",
+            "label": "14:00 to 16:00",
+            "n": 34,
+            "days": 33,
+            "mean": -0.22689724838988234,
+            "lo": -0.9731393697252795,
+            "hi": 0.5193448729455148,
+            "crit": 3.4333908561884527,
+            "tooFew": false,
+            "why": null,
+            "clearsZero": false,
+            "clearsAt95": false
+          },
+          {
+            "cell": "weekday:Mon",
+            "group": "Weekday",
+            "label": "Monday",
+            "n": 20,
+            "days": 17,
+            "mean": null,
+            "lo": null,
+            "hi": null,
+            "crit": null,
+            "tooFew": true,
+            "why": "trades",
+            "clearsZero": false,
+            "clearsAt95": false
+          },
+          {
+            "cell": "weekday:Tue",
+            "group": "Weekday",
+            "label": "Tuesday",
+            "n": 32,
+            "days": 29,
+            "mean": -0.3220047874776823,
+            "lo": -1.067185141660722,
+            "hi": 0.42317556670535755,
+            "crit": 3.478587742793934,
+            "tooFew": false,
+            "why": null,
+            "clearsZero": false,
+            "clearsAt95": false
+          },
+          {
+            "cell": "weekday:Wed",
+            "group": "Weekday",
+            "label": "Wednesday",
+            "n": 50,
+            "days": 41,
+            "mean": 0.01278817373676702,
+            "lo": -0.5216921523666521,
+            "hi": 0.5472684998401861,
+            "crit": 3.371809635597856,
+            "tooFew": false,
+            "why": null,
+            "clearsZero": false,
+            "clearsAt95": false
+          },
+          {
+            "cell": "weekday:Thu",
+            "group": "Weekday",
+            "label": "Thursday",
+            "n": 34,
+            "days": 29,
+            "mean": 0.05618322546311633,
+            "lo": -0.9757375524992341,
+            "hi": 1.0881040034254668,
+            "crit": 3.478587742793934,
+            "tooFew": false,
+            "why": null,
+            "clearsZero": false,
+            "clearsAt95": false
+          },
+          {
+            "cell": "weekday:Fri",
+            "group": "Weekday",
+            "label": "Friday",
+            "n": 54,
+            "days": 42,
+            "mean": -0.04638540411408103,
+            "lo": -0.6692082005208337,
+            "hi": 0.5764373922926718,
+            "crit": 3.365905317200486,
+            "tooFew": false,
+            "why": null,
+            "clearsZero": false,
+            "clearsAt95": false
+          },
+          {
+            "cell": "side:buy",
+            "group": "Side",
+            "label": "Buys",
+            "n": 95,
+            "days": 86,
+            "mean": -0.05042256218010983,
+            "lo": -0.5413351986545094,
+            "hi": 0.4404900742942897,
+            "crit": 3.247641702452711,
+            "tooFew": false,
+            "why": null,
+            "clearsZero": false,
+            "clearsAt95": false
+          },
+          {
+            "cell": "side:sell",
+            "group": "Side",
+            "label": "Sells",
+            "n": 95,
+            "days": 86,
+            "mean": -0.08333173348544716,
+            "lo": -0.502012295757416,
+            "hi": 0.3353488287865217,
+            "crit": 3.247641702452711,
+            "tooFew": false,
+            "why": null,
+            "clearsZero": false,
+            "clearsAt95": false
+          }
+        ],
+        "all": {
+          "n": 190,
+          "days": 158,
+          "mean": -0.0668771478327785,
+          "lo": -0.3752247150551258,
+          "hi": 0.2414704193895688,
+          "crit": 3.19934600437864,
+          "tooFew": false,
+          "why": null,
+          "clearsZero": false,
+          "clearsAt95": false
+        },
+        "outside": {
+          "Regime": 0,
+          "Confidence": 0,
+          "Higher timeframes": 0,
+          "Hour (London)": 0,
+          "Weekday": 0,
+          "Side": 0
+        },
+        "bucketsNeither": {
+          "trend": {
+            "zero": 1,
+            "abstained": 0
+          },
+          "momentum": {
+            "zero": 0,
+            "abstained": 0
+          },
+          "structure": {
+            "zero": 0,
+            "abstained": 0
+          },
+          "location": {
+            "zero": 0,
+            "abstained": 0
+          },
+          "volume": {
+            "zero": 152,
+            "abstained": 0
+          }
+        },
+        "cells": 30,
+        "alpha": 0.05,
+        "z": 3.143980285047065,
+        "expectedByChance": 1.5,
+        "found": 0,
+        "foundAt95": 0,
+        "period": "dev",
+        "trades": 190,
+        "days": 158,
+        "from": "2019-01-09T11:45",
+        "to": "2024-12-30T08:45",
+        "skipped": {
+          "noCond": 0,
+          "noResult": 0
+        },
+        "minN": 30,
+        "minDays": 10,
+        "cluster": "day"
+      }
+    }
+  },
+  "chosen": {
+    "lambda": 10,
+    "q": 0.75
+  },
+  "model": {
+    "filter": {
+      "lambda": 10,
+      "intercept": 0.0022087569405062836,
+      "weights": {
+        "net": 0.0008033323398225613,
+        "confidence": 0.0006131839039574286,
+        "b_trend": 0.0031575115870902605,
+        "b_momentum": -0.0012000645893735769,
+        "b_structure": -0.0003489138162553726,
+        "b_location": -0.0003819386648912671,
+        "b_volume": 0.00017900527956023568,
+        "b_volatility": 0.0001590857426980225,
+        "log_atr_change_1h": 0.000004029570946603379,
+        "bb_width_pctile": 0.0005631543477136987,
+        "adx": 0.0015067117945127397,
+        "atr_over_price": -0.0005678770408426385,
+        "atr_pctile": -0.000534639718179497,
+        "regime_trending": 0.0009107721956088825,
+        "regime_ranging": -0.0005258466754068566,
+        "regime_compressed": -0.0000012741978740242327,
+        "regime_mixed": -0.00045959458786007883,
+        "efficiency": 0.00008040996341214353,
+        "h1_bias": 0.0025476728251900157,
+        "h4_bias": -0.0001600894917962616,
+        "htf_agree": -0.0012144521934650293,
+        "ret_1": -0.0004674264968598253,
+        "ret_4": -0.000538978268766039,
+        "ret_16": 0.00024855251138773107,
+        "ret_96": 0.0031081787579458303,
+        "close_vs_ema21": 0.0003104988247873721,
+        "close_vs_ema50": 0.002390613681073618,
+        "close_vs_vwap": 0.0005938171216419189,
+        "rsi_m50": 0.0009028398811534628,
+        "bb_pctb_m05": -0.0006670096270900341,
+        "bar_range": 0.00002020830043974372,
+        "bar_body": -0.00032857231636968643,
+        "level_ahead": 0.0004794306419461864,
+        "level_behind": 0.0007712607775466457,
+        "level_ahead_none": -0.0009777663077965909,
+        "level_behind_none": -0.00042011786398759947,
+        "log_rel_volume": -0.00021258052035160553,
+        "hour_08_10": -0.000025000830774888256,
+        "hour_10_12": 0.00006958412921697294,
+        "hour_12_14": 0.00042303351984079125,
+        "hour_14_16": -0.0004654826475162045,
+        "wd_mon": -0.0005974753838819436,
+        "wd_tue": 0.0006526662098032791,
+        "wd_wed": 0.00039725439300127057,
+        "wd_thu": 0.0013377900290721197,
+        "wd_fri": -0.0017854318609293962
+      },
+      "standardiser": {
+        "net": {
+          "mean": 0.2758841707946375,
+          "sd": 0.13995288688985955
+        },
+        "confidence": {
+          "mean": 0.21608849807589162,
+          "sd": 0.12937023964791353
+        },
+        "b_trend": {
+          "mean": 0.5266979573689624,
+          "sd": 0.6549590827072715
+        },
+        "b_momentum": {
+          "mean": 0.2440873700405973,
+          "sd": 0.499479198098118
+        },
+        "b_structure": {
+          "mean": 0.3958229764442134,
+          "sd": 0.4066340738594736
+        },
+        "b_location": {
+          "mean": -0.21017788448409644,
+          "sd": 0.5421034712503251
+        },
+        "b_volume": {
+          "mean": 0.06691260862436771,
+          "sd": 0.308795204800761
+        },
+        "b_volatility": {
+          "mean": 0.017911132972620092,
+          "sd": 0.21925187971261473
+        },
+        "log_atr_change_1h": {
+          "mean": 0.03403061783148329,
+          "sd": 0.12847196798315647
+        },
+        "bb_width_pctile": {
+          "mean": 0.5580402525004099,
+          "sd": 0.33491932450325707
+        },
+        "adx": {
+          "mean": 28.8366785958131,
+          "sd": 12.11845152450676
+        },
+        "atr_over_price": {
+          "mean": 0.0050844307997440635,
+          "sd": 0.003838998452753377
+        },
+        "atr_pctile": {
+          "mean": 0.5350119555118331,
+          "sd": 0.281456949728353
+        },
+        "regime_trending": {
+          "mean": 0.26997868503033284,
+          "sd": 0.4439484144128869
+        },
+        "regime_ranging": {
+          "mean": 0.13451385473028366,
+          "sd": 0.34120357210305113
+        },
+        "regime_compressed": {
+          "mean": 0.20321364158058697,
+          "sd": 0.4023901806160143
+        },
+        "regime_mixed": {
+          "mean": 0.39229381865879653,
+          "sd": 0.48826158818913906
+        },
+        "efficiency": {
+          "mean": 0.25697814181795586,
+          "sd": 0.17726237591617458
+        },
+        "h1_bias": {
+          "mean": 0.6750614854894245,
+          "sd": 1.6152574736973875
+        },
+        "h4_bias": {
+          "mean": 0.24095753402197082,
+          "sd": 1.738329261790564
+        },
+        "htf_agree": {
+          "mean": 0.5019183472700443,
+          "sd": 0.4999963199301168
+        },
+        "ret_1": {
+          "mean": 0.016753630897573202,
+          "sd": 0.6884756968287704,
+          "clip": [
+            -1.657506937624795,
+            2.2893062353200557
+          ]
+        },
+        "ret_4": {
+          "mean": 0.16652112492873375,
+          "sd": 1.3640969858356053,
+          "clip": [
+            -2.5329215704203594,
+            4.4284104806990685
+          ]
+        },
+        "ret_16": {
+          "mean": 1.5606421978055744,
+          "sd": 2.1819992076122996,
+          "clip": [
+            -2.884268149700272,
+            6.825404027155398
+          ]
+        },
+        "ret_96": {
+          "mean": 2.1617042018639943,
+          "sd": 6.582288652027762,
+          "clip": [
+            -15.24870626760151,
+            17.872344625230905
+          ]
+        },
+        "close_vs_ema21": {
+          "mean": 0.7333004826541788,
+          "sd": 1.3296349448961957,
+          "clip": [
+            -1.8780590440704334,
+            4.206711812756687
+          ]
+        },
+        "close_vs_ema50": {
+          "mean": 1.2505307155042167,
+          "sd": 1.963505251334432,
+          "clip": [
+            -3.0635551416595344,
+            5.5705165939007495
+          ]
+        },
+        "close_vs_vwap": {
+          "mean": 1.130165335541169,
+          "sd": 1.8427016106873684,
+          "clip": [
+            -2.8898179463018083,
+            5.023624666417483
+          ]
+        },
+        "rsi_m50": {
+          "mean": 7.0443655136782075,
+          "sd": 11.718658254481513
+        },
+        "bb_pctb_m05": {
+          "mean": 0.13034319493093502,
+          "sd": 0.34482060731631076
+        },
+        "bar_range": {
+          "mean": 1.1126466463205755,
+          "sd": 0.6104575817600142
+        },
+        "bar_body": {
+          "mean": 0.021166951576976394,
+          "sd": 0.7391084566261904
+        },
+        "level_ahead": {
+          "mean": 1.459430016782768,
+          "sd": 1.0427213577021757,
+          "clip": [
+            0.03455248004518907,
+            5.68163291955107
+          ]
+        },
+        "level_behind": {
+          "mean": 1.2849710135369325,
+          "sd": 1.1582341014159143,
+          "clip": [
+            0.017265388557201108,
+            5.816286464369194
+          ]
+        },
+        "level_ahead_none": {
+          "mean": 0.10768978521069028,
+          "sd": 0.3099882181179491
+        },
+        "level_behind_none": {
+          "mean": 0.0161993769470405,
+          "sd": 0.12624166163973496
+        },
+        "log_rel_volume": {
+          "mean": -0.040051255152914085,
+          "sd": 0.6840468485524911
+        },
+        "hour_08_10": {
+          "mean": 0.2472864404000656,
+          "sd": 0.43143464950604465
+        },
+        "hour_10_12": {
+          "mean": 0.2611903590752582,
+          "sd": 0.43928345678097036
+        },
+        "hour_12_14": {
+          "mean": 0.24289227742252828,
+          "sd": 0.4288305247891583
+        },
+        "hour_14_16": {
+          "mean": 0.2486309231021479,
+          "sd": 0.4322193739057478
+        },
+        "wd_mon": {
+          "mean": 0.20796851942941466,
+          "sd": 0.4058541786845986
+        },
+        "wd_tue": {
+          "mean": 0.1954418757173307,
+          "sd": 0.39654047578191015
+        },
+        "wd_wed": {
+          "mean": 0.20541072306935562,
+          "sd": 0.4040014330637388
+        },
+        "wd_thu": {
+          "mean": 0.1959009673717003,
+          "sd": 0.3968926534397825
+        },
+        "wd_fri": {
+          "mean": 0.19527791441219872,
+          "sd": 0.3964144933715187
+        }
+      },
+      "threshold": -0.016816347341981445
+    },
+    "ranking": {
+      "lambda": 10,
+      "intercept": -0.003217790749280687,
+      "weights": {
+        "net": 0.0008713679238248919,
+        "confidence": -0.0005683944242693513,
+        "b_trend": 0.004478014246757112,
+        "b_momentum": -0.00016421809745958247,
+        "b_structure": -0.000550252811740832,
+        "b_location": -0.0019608450601152436,
+        "b_volume": 0.00000862947518968694,
+        "b_volatility": -0.00012025245553947225,
+        "log_atr_change_1h": 0.00012143840001468793,
+        "bb_width_pctile": -0.0006376773688042379,
+        "adx": -0.0007999146006602162,
+        "atr_over_price": -0.0002704335040656104,
+        "atr_pctile": -0.0005405470575917723,
+        "regime_trending": -0.0006120963685120033,
+        "regime_ranging": 0.0005912271871795998,
+        "regime_compressed": 0.0005232353941576347,
+        "regime_mixed": -0.0004659052128574928,
+        "efficiency": -0.00101945275426277,
+        "h1_bias": 0.0039108039199052735,
+        "h4_bias": 0.00108081132667835,
+        "htf_agree": 0.00001609345570475862,
+        "ret_1": -0.00020336042970510264,
+        "ret_4": 0.00033678096301830145,
+        "ret_16": 0.0016070471425653728,
+        "ret_96": 0.0037613911419487217,
+        "close_vs_ema21": 0.0018328030448896662,
+        "close_vs_ema50": 0.004121150107891322,
+        "close_vs_vwap": 0.002355563732701322,
+        "rsi_m50": 0.0025009711693733186,
+        "bb_pctb_m05": 0.0006137926293703498,
+        "bar_range": 0.000268010892261714,
+        "bar_body": 0.000093071435429311,
+        "level_ahead": -0.0005405673082018854,
+        "level_behind": 0.00048092714669357723,
+        "level_ahead_none": -0.0001676726750460647,
+        "level_behind_none": 0.00017934504731914922,
+        "log_rel_volume": -0.00020445117614062793,
+        "hour_08_10": -0.00016506606487421143,
+        "hour_10_12": 0.000048951900243534774,
+        "hour_12_14": -0.00036998885919863837,
+        "hour_14_16": 0.00048594786963213657,
+        "wd_mon": 0.0003905198386716672,
+        "wd_tue": -0.0003292834299916744,
+        "wd_wed": 0.00035827417863826434,
+        "wd_thu": -0.0000769360677429796,
+        "wd_fri": -0.0003437527045050447
+      },
+      "standardiser": {
+        "net": {
+          "mean": 0,
+          "sd": 0.23614071934955136
+        },
+        "confidence": {
+          "mean": 0.1583224616893151,
+          "sd": 0.12006417091344959
+        },
+        "b_trend": {
+          "mean": 0,
+          "sd": 0.7935921411985137
+        },
+        "b_momentum": {
+          "mean": 0,
+          "sd": 0.5055462049864496
+        },
+        "b_structure": {
+          "mean": 0,
+          "sd": 0.4972609767860925
+        },
+        "b_location": {
+          "mean": 0,
+          "sd": 0.5406394875900891
+        },
+        "b_volume": {
+          "mean": 0,
+          "sd": 0.28506928708586377
+        },
+        "b_volatility": {
+          "mean": 0.008344607392174451,
+          "sd": 0.21874310256094126
+        },
+        "log_atr_change_1h": {
+          "mean": 0.028435675921278394,
+          "sd": 0.12101736103854714
+        },
+        "bb_width_pctile": {
+          "mean": 0.4899965275898768,
+          "sd": 0.33671317727265954
+        },
+        "adx": {
+          "mean": 26.852401821843987,
+          "sd": 11.480100964886178
+        },
+        "atr_over_price": {
+          "mean": 0.004887074981346737,
+          "sd": 0.0036735260490108053
+        },
+        "atr_pctile": {
+          "mean": 0.5017000529129034,
+          "sd": 0.2792949614473238
+        },
+        "regime_trending": {
+          "mean": 0.15314681530385843,
+          "sd": 0.3601289606048261
+        },
+        "regime_ranging": {
+          "mean": 0.16283348666053357,
+          "sd": 0.36921368106120733
+        },
+        "regime_compressed": {
+          "mean": 0.26810613849955806,
+          "sd": 0.44297317864480806
+        },
+        "regime_mixed": {
+          "mean": 0.4159135595360499,
+          "sd": 0.4928787584494108
+        },
+        "efficiency": {
+          "mean": 0.2129962390008621,
+          "sd": 0.15894554221083407
+        },
+        "h1_bias": {
+          "mean": 0,
+          "sd": 1.7367777610215926
+        },
+        "h4_bias": {
+          "mean": 0,
+          "sd": 1.7509490184298941
+        },
+        "htf_agree": {
+          "mean": 0.4897992315601494,
+          "sd": 0.49989593349379247
+        },
+        "ret_1": {
+          "mean": 4.441933489580239e-18,
+          "sd": 0.6515501697772625,
+          "clip": [
+            -1.8516898040234924,
+            1.8516898040234928
+          ]
+        },
+        "ret_4": {
+          "mean": 4.441933489580239e-18,
+          "sd": 1.2485989457172564,
+          "clip": [
+            -3.4548843618847713,
+            3.4548843618847718
+          ]
+        },
+        "ret_16": {
+          "mean": 1.0660640374992574e-16,
+          "sd": 2.2438712529905196,
+          "clip": [
+            -5.639761404888764,
+            5.639761404888775
+          ]
+        },
+        "ret_96": {
+          "mean": 4.619610829163448e-16,
+          "sd": 6.763167844155213,
+          "clip": [
+            -16.682411712833126,
+            16.682411712833172
+          ]
+        },
+        "close_vs_ema21": {
+          "mean": 1.7767733958320956e-17,
+          "sd": 1.279477013970548,
+          "clip": [
+            -3.3490981591970144,
+            3.349098159197016
+          ]
+        },
+        "close_vs_ema50": {
+          "mean": 2.6651600937481435e-17,
+          "sd": 1.9947779737779112,
+          "clip": [
+            -4.797888249289515,
+            4.797888249289517
+          ]
+        },
+        "close_vs_vwap": {
+          "mean": 0,
+          "sd": 1.8766228658436097,
+          "clip": [
+            -4.347823473175643,
+            4.347823473175643
+          ]
+        },
+        "rsi_m50": {
+          "mean": 0,
+          "sd": 11.709272700107038
+        },
+        "bb_pctb_m05": {
+          "mean": 0,
+          "sd": 0.3496724962704575
+        },
+        "bar_range": {
+          "mean": 1.0888536605488892,
+          "sd": 0.5812209406207619
+        },
+        "bar_body": {
+          "mean": 0,
+          "sd": 0.7022694593039595
+        },
+        "level_ahead": {
+          "mean": 1.332628200745538,
+          "sd": 1.059917247067038,
+          "clip": [
+            0.022008330984913643,
+            5.384577220681699
+          ]
+        },
+        "level_behind": {
+          "mean": 1.3326282007455381,
+          "sd": 1.0599172470670382,
+          "clip": [
+            0.022008330984913643,
+            5.384577220681699
+          ]
+        },
+        "level_ahead_none": {
+          "mean": 0.04605227555603658,
+          "sd": 0.20959833842893943
+        },
+        "level_behind_none": {
+          "mean": 0.04605227555603658,
+          "sd": 0.2095983384289394
+        },
+        "log_rel_volume": {
+          "mean": -0.12266169206514113,
+          "sd": 0.6633334765549592
+        },
+        "hour_08_10": {
+          "mean": 0.2501037213413424,
+          "sd": 0.4330725688760208
+        },
+        "hour_10_12": {
+          "mean": 0.24994137489402385,
+          "sd": 0.43297884937986797
+        },
+        "hour_12_14": {
+          "mean": 0.2498151054349983,
+          "sd": 0.43290590031943577
+        },
+        "hour_14_16": {
+          "mean": 0.25013979832963545,
+          "sd": 0.4330933844113533
+        },
+        "wd_mon": {
+          "mean": 0.20168840305211322,
+          "sd": 0.4012607520383635
+        },
+        "wd_tue": {
+          "mean": 0.202283673358948,
+          "sd": 0.40170261245280653
+        },
+        "wd_wed": {
+          "mean": 0.1997763226725833,
+          "sd": 0.3998321442452799
+        },
+        "wd_thu": {
+          "mean": 0.1981528581993975,
+          "sd": 0.39860795650239206
+        },
+        "wd_fri": {
+          "mean": 0.198098742716958,
+          "sd": 0.3985669716003741
+        }
+      },
+      "threshold": 0.030851725006645597,
+      "p2Share": 0.011957423278960464
+    }
+  },
+  "finals": [],
+  "status": "info-only",
+  "modelHash": "57b29b7d762d64f76f047a384a9222c944a9992fb7927636b450bcc6b34ef7e0"
+}
