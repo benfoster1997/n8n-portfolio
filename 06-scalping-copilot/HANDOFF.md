@@ -60,67 +60,61 @@ container it uses the preinstalled headless_shell under `/opt/pw-browsers`.
 **Run the smoke test after any UI change.** The unit suites do not touch the DOM
 and stayed fully green twice while the page was broken.
 
-### Where we stopped (17 Oct 2026, early morning London) — BUILT and reviewed; next: the one bitcoin run. Read this first
+### Where we stopped (17 Oct 2026, ~06:30 London) — the bitcoin holdout test is DONE; tell the user. Read this first
 
-**The learning plan is built, integrated and reviewed; the user is still waiting for the bitcoin
-results.** Commits `df60b1f` → `87ed32f` on the branch, all pushed: the replay's foundation
-(`desk/reads.mjs`, decision 27), `desk/history.mjs`, `desk/features.mjs` (+ `features-extra.mjs`),
-`desk/conditions.mjs`, `desk/dataset.mjs`, `desk/learn.mjs` (decision 29), `desk/journal.mjs`
-(decision 28), and the integration (desk.mjs `journal` and `learn`, METHOD_VERSION and its hash
-test, the footer, 999 closed bars, `account.mode`, `.gitattributes`). Every module was re-checked
-by independent reviewers and its findings fixed under test; then a final review of the whole
-learning build confirmed fifteen findings, all fixed under test the same day, and a last round of
-small findings after it (see the bullets marked "final review" in decisions 27–29). **745 unit
-assertions across 21 suites pass** (17 Oct). LEARNING-PLAN.md now matches what was built and is
-the pre-registration; the sample size is settled at **240** (below).
+**The learning plan is built, reviewed, and its one bitcoin test has run.** Everything is committed
+and pushed (`df60b1f` → `33136bc`); 745 unit assertions across 21 suites pass; the page is
+republished as **live version 22** (17 Oct: formatter cache, volume fix, release dates 2017–2026,
+corrected February 2026 dates; `sample` kept).
 
-**State that matters:**
-- `desk/model.json` does **not** exist: **the recipe is not committed.** **The held-back years
-  (2025-01-01 → 2026-10-14 20:45 UTC) have not been looked at**: no final armed or run, no
-  `--holdout` look in desk/model.json. A development-years-only walk-forward ran in a scratch
-  model file on 17 Oct (λ 10, q 0.75; kept 540 alerts at +0.009R against 723 unfiltered at
-  −0.011R; LEARNING-PLAN.md "What has been seen"). It is not the recipe.
-- `desk/journal.jsonl` does **not** exist: no alert has been recorded, and **no sample is
-  committed.** desk/config.json still has `plannedSample` 0 for the user's own trades.
-- The live page is still **version 21** (12 Oct). `index.html` was rebuilt in `f413203` (formatter
-  cache, volume fix, corrected 2026 February dates); the page has not been republished since.
-- Gold still waits for `TWELVEDATA_API_KEY`; everything below is bitcoin.
+**The real run, in order (all on 17 Oct):**
+- Rows: `node desk/dataset.mjs --pair bitcoin --from 2017-09-01 --to 2024-12-31 --cost scaled
+  --calendar rules` → 61,039 rows, rows key `95665cda1542718c`, 77 s.
+- Fit: λ 10, kept share 0.75 (near-tie rule; best was λ 1, q 0.5 at +0.040R), identical to the
+  scratch run. Walk-forward 2019–2024: unfiltered 723 at −0.011R, kept 540 at +0.009R, removed
+  190 at −0.067R; ranking correlation +0.04 to +0.08 a year. Recipe committed in `8bbbe16`
+  (recipe hash `e7976712…`) **before** anything held back was computed.
+- Armed (`7c7192b`): 14,912 of 14,912 held-back checks readable, none missing, no gap reads.
+- **Ran once, 05:21 UTC (`33136bc`)** — calendar full, cost the larger of fixed and scaled:
 
-**Next, in order** (each step's command prints what to do next; stop and tell the user if any
-step refuses):
-1. **In a fresh container**: `git rev-parse --is-shallow-repository` must print `false` (else
-   `git fetch --unshallow`); `node desk/learn.mjs status --pair bitcoin` should say no recipe and
-   the held-back years unused.
-2. **Build the rows**: `node desk/dataset.mjs --pair bitcoin --workers 4` (2017-09 → 2024-12-31,
-   cost scaled, calendar rules; fetches the history first if the container has none).
-3. **Fit for real**: `node desk/learn.mjs fit --pair bitcoin`. Read its developer report; it
-   should reproduce the scratch run (deterministic). Whatever it prints is the recipe.
-4. **Commit the recipe**: commit `desk/model.json` (and nothing uncommitted among the method
-   files — the final refuses otherwise); push.
-5. **Arm**: `node desk/learn.mjs final --pair bitcoin` (no outcome is computed). Commit
-   `desk/model.json` again; push.
-6. **Run once**: `node desk/learn.mjs final --run --pair bitcoin`. **Commit and push
-   `desk/model.json` at once**, whatever it says (a crash after `started` still uses the years).
-7. **Independent review** of the result and the figures (the plan's lenses), then **report to the
-   user** with `node desk/desk.mjs learn report` in the plan's shape — "held up" only if T1 passed,
-   and then as "held up on unseen history", never as proof; beside the coin-flip baseline; 2025
-   and 2026 apart. If T1 fails the status is info-only and nothing changes for the user's alerts.
-8. **Rebuild, smoke-test and republish the page** (see "Republishing" above).
-9. **Ask the sample question**, in the words `node desk/desk.mjs journal sample` prints: "Shall I
-   judge the alerts on the next 240 of them, every alert scored on the price feed whether you take
-   it or not, and give no verdict before then? Your own trades stay in 'Is it working yet?',
-   separately." (Judged on the mean R per alert.) Only on their yes: `journal sample --alerts 240`,
-   then commit the journal, `git pull --rebase`, and push.
+| Held back | Checks | Unfiltered alerts | Kept by the filter | Removed | Coin-flip side |
+|---|---|---|---|---|---|
+| 2025 (clean) | 8,352 | 137 at −0.086R (−0.264 to +0.092) | 105 at −0.161R | 35 at +0.085R | −0.013R |
+| 2026 to 14 Oct (seen) | 6,560 | 121 at +0.049R (−0.147 to +0.246) | 95 at +0.030R | 28 at +0.063R | −0.021R |
+| **Whole window (the test)** | 14,912 | **258 at −0.022R** (−0.154 to +0.110) | **200 at −0.070R** | 63 at +0.075R | −0.017R |
 
-**Settled 17 Oct, before any sample: the sample's size.** The verdict is the two-sided 95% range,
-so N is sized for it: ((1.96 + 0.842) × 1.10 / 0.2)² ≈ 238, so **240** (190 gave ~70% power).
-LEARNING-PLAN.md Part 3 holds it; `MIN_PLANNED_ALERTS` stays 100.
+  - **T1 (filter): did not pass** — kept lower bound −0.207; kept minus all −0.048R (bootstrap
+    lower −0.157); 200 kept (≥ 140). The filter made things slightly *worse* on unseen years.
+    **Status: info-only.** Nothing changes for the user's alerts.
+  - **T2 (ranking): passed its pre-declared bar only just** — correlation +0.041, bootstrap
+    lower bound +0.000 (rounded) over 466 days; it switches nothing on. It came from the
+    already-seen 2026 (+0.095), not from the clean 2025 (−0.003): say so whenever it is mentioned.
+  - Watcher minus coin-flip over the window: −0.005R (−0.121 to +0.111). P2 (exploratory): 33
+    picks at −0.023R. 2 both-touched bars; 0 checks left out for holes.
+- The held-back years are now **used**: any later look at 2025 – 14 Oct 2026 is not a test on
+  unseen data, and `learn final` refuses for good (three logs + every commit of model.json).
+
+**Next:**
+1. **Tell the user** the result in plain words (the `learn report` shape: "could not show an
+   improvement"; the alerts themselves came out roughly break-even, about the same as a coin
+   flip; 2025 and 2026 apart; T2 only with its caveat; a test on past prices, not a forecast).
+2. **Ask the sample question**, in the words `node desk/desk.mjs journal sample` prints (about
+   **240** alerts, scored on the feed whether taken or not, no verdict before then; their own
+   trades stay in "Is it working yet?"). Only on their yes: `journal sample --alerts 240`, then
+   commit the journal, `git pull --rebase`, push.
+3. Gold waits for `TWELVEDATA_API_KEY`. With the key: build gold rows, then the same
+   fit → commit → arm → commit → run → commit, once (its own holdout; never reuse bitcoin's).
+4. Any change to the learner now means a NEW pre-declared test on data after 14 Oct 2026 (the
+   live journal is the only fresh evidence). Do not refit on 2025–26 and present it as tested.
+
+**Settled 17 Oct: the sample's size is 240** (two-sided 95% verdict, 80% power to see +0.2R at
+1.10R a trade; `MIN_PLANNED_ALERTS` stays 100).
 
 **Flagged, not changed (need a decision or a later pass):**
-- **Not built, by plan text**: shadow-scoring on each alert if T1 passes (the `filterFor` hook
-  exists; build it only then); the monthly `learn update` (none exists, and `fit` refuses after a
-  final — so never tell the user it can add last month's prices); gold's scaled spread and the
-  2×/3× cost sensitivity runs; "a release during the trade" in `journal alert`.
+- **Not built, by plan text**: shadow-scoring on each alert (only if T1 had passed — it did not);
+  the monthly `learn update` (none exists, and `fit` refuses after a final — never tell the user
+  it can add last month's prices); gold's scaled spread and the 2×/3× cost sensitivity runs; "a
+  release during the trade" in `journal alert`.
 - The weekly claims holiday rule may be wrong (DOL may move the release only when Thursday itself
   is closed; today any earlier holiday moves it to Wednesday, live too).
 - 2026 PCE January–June is missing from the table.
@@ -344,7 +338,7 @@ user's answer on the watcher: build it once the sites are open, not before.
 - **Next step: wait for the user** to try the chat route on Bitcoin and report what the
   card says. Nothing is built or pending beyond that.
 
-### What the page is (live page version 21, 12 Oct 2026; `capabilities: {sample: {}}` since version 18)
+### What the page is (live page version 22, 17 Oct 2026; `capabilities: {sample: {}}` since version 18)
 
 - **Version 21 (12 Oct 2026)** adds Setup → **Chart timeframe** (M15 default, M5 kept; decision
   25) and carries the watcher review's engine changes (relative volume weekday with weekday;
