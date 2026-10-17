@@ -20,20 +20,32 @@
  *    design counted the watcher's alerts plus a backfill of bars "nobody
  *    watched"; which alerts made the sample then depended on which writer ran
  *    first and on watcher state that lived in one container (review, 16 Oct).
- *    A DAY ONCE RECORDED IS FROZEN. Each day's `day` record lists the ids of
- *    the alerts it found, with a checksum of each line. The record keeps only
- *    the alerts the STANDING day record names: the earliest-recorded day
- *    record for that pair, timeframe, method and day, ties broken by the text
- *    of the line. canonicalAlerts() never recomputes a day that already has
- *    one. So a later replay over revised bars, or a git union merge of two
- *    machines' replays of the same day, cannot add or swap an alert after a
- *    verdict has been given (re-check, 17 Oct).
+ *    A DAY ONCE RECORDED IS FROZEN ON THIS MACHINE. Each day's `day` record
+ *    lists the ids of the alerts it found, with a checksum of each line. The
+ *    record keeps only the alerts the STANDING day record names: the
+ *    earliest-recorded day record for that pair, timeframe, method and day,
+ *    ties broken by the text of the line. canonicalAlerts() never recomputes a
+ *    day that already has one, and the writer refuses a second. So a later
+ *    replay over revised bars cannot add or swap an alert, and the fold is the
+ *    same in any order of the lines. What this does NOT stop: a git union
+ *    merge bringing in another machine's DIFFERENT record of the same day,
+ *    recorded earlier — it would then stand. Such a day is CONTESTED:
+ *    sampleStatus() lists it and gives no verdict while any day is contested,
+ *    so a merge can never quietly change a verdict; it has to be settled by
+ *    hand. A day record dated before that day's window closed is refused, so
+ *    a wrong clock or a hand edit cannot win by an early `at` (re-check, 17 Oct).
+ *    A day whose bars have a hole (more than 4 missing bars in any read's
+ *    slice, or in the window) is held until the feed fills it; 48 hours after
+ *    the close it is recorded as it is, flagged `gap`, and its alerts are left
+ *    out of the sample.
  *  - THE METHOD is more than the engine: its version, target rule, filter,
  *    timeframe and reference feeds, and also the settings that shape what it
- *    reads and how it scores — the window (open, close, time zone) and the
+ *    reads and how it scores — the window (open, close, time zone), the
  *    costs (the spread it reads with and the commission as a price distance,
- *    per instrument). Changing any of them in the settings is a new method
- *    and ends a sample in progress (rule 1).
+ *    per instrument) and the broker's server offset (it decides when the gate
+ *    counts the market open). Changing any of them in the settings is a new
+ *    method and ends a sample in progress (rule 1), whether or not an alert
+ *    was shown under the new one: the first day recorded under it is enough.
  *  - WHAT THE USER WAS SHOWN (`shown`, and their `ticketed`, `taken`, `actual`).
  *    The watcher's and a scan's alerts, as sent, linked to the method's record
  *    by the same natural id. They are never the sample. A method alert with no
@@ -103,6 +115,7 @@ import { tfInfo } from '../src/timeframes.js';
 import { formatHM, zonedTimeToUtc } from '../src/timezone.js';
 import { INSTRUMENTS } from '../src/instruments.js';
 import { BTC_SOURCES, XAU_SOURCES } from '../src/data-feeds.js';
+import { gapsIn, gapInWindow } from './history.mjs';
 
 /* ---------------------------------------------------------------- vocabulary */
 
@@ -119,13 +132,21 @@ export const SOURCES = Object.freeze(['watch', 'scan']);
 /**
  * The feeds the method's record is read on. One per instrument, so the record
  * does not change with whichever fallback the watcher reached that minute.
- * The ids name the series, not the host (data-api.binance.vision and the main
- * Binance API serve the same BTCUSDT candles).
+ * The ids name the series, not the host; `sources` are the ids of the feeds
+ * that serve that series, as history.mjs (HISTORY_FEEDS) and
+ * src/data-feeds.js name them — data-api.binance.vision ('binance-vision') and
+ * the main Binance API ('binance') serve the same BTCUSDT candles. Bars from
+ * any other source (coinbase, kraken, paxg-kraken, ...) are a fallback and
+ * are refused for the record. The record's lines carry the series id, so
+ * two machines on different hosts of one series write the same line.
  */
 export const REFERENCE_FEEDS = Object.freeze({
-  BTCUSD: Object.freeze({ id: 'binance-btcusdt', label: 'Binance (BTCUSDT)' }),
-  XAUUSD: Object.freeze({ id: 'twelvedata-xauusd', label: 'Twelve Data (XAU/USD)' }),
+  BTCUSD: Object.freeze({ id: 'binance-btcusdt', label: 'Binance (BTCUSDT)', sources: Object.freeze(['binance-vision', 'binance']) }),
+  XAUUSD: Object.freeze({ id: 'twelvedata-xauusd', label: 'Twelve Data (XAU/USD)', sources: Object.freeze(['twelvedata']) }),
 });
+
+/** How long after a day's window closes a day whose bars have a hole is held, waiting for the feed to fill it. */
+export const GAP_SETTLE_MS = 48 * 3600e3;
 
 /**
  * Every feed an event may name: the reference feeds and the live desk's
@@ -218,7 +239,7 @@ const LEVELS = ['pair', 'tf', 'method', 'barCloseMs', 'validUntilMs', 'side', 'f
 export const ALLOWED = Object.freeze({
   common: Object.freeze(['type', 'id', 'at']),
   alert: Object.freeze([...LEVELS, 'features', 'filter', 'outcome']),
-  day: Object.freeze(['pair', 'tf', 'method', 'day', 'alerts', 'ids', 'sums', 'kinds']),
+  day: Object.freeze(['pair', 'tf', 'method', 'day', 'alerts', 'ids', 'sums', 'kinds', 'gap']),
   shown: Object.freeze(['account', 'source', ...LEVELS]),
   resolved: Object.freeze(['account', 'r', 'how', 'bars', 'mfe', 'mae', 'bothTouched', 'scoring', 'gap', 'feed', 'spreadNum']),
   ticketed: Object.freeze(['account', 'userPrice', 'stopLoss', 'takeProfit']),
@@ -228,7 +249,7 @@ export const ALLOWED = Object.freeze({
   consent: Object.freeze(['answer']),
   outcome: Object.freeze(['r', 'how', 'bars', 'mfe', 'mae', 'bothTouched', 'scoring', 'gap']),
   kinds: Object.freeze(['idea', 'rejected', 'none', 'blocked', 'stale', 'no-data']),
-  method: Object.freeze(['version', 'targetRule', 'filter', 'tf', 'feeds', 'window', 'costs']),
+  method: Object.freeze(['version', 'targetRule', 'filter', 'tf', 'feeds', 'window', 'costs', 'serverOffset']),
   window: Object.freeze(['open', 'close', 'tz']),
   costs: Object.freeze(['spread', 'comm']),
   filter: Object.freeze(['id', 'keep', 'predicted']),
@@ -267,25 +288,34 @@ const FORBIDDEN_SET = new Set(FORBIDDEN);
 const MAX_TEXT = 300;
 /*
  * Engine text never holds a pound or euro sign, a currency sign or an ISO
- * currency code next to a number, the word balance or equity next to a
- * number, an email address (spelt out or not), or seven or more digits in a
- * run — spaces, '-', '.' and ',' between them do not break the run (a phone,
- * an account or login number: "07700-900123", "5123-4567-89").
+ * currency code next to a number (before or after it: "$400", "400$"), a
+ * money word after a number ("400 pounds", "50 quid", "20 bucks"), the word
+ * balance or equity within about 15 characters of a number, an email address
+ * (an @ of any width, or spelt out: "ben at example.com", "ben [at] example
+ * [dot] com"), or seven or more digits in a run — spaces (any number of
+ * them), '-', '–', '—', '.', ',', '/' and '_' between them do not break the
+ * run (a phone, an account or login number: "07700/900123", "077 00  900 123",
+ * "5123-4567-89").
  *
  * Prices are the one exemption: the engine writes them with two decimals
- * ("84250.00", "84,399.55", "4375.20", a gap "84250.00-84300.00"). Such a
- * price is set aside before the digit run is looked for — but only when it
- * stands alone, so "5123.4567.89" or "5123-4567.89" is still a run.
+ * ("84250.00", "84,399.55", "4375.20", a gap "84250.00-84300.00"), never more
+ * than six digits before the point. Such a price is set aside before the
+ * digit run is looked for — but only when it stands alone, so "5123.4567.89",
+ * "5123-4567.89", "077 4375.20" or "51234567.89" is still a run.
  */
-const MONEY_TEXT = /£|€|[$¥]\s?\d|[^\s@]+@[^\s@]+\.[a-z]{2,}|\b[a-z0-9._-]+\s+at\s+[a-z0-9-]+\s+dot\s+[a-z]{2,}\b/i;
+const JOIN = '[.,\\-/_\\u2013\\u2014]';
+const AT_WORD = '(?:\\s*[(\\[{]\\s*at\\s*[)\\]}]\\s*|\\s+at\\s+)';
+const DOT_WORD = '(?:\\.|\\s*[(\\[{]\\s*dot\\s*[)\\]}]\\s*|\\s+dot\\s+)';
+const SPELT_EMAIL = new RegExp(`\\b[a-z0-9._%+-]+${AT_WORD}[a-z0-9-]+(?:${DOT_WORD}[a-z0-9-]+)*${DOT_WORD}[a-z]{2,}\\b`, 'i');
+const MONEY_TEXT = /£|€|[@＠﹫]|[$¥]\s?\d|\d\s?[$¥]|\d\s*(?:pounds?|quid|dollars?|bucks?|euros?)\b/i;
 const CODES = '(?:USDT|USD|GBP|EUR|JPY|CHF|AUD|CAD|NZD|GBX)';
 const CURRENCY_NUMBER = new RegExp(`(?<![A-Za-z/])${CODES}\\s?[\\d.,]*\\d|\\d\\s?${CODES}(?![A-Za-z])`, 'i');
-const BALANCE_NUMBER = /\b(?:balance|equity)\b[^\d\n]{0,3}\d|\d[^\d\n]{0,3}\b(?:balance|equity)\b/i;
-const PRICE_P = '(?:\\d{1,3}(?:,\\d{3})+|\\d+)\\.\\d{1,2}';
-const PRICE = new RegExp(`(?<![\\d.,]|\\d-)${PRICE_P}(?:-${PRICE_P})?(?!\\d|[.,\\-]\\d)`, 'g');
-const DIGIT_RUN = /\d(?:[\s.,-]?\d){6,}/;
+const BALANCE_NUMBER = /\b(?:balance|equity)\b[^\d\n]{0,15}\d|\d[^\d\n]{0,15}\b(?:balance|equity)\b/i;
+const PRICE_P = '(?:\\d{1,3},\\d{3}|\\d{1,6})\\.\\d{1,2}';
+const PRICE = new RegExp(`(?<![\\d.,/_\\u2013\\u2014]|\\d[-\\s])${PRICE_P}(?:-${PRICE_P})?(?!\\d|${JOIN}\\d|\\s+\\d)`, 'g');
+const DIGIT_RUN = new RegExp(`\\d(?:(?:${JOIN}|\\s+)?\\d){6,}`);
 export function sensitiveText(s) {
-  return MONEY_TEXT.test(s) || CURRENCY_NUMBER.test(s) || BALANCE_NUMBER.test(s) || DIGIT_RUN.test(s.replace(PRICE, ' '));
+  return MONEY_TEXT.test(s) || SPELT_EMAIL.test(s) || CURRENCY_NUMBER.test(s) || BALANCE_NUMBER.test(s) || DIGIT_RUN.test(s.replace(PRICE, ' '));
 }
 const TOKEN = /^[A-Za-z0-9._-]{1,40}$/;
 
@@ -337,6 +367,22 @@ const num = (x, what) => {
   if (typeof x !== 'number' || !Number.isFinite(x)) fail(`${what} must be a number`);
   return x;
 };
+/*
+ * A number in a plausible band for its field, so a number field cannot carry
+ * a phone, account or balance figure the text filter would have caught
+ * (re-check, 17 Oct). `int` also refuses a fraction.
+ */
+const within = (x, what, lo, hi, { int = false } = {}) => {
+  const v = num(x, what);
+  if (v === null) return null;
+  if (v < lo || v > hi || (int && !Number.isInteger(v))) fail(`${what} must be ${int ? 'a whole number ' : ''}from ${lo} to ${hi}`);
+  return v;
+};
+/** Milliseconds since 1970 as thirteen digits (2001 to 2286): every bar time and commitment. */
+const epochMs = (x, what) => within(x, what, 1e12, 1e13 - 1, { int: true });
+/** A price of either instrument: above zero, at most six digits before the point. */
+const price = (x, what) => { const v = within(x, what, 0, 999999.99); if (v !== null && !(v > 0)) fail(`${what} must be above zero`); return v; };
+const R_MAX = 50;
 const oneOf = (x, list, what) => {
   if (x === null || x === undefined) return null;
   if (!list.includes(x)) fail(`${what} must be one of ${list.join(', ')}`);
@@ -374,10 +420,17 @@ function cleanCosts(c) {
   for (const p of PAIRS) {
     const x = c[p];
     if (!x || typeof x !== 'object') fail(`method.costs needs ${p}`);
-    out[p] = { spread: num(x.spread, `method.costs.${p}.spread`), comm: num(x.comm, `method.costs.${p}.comm`) };
-    if (!(out[p].spread >= 0) || !(out[p].comm >= 0)) fail(`method.costs.${p} must be two distances of zero or more`);
+    out[p] = { spread: within(x.spread, `method.costs.${p}.spread`, 0, 1e4), comm: within(x.comm, `method.costs.${p}.comm`, 0, 1e4) };
+    if (out[p].spread === null || out[p].comm === null) fail(`method.costs.${p} must be two distances of zero or more`);
   }
   return out;
+}
+
+/** The broker's server offset, as the settings hold it: 'auto' (New York + 7) or whole hours from UTC. */
+function cleanOffset(o) {
+  if (o === null || o === undefined) return null;
+  if (o === 'auto') return 'auto';
+  return within(o, 'method.serverOffset', -14, 14, { int: true });
 }
 
 function cleanMethod(m) {
@@ -393,6 +446,7 @@ function cleanMethod(m) {
     feeds,
     window: cleanWindow(m.window),
     costs: cleanCosts(m.costs),
+    serverOffset: cleanOffset(m.serverOffset),
   };
 }
 
@@ -413,16 +467,22 @@ function cleanFeatures(f, { read = false } = {}) {
 function cleanFilter(f) {
   if (f === null || f === undefined) return null;
   if (typeof f !== 'object' || Array.isArray(f)) fail('filter must be an object');
-  return { id: token(f.id ?? null, 'filter.id'), keep: typeof f.keep === 'boolean' ? f.keep : null, predicted: num(f.predicted ?? null, 'filter.predicted') };
+  return { id: token(f.id ?? null, 'filter.id'), keep: typeof f.keep === 'boolean' ? f.keep : null, predicted: within(f.predicted ?? null, 'filter.predicted', -1e3, 1e3) };
 }
 
-const OUTCOME_HOW = ['target', 'stop', 'window'];
+/*
+ * How an alert ended: its target, its stop, the window's close — or 'both',
+ * which desk/outcome.mjs returns under bothTouched: 'half' for a bar touching
+ * the stop and the target (scored half of each; said as such, see
+ * DECLARED ADDITIONS TO RULE 5).
+ */
+const OUTCOME_HOW = ['target', 'stop', 'window', 'both'];
 function cleanOutcome(o) {
   if (o === null || o === undefined) return null;
   if (typeof o !== 'object' || Array.isArray(o)) fail('outcome must be an object');
   return {
-    r: num(o.r, 'outcome.r'), how: oneOf(o.how, OUTCOME_HOW, 'outcome.how'), bars: num(o.bars ?? null, 'outcome.bars'),
-    mfe: num(o.mfe ?? null, 'outcome.mfe'), mae: num(o.mae ?? null, 'outcome.mae'),
+    r: within(o.r, 'outcome.r', -R_MAX, R_MAX), how: oneOf(o.how, OUTCOME_HOW, 'outcome.how'), bars: within(o.bars ?? null, 'outcome.bars', 0, 5000, { int: true }),
+    mfe: within(o.mfe ?? null, 'outcome.mfe', 0, 1e3), mae: within(o.mae ?? null, 'outcome.mae', 0, 1e3),
     bothTouched: !!o.bothTouched, scoring: oneOf(o.scoring ?? 'half', ['half', 'stop'], 'outcome.scoring'), gap: !!o.gap,
   };
 }
@@ -431,7 +491,7 @@ function cleanKinds(k) {
   if (k === null || k === undefined) return null;
   if (typeof k !== 'object' || Array.isArray(k)) fail('kinds must be an object');
   const out = {};
-  for (const name of ALLOWED.kinds) if (k[name] !== undefined) out[name] = num(k[name], `kinds.${name}`);
+  for (const name of [...ALLOWED.kinds, 'gap']) if (k[name] !== undefined) out[name] = within(k[name], `kinds.${name}`, 0, 5000, { int: true });
   return out;
 }
 
@@ -444,7 +504,7 @@ const textList = (xs, what) => {
 /** Per-field checks: each keeps the value in a known shape or throws. */
 const FIELD = {
   id: (x) => { if (typeof x !== 'string' || !/^[A-Za-z0-9-]{1,60}$/.test(x)) fail('an id is letters, digits and dashes'); return x; },
-  at: (x) => num(x, 'at'),
+  at: (x) => within(x, 'at', 0, 1e13 - 1, { int: true }),
   account: (x) => oneOf(x, ACCOUNT_MODES, 'account'),
   pair: (x) => oneOf(x, PAIRS, 'pair'),
   pairs: (x) => {
@@ -454,25 +514,25 @@ const FIELD = {
   tf: tfField,
   source: (x) => oneOf(x, SOURCES, 'source'),
   method: cleanMethod,
-  barCloseMs: (x) => num(x, 'barCloseMs'),
-  validUntilMs: (x) => num(x, 'validUntilMs'),
+  barCloseMs: (x) => epochMs(x, 'barCloseMs'),
+  validUntilMs: (x) => epochMs(x, 'validUntilMs'),
   side: (x) => oneOf(x, ['buy', 'sell'], 'side'),
   feed: (x) => { if (x === null || x === undefined) return null; if (!FEED_LABELS.has(x)) fail('feed must be the name of a known price feed'); return x; },
   feedId: (x) => { if (x === null || x === undefined) return null; if (!FEED_IDS.has(x)) fail('feedId must be a known price feed'); return x; },
-  refPrice: (x) => num(x, 'refPrice'),
-  stopDist: (x) => num(x, 'stopDist'),
-  tp1Dist: (x) => num(x, 'tp1Dist'),
-  tp2Dist: (x) => num(x, 'tp2Dist'),
-  spreadNum: (x) => num(x, 'spreadNum'),
-  commNum: (x) => num(x, 'commNum'),
-  netR: (x) => num(x, 'netR'),
+  refPrice: (x) => price(x, 'refPrice'),
+  stopDist: (x) => within(x, 'stopDist', 0, 1e5),
+  tp1Dist: (x) => within(x, 'tp1Dist', 0, 1e5),
+  tp2Dist: (x) => within(x, 'tp2Dist', 0, 1e5),
+  spreadNum: (x) => within(x, 'spreadNum', 0, 1e4),
+  commNum: (x) => within(x, 'commNum', 0, 1e4),
+  netR: (x) => within(x, 'netR', -R_MAX, R_MAX),
   confidence: (x) => oneOf(x, ['high', 'moderate', 'low'], 'confidence'),
   reasons: (x) => textList(x, 'reasons'),
   against: (x) => textList(x, 'against'),
   filter: cleanFilter,
   outcome: cleanOutcome,
   day: (x) => { if (typeof x !== 'string' || !/^\d{4}-\d\d-\d\d$/.test(x)) fail('day must be YYYY-MM-DD'); return x; },
-  alerts: (x) => num(x, 'alerts'),
+  alerts: (x) => within(x, 'alerts', 0, 200, { int: true }),
   ids: (xs) => {
     if (!Array.isArray(xs) || xs.length > 200) fail('ids must be a list of alert ids');
     return xs.map((x) => { if (typeof x !== 'string' || !ALERT_ID.test(x)) fail('ids must be alert ids'); return x; });
@@ -482,18 +542,18 @@ const FIELD = {
     return xs.map((x) => { if (typeof x !== 'string' || !/^[a-p]{24}$/.test(x)) fail('a checksum is 24 letters a to p'); return x; });
   },
   kinds: cleanKinds,
-  userPrice: (x) => num(x, 'userPrice'),
-  stopLoss: (x) => num(x, 'stopLoss'),
-  takeProfit: (x) => num(x, 'takeProfit'),
-  r: (x) => num(x, 'r'),
-  bars: (x) => num(x, 'bars'),
-  mfe: (x) => num(x, 'mfe'),
-  mae: (x) => num(x, 'mae'),
+  userPrice: (x) => price(x, 'userPrice'),
+  stopLoss: (x) => price(x, 'stopLoss'),
+  takeProfit: (x) => price(x, 'takeProfit'),
+  r: (x) => within(x, 'r', -R_MAX, R_MAX),
+  bars: (x) => within(x, 'bars', 0, 5000, { int: true }),
+  mfe: (x) => within(x, 'mfe', 0, 1e3),
+  mae: (x) => within(x, 'mae', 0, 1e3),
   bothTouched: (x) => (x === null || x === undefined ? null : !!x),
   gap: (x) => (x === null || x === undefined ? null : !!x),
   scoring: (x) => oneOf(x, ['half', 'stop'], 'scoring'),
-  plannedAlerts: (x) => num(x, 'plannedAlerts'),
-  committedAt: (x) => num(x, 'committedAt'),
+  plannedAlerts: (x) => within(x, 'plannedAlerts', 1, 10000, { int: true }),
+  committedAt: (x) => epochMs(x, 'committedAt'),
   replaces: (x) => oneOf(x, ['method-changed'], 'replaces'),
   answer: (x) => oneOf(x, ['yes', 'no'], 'answer'),
 };
@@ -505,6 +565,13 @@ export const idOf = (pair, tf, barCloseMs) => `${pair}-${tf}-${barCloseMs}`;
 /* An alert id's bar time is milliseconds since 1970: thirteen digits from 2001 to 2286. */
 const ALERT_ID = /^(XAUUSD|BTCUSD)-[MH]\d{1,3}-\d{13}$/;
 const dayIdOf = (pair, tf, day) => `${pair}-${tf}-${day}`;
+/** The settings' window shape ({start, end, tz}) from a method's ({open, close, tz}). */
+const winOf = (mw) => ({ start: { h: +mw.open.slice(0, 2), m: +mw.open.slice(3) }, end: { h: +mw.close.slice(0, 2), m: +mw.close.slice(3) }, tz: mw.tz });
+/** windowState for a London day (YYYY-MM-DD), read at its noon in London, as canonicalAlerts reads it. */
+const dayWindow = (day, mw) => {
+  const [y, mo, d] = day.split('-').map(Number);
+  return windowState(zonedTimeToUtc(y, mo, d, 12, 0, DAY_TZ), mw.start ? mw : winOf(mw));
+};
 export const sampleIdOf = (committedAt) => `sample-${committedAt}`;
 export const CONSENT_ID = 'live-record';
 
@@ -514,13 +581,19 @@ export const CONSENT_ID = 'live-record';
  */
 function required(e) {
   const need = (cond, what) => { if (!cond) fail(`a ${e.type} event needs ${what}`); };
+  const refuse = (cond, what) => { if (cond) fail(`a ${e.type} event ${what}`); };
   need(Number.isFinite(e.at), 'its time (at)');
-  const fullMethod = (m) => m && m.version && m.window && m.costs;
+  const fullMethod = (m) => m && m.version && m.window && m.costs && m.serverOffset !== null && m.serverOffset !== undefined;
+  // The method's record, and what the user was shown, start after the held-back years (rule 2).
+  const heldBack = (ms) => refuse(!(ms > HOLDOUT.toMs), `is dated inside the held-back years (rule 2); the journal starts after ${new Date(HOLDOUT.toMs).toISOString()}`);
   const levels = () => {
     need(e.pair && e.tf && e.side && Number.isFinite(e.barCloseMs), 'pair, tf, side and barCloseMs');
     need(e.stopDist > 0 && e.tp1Dist > 0, 'a stop and a target distance');
-    need(fullMethod(e.method) && e.method.tf === e.tf, 'its method, with a version, window, costs and the same timeframe');
+    need(fullMethod(e.method) && e.method.tf === e.tf, 'its method, with a version, window, costs, server offset and the same timeframe');
+    need(e.barCloseMs % (tfInfo(e.tf).minutes * 60000) === 0, 'a bar close on its timeframe\'s grid');
     need(e.id === idOf(e.pair, e.tf, e.barCloseMs), `the id ${idOf(e.pair, e.tf, e.barCloseMs)}`);
+    need(Number.isFinite(e.at) && e.at >= 1e12, 'its time (at) in milliseconds');
+    heldBack(e.barCloseMs);
   };
   if (e.type === 'alert') { levels(); need(e.outcome && Number.isFinite(e.outcome.r) && e.outcome.how, 'its outcome'); }
   if (e.type === 'shown') { levels(); need(e.source && e.account && e.feedId, 'its source, account mode and feed'); }
@@ -531,6 +604,11 @@ function required(e) {
     // A day lists the alerts it found, so the record can be frozen (foldCanonical).
     need(Array.isArray(e.ids) && Array.isArray(e.sums) && e.ids.length === e.alerts && e.sums.length === e.alerts, 'the ids and checksums of its alerts');
     need(e.ids.every((id) => id.startsWith(`${e.pair}-${e.tf}-`) && dayOf(Number(id.slice(id.lastIndexOf('-') + 1))) === e.day), 'ids of its own pair, timeframe and day');
+    const w = dayWindow(e.day, e.method.window);
+    heldBack(w.opensAtMs);
+    // A day is recorded only once its window has closed: an earlier `at` is a
+    // wrong clock or a hand edit, and would otherwise win as the earliest record.
+    refuse(!(e.at >= w.closesAtMs), `is dated before ${e.day}'s window closed (${new Date(w.closesAtMs).toISOString()}), so it cannot be a record of that day`);
   }
   if (['resolved', 'ticketed', 'taken', 'actual'].includes(e.type)) {
     need(e.account, 'the account mode of the alert it belongs to');
@@ -727,19 +805,25 @@ const valid = (e) => e && typeof e === 'object' && typeof e.id === 'string' && T
 
 /**
  * A canonical string for a method: version, target rule, filter, timeframe,
- * reference feeds, window and costs. Two methods are the same only if every
- * one of these is.
+ * reference feeds, window, costs and server offset. Two methods are the same
+ * only if every one of these is.
  */
 export const methodKey = (m) => {
-  const c = cleanMethod(m) || { version: null, targetRule: null, filter: 'none', tf: null, feeds: {}, window: null, costs: null };
+  const c = cleanMethod(m) || { version: null, targetRule: null, filter: 'none', tf: null, feeds: {}, window: null, costs: null, serverOffset: null };
   return JSON.stringify([c.version, c.targetRule, c.filter, c.tf,
     PAIRS.map((p) => `${p}:${c.feeds[p] ?? REFERENCE_FEEDS[p].id}`).join('|'),
     c.window ? `${c.window.open}-${c.window.close}@${c.window.tz}` : null,
-    c.costs ? PAIRS.map((p) => `${p}:${c.costs[p].spread}/${c.costs[p].comm}`).join('|') : null]);
+    c.costs ? PAIRS.map((p) => `${p}:${c.costs[p].spread}/${c.costs[p].comm}`).join('|') : null,
+    c.serverOffset ?? null]);
 };
 
 const hm = (t) => `${pad(t.h)}:${pad(t.m)}`;
-/** The settings a method is read and scored with: the window, and per instrument the spread read with and the commission as a price distance. */
+/**
+ * The settings a method is read and scored with: the window; per instrument
+ * the spread read with and the commission as a price distance; and the
+ * broker's server offset, which gateFor uses (marketOpenNow) to decide when
+ * the market counts as open, as reads.mjs's storeKey records.
+ */
 function settingsOf(cfg) {
   if (!cfg || !cfg.window || !cfg.account) fail('a method needs the settings (cfg), for its window and costs');
   const w = cfg.window;
@@ -747,7 +831,9 @@ function settingsOf(cfg) {
   // liveRead reads with the instrument's observed spread; costFor turns the
   // commission per side in pounds into a round-turn price distance.
   for (const p of PAIRS) costs[p] = { spread: INSTRUMENTS[p].typicalSpread.observed, comm: +costFor(p, 0, cfg).comm.toFixed(10) };
-  return { window: { open: hm(w.start), close: hm(w.end), tz: w.tz }, costs };
+  const o = cfg.broker ? cfg.broker.serverOffset : 'auto';
+  const serverOffset = o === 'auto' || o === null || o === undefined || o === '' ? 'auto' : Number(o);
+  return { window: { open: hm(w.start), close: hm(w.end), tz: w.tz }, costs, serverOffset };
 }
 
 /**
@@ -763,17 +849,19 @@ export function methodOf({ version, targetRule = TARGET_RULE, filter = 'none', t
   return m;
 }
 
-/** Refuse a method whose window or costs are not the settings' own (they changed: a new method). */
+/** The method `m` would be under the settings `cfg`: its own version, rule, filter, timeframe and feeds, the settings' window, costs and offset. */
+const methodUnder = (m, cfg) => cleanMethod({ ...m, ...settingsOf(cfg) });
+
+/** Refuse a method whose window, costs or server offset are not the settings' own (they changed: a new method). */
 function sameSettings(m, cfg, what) {
-  const now = cleanMethod({ ...m, ...settingsOf(cfg) });
-  if (methodKey(now) !== methodKey(m)) fail(`${what}: the settings' window or costs differ from the method's, so this is a different method (rule 1)`);
+  if (methodKey(methodUnder(m, cfg)) !== methodKey(m)) fail(`${what}: the settings' window, costs or server offset differ from the method's, so this is a different method (rule 1)`);
 }
 
-/** A method handed in whole (with its window and costs), checked. */
+/** A method handed in whole (with its window, costs and server offset), checked. */
 function checkedMethod(method) {
   const m = cleanMethod(method || {});
   if (!m.version || !m.tf || !m.targetRule) fail('a method needs a version, a target rule and a timeframe');
-  if (!m.window || !m.costs) fail('a method needs its window and costs (methodOf with the settings)');
+  if (!m.window || !m.costs || m.serverOffset === null) fail('a method needs its window, costs and server offset (methodOf with the settings)');
   return m;
 }
 
@@ -945,9 +1033,13 @@ function scoreOn(bars, rec, { spread, comm, closesAtMs, tfMs }) {
       : { r: (-spread - comm) / ((rec.side === 'buy' ? rec.stopDist + spread : rec.stopDist) + comm), how: 'window', bars: 0, bothTouched: false, mfe: 0, mae: 0 };
   }
   for (let j = k + 1; j <= k + o.bars; j++) if (inWin[j].t - inWin[j - 1].t !== tfMs) gap = true;
-  // An outcome.mjs that takes bothTouched: 'half' already returns the half; an older one returns −1 with the flag.
-  const r = o.bothTouched && o.r === -1 ? (targetR(rec, spread, comm) - 1) / 2 : o.r;
-  return { r: +r.toFixed(4), how: o.how, bars: o.bars, mfe: o.mfe, mae: o.mae, bothTouched: !!o.bothTouched, scoring: 'half', gap };
+  // outcome.mjs with bothTouched: 'half' returns how 'both' and the half
+  // already. An older one, without that option, returns the stop (−1) with
+  // the flag; it is turned into the same half here.
+  const old = o.bothTouched && o.how === 'stop' && o.r === -1;
+  const r = old ? (targetR(rec, spread, comm) - 1) / 2 : o.r;
+  const how = o.bothTouched ? 'both' : o.how;
+  return { r: +r.toFixed(4), how, bars: o.bars, mfe: o.mfe, mae: o.mae, bothTouched: !!o.bothTouched, scoring: 'half', gap };
 }
 
 /* ------------------------------------------------------ the method's record */
@@ -981,14 +1073,23 @@ function* calendar(fromDay, toDay) {
  * that starts before fromMs is processed from its own start (a commitment at
  * 11:00 does not change what the 11:15 alert sees).
  *
+ * Holes. A day is held (pending, why 'gap') while any of its closes' slices,
+ * or the window's own bars, holds a hole of more than 4 missing bars
+ * (history.mjs gapsIn, which leaves out gold's scheduled closures) — the
+ * feed may still fill it, and a recorded day cannot be recomputed. Once
+ * GAP_SETTLE_MS (48 h) has passed since the window closed it is recorded as
+ * it stands, with `gap: true`; sampleStatus leaves its alerts out of the
+ * sample. The rule looks only at the bars and the clock, never at results.
+ *
  * A day that already has a day record for this method in `events` is FROZEN:
  * it is never recomputed (it comes back in `frozen`), so a replay over
  * revised bars, other settings or another machine cannot change it.
  *
  *   pair, bars   the reference feed's bars for this pair (forming ones are dropped)
- *   feedId       the id of the feed the bars came from; it must be
- *                REFERENCE_FEEDS[pair].id — a fallback feed's bars are refused,
- *                not mislabelled as the reference
+ *   feedId       the id of the source the bars came from (history.mjs
+ *                HISTORY_FEEDS, src/data-feeds.js): one of
+ *                REFERENCE_FEEDS[pair].sources — a fallback feed's bars are
+ *                refused, not mislabelled as the reference
  *   method       methodOf(...): its tf and targetRule are what is read; its
  *                window and costs must be the settings' (cfg) own
  *   events       the journal's events, to seed the state from earlier alerts
@@ -999,15 +1100,17 @@ function* calendar(fromDay, toDay) {
  *   read         the read function (liveRead; a test may memoise it)
  *
  * Returns { events: [...alert events, ...day events], alerts, days, pending: [{day, pair, why}],
- * frozen: [{day, pair}] } where why is 'window-open' | 'short-history' | 'not-yet'.
+ * frozen: [{day, pair}] } where why is 'window-open' | 'short-history' | 'not-yet' | 'gap'.
  */
 export function canonicalAlerts({
   pair, bars, feedId, cfg, fromMs, toMs, method, events = [], nowMs = Date.now(),
   featuresFor = null, filterFor = null, keep = null, lookback = FETCH_BARS, read = liveRead,
 }) {
   if (!PAIRS.includes(pair)) fail(`unknown instrument ${pair}`);
-  if (feedId !== REFERENCE_FEEDS[pair].id) fail(`the method's record is read only on ${REFERENCE_FEEDS[pair].label} (feedId ${REFERENCE_FEEDS[pair].id}), not on ${feedId ?? 'an unnamed feed'}`);
+  const ref = REFERENCE_FEEDS[pair];
+  if (!ref.sources.includes(feedId)) fail(`the method's record is read only on ${ref.label} (a source among ${ref.sources.join(', ')}), not on ${feedId ?? 'an unnamed feed'}`);
   const m = checkedMethod(method);
+  if (m.feeds[pair] !== ref.id) fail(`the method names ${m.feeds[pair]} for ${pair}, but its record is read only on the reference feed ${ref.id}`);
   if (!(Number.isFinite(fromMs) && Number.isFinite(toMs))) fail('canonicalAlerts needs fromMs and toMs');
   sameSettings(m, cfg, 'canonicalAlerts');
   const tfMs = tfInfo(m.tf).minutes * 60000;
@@ -1016,6 +1119,8 @@ export function canonicalAlerts({
   const closed = (bars || []).filter((b) => b.t + tfMs <= nowMs).sort((a, b) => a.t - b.t);
   const lastClose = closed.length ? closed[closed.length - 1].t + tfMs : -Infinity;
   const comm = m.costs[pair].comm;
+  const holes = gapsIn(closed, m.tf, { pair });
+  const holeIn = gapInWindow(closed, holes, lookback);
 
   // Days already recorded are frozen. The state at the start of each day
   // processed is the latest alert before that day's own start — from this
@@ -1046,6 +1151,10 @@ export function canonicalAlerts({
     if (lastClose < w.closesAtMs) { pending.push({ day, pair, why: 'not-yet' }); continue; }
     const at = (T) => { while (idx + 1 < closed.length && closed[idx + 1].t + tfMs <= T) idx++; while (idx >= 0 && closed[idx].t + tfMs > T) idx--; return idx; };
     if (closes.some((T) => at(T) + 1 < lookback)) { pending.push({ day, pair, why: 'short-history' }); continue; }
+    // A hole in any read's slice, or among the window's own bars (the missing
+    // stretch overlapping [open, close)), holds the day until it settles.
+    const gap = closes.some((T) => holeIn(at(T))) || holes.some((g) => g.afterT + tfMs < w.closesAtMs && g.nextT > w.opensAtMs);
+    if (gap && nowMs < w.closesAtMs + GAP_SETTLE_MS) { pending.push({ day, pair, why: 'gap' }); continue; }
 
     prev = latestBefore(w.opensAtMs);
     const kinds = {};
@@ -1079,6 +1188,7 @@ export function canonicalAlerts({
     days.push(sanitize({
       type: 'day', id: dayIdOf(pair, m.tf, day), at: Math.max(nowMs, w.closesAtMs), pair, tf: m.tf, method: m, day,
       alerts: dayAlerts.length, ids: dayAlerts.map((a) => a.id), sums: dayAlerts.map(sumOf), kinds,
+      ...(gap ? { gap: true } : {}),
     }));
   }
   return { events: [...alerts, ...days], alerts, days, pending, frozen };
@@ -1184,12 +1294,23 @@ export function accountMismatch(entry, cfg) {
   };
 }
 
+/** How far from the shown alert's price the user's ticket prices may be: 20%. */
+export const TICKET_BAND = 0.2;
+
 /**
  * `take` returned a ticket for this alert. The prices are the user's MT5
  * price and the levels built from it — allowed (rule 6); the lot size is not.
  */
 export function markTicketed(entry, { userPrice, stopLoss = null, takeProfit = null, at = Date.now(), account = null } = {}) {
   const s = shownEntry(entry, 'markTicketed');
+  // The user's MT5 prices sit near the feed's (tens of dollars apart, decision
+  // 26): one far from the shown alert's price is a mistake, or not a price.
+  if (s.refPrice > 0) {
+    for (const [what, x] of [['userPrice', userPrice], ['stopLoss', stopLoss], ['takeProfit', takeProfit]]) {
+      if (x === null || x === undefined) continue;
+      if (!(typeof x === 'number' && Math.abs(x - s.refPrice) <= TICKET_BAND * s.refPrice)) fail(`${what} must be within ${TICKET_BAND * 100}% of the alert's price`);
+    }
+  }
   return sanitize({ type: 'ticketed', id: entry.id, at, account: accountFor(s, account), userPrice, stopLoss, takeProfit });
 }
 
@@ -1251,11 +1372,16 @@ export function consentEvent({ answer, at = Date.now() } = {}) {
  * an earlier sample is unfinished, unless the method changed — restarting a
  * run after a bad start is the optional stopping decision 8 forbids — and
  * refused below MIN_PLANNED_ALERTS, or with a commitment inside the held-back
- * years. `events` are the journal's events (pass [] for an empty one).
+ * years. `events` are the journal's events (pass [] for an empty one). `cfg`
+ * is the settings: a method whose window, costs or server offset are not the
+ * settings' own is out of date and is refused, so a sample is never
+ * committed to a method the record will not be read with.
  */
-export function setSample({ plannedAlerts = DEFAULT_PLANNED_ALERTS, method, pairs = [...PAIRS], committedAt = Date.now(), at = committedAt, events, replaces = null } = {}) {
+export function setSample({ plannedAlerts = DEFAULT_PLANNED_ALERTS, method, cfg, pairs = [...PAIRS], committedAt = Date.now(), at = committedAt, events, replaces = null } = {}) {
   if (!Number.isInteger(plannedAlerts) || plannedAlerts < MIN_PLANNED_ALERTS) fail(`the sample needs a whole number of at least ${MIN_PLANNED_ALERTS} alerts`);
   const m = checkedMethod(method);
+  if (!cfg) fail('setSample needs the settings (cfg), to check the method is the current one');
+  sameSettings(m, cfg, 'setSample');
   if (!Array.isArray(events)) fail('setSample needs the journal\'s events, to check for a sample in progress');
   if (!(committedAt > HOLDOUT.toMs)) fail('a sample cannot start inside the held-back years');
   const current = foldSample(events);
@@ -1273,11 +1399,33 @@ export function setSample({ plannedAlerts = DEFAULT_PLANNED_ALERTS, method, pair
 const iso16 = (day) => `${day}T00:00`;
 
 /**
+ * Day records of the same method, pair, timeframe and day that disagree on
+ * which alerts the day had (their ids or checksums differ): a union merge of
+ * two machines' different computations. Only one can stand, and which one is
+ * decided by when each was recorded, not by the bars — so the verdict waits
+ * until it is settled by hand. ['YYYY-MM-DD PAIR'], sorted.
+ */
+function contestedDays(events, key, pairs) {
+  const by = new Map();
+  for (const e of events || []) {
+    if (!valid(e) || e.type !== 'day' || !pairs.includes(e.pair) || methodKey(e.method) !== key) continue;
+    const what = JSON.stringify([e.ids, e.sums]);
+    if (!by.has(e.id)) by.set(e.id, { e, what: new Set() });
+    by.get(e.id).what.add(what);
+  }
+  return [...by.values()].filter((x) => x.what.size > 1).map((x) => `${x.e.day} ${x.e.pair}`).sort();
+}
+
+/** London midnight at the start of a day (YYYY-MM-DD). */
+const dayStartMs = (day) => { const [y, mo, d] = day.split('-').map(Number); return zonedTimeToUtc(y, mo, d, 0, 0, DAY_TZ); };
+
+/**
  * Where a committed sample stands. It counts only the method's record — the
  * alerts canonicalAlerts found on the reference feeds for the sample's method
  * and instruments, from the commitment on — never what the watcher or a scan
- * happened to send. Alerts whose trade spans a gap in the feed are left out
- * (counted in `gapped`).
+ * happened to send. Alerts whose trade spans a gap in the feed, and every
+ * alert of a day recorded with a hole in its bars (`gap` on its day record),
+ * are left out (counted in `gapped`).
  *
  * The verdict, exactly as declared: on the first N alerts, mean R per alert
  * after costs with the by-day clustered 95% range (variance × G/(G−1), G =
@@ -1289,12 +1437,18 @@ const iso16 = (day) => `${day}T00:00`;
  *  - every weekday from the commitment to the last judged alert has been
  *    checked on the feed for every instrument in the sample (otherwise a late
  *    check could still add an earlier alert and change which N are judged);
- *  - the sample has not ended (a later commitment, or the live method
- *    changing under it, ends it with no verdict).
+ *  - no day up to the last judged alert is CONTESTED (two different records
+ *    of it, from a merge): which one stands would otherwise decide the verdict;
+ *  - the sample has not ended. A later commitment ends it ('new-sample'); so
+ *    does the method changing under it ('method-changed'): the first alert
+ *    shown, alert recorded, or day recorded, for the sample's instruments
+ *    after the commitment, under a different method — a settings change
+ *    ends it even with the watcher off.
  *
  * Returns null without a sample, else {
  *   planned, pairs, committedAt, count, judged, gapped, days, mean, se,
- *   range [lo, hi] | null, uncovered ['YYYY-MM-DD PAIR'], tooFewDays,
+ *   range [lo, hi] | null, uncovered ['YYYY-MM-DD PAIR'], contested ['YYYY-MM-DD PAIR'],
+ *   gapDays ['YYYY-MM-DD PAIR'], tooFewDays,
  *   ended, endedReason 'new-sample' | 'method-changed' | null,
  *   complete, verdict 'edge' | 'against' | 'break-even' | null, verdictText
  * }
@@ -1303,17 +1457,35 @@ export function sampleStatus(events, sample = foldSample(events)) {
   if (!sample) return null;
   const key = methodKey(sample.method);
   const N = sample.plannedAlerts;
-  // The sample ends at a later commitment, or at the first alert the live
-  // desk sent under a different method — whichever comes first. Alerts from
-  // then on are not this sample's.
   const next = foldSamples(events).find((s) => s.committedAt > sample.committedAt);
   const nextMs = next ? next.committedAt : Infinity;
   const ours = (e) => sample.pairs.includes(e.pair) && e.barCloseMs >= sample.committedAt;
-  const changedMs = Math.min(Infinity, ...(events || [])
-    .filter((e) => valid(e) && e.type === 'shown' && ours(e) && methodKey(e.method) !== key).map((e) => e.barCloseMs));
+  // The method changed at the first sign of another method after the
+  // commitment, for the sample's instruments:
+  //  - an alert shown under it: at its bar close;
+  //  - a day recorded under it: at the time it was RECORDED (its `at`, never
+  //    before that day's window closed). Not at the day's own date: a replay
+  //    under the new settings may record days from before the change, and
+  //    must not cut alerts the old method recorded while it was in force (or
+  //    take away a verdict already reached);
+  //  - an alert recorded under it: at its day record's time, as above; one no
+  //    day record names (not part of the record — a hand edit) at its own `at`.
+  const commitDay = dayOf(sample.committedAt);
+  const otherDays = new Map();
+  for (const d of standingDays(events).values()) if (methodKey(d.method) !== key) d.ids.forEach((id) => otherDays.set(`${methodKey(d.method)}|${id}`, d.at));
+  const changeAt = (e) => {
+    if (!valid(e) || !sample.pairs.includes(e.pair) || methodKey(e.method) === key) return Infinity;
+    if (e.type === 'shown') return ours(e) ? e.barCloseMs : Infinity;
+    if (e.type === 'day') return e.at >= sample.committedAt ? e.at : Infinity;
+    if (e.type === 'alert') { const t = otherDays.get(`${methodKey(e.method)}|${e.id}`) ?? e.at; return t >= sample.committedAt ? t : Infinity; }
+    return Infinity;
+  };
+  const changedMs = Math.min(Infinity, ...(events || []).map(changeAt));
   const endMs = Math.min(nextMs, changedMs);
+  const dayRecs = foldDays(events, sample.method);
+  const gapDay = (a) => { const d = dayRecs.get(dayIdOf(a.pair, a.tf, dayOf(a.barCloseMs))); return !!(d && d.gap); };
   const all = foldCanonical(events, sample.method).filter((e) => ours(e) && e.barCloseMs < endMs);
-  const counted = all.filter((a) => !a.outcome.gap);
+  const counted = all.filter((a) => !a.outcome.gap && !gapDay(a));
 
   let M = Math.min(N, counted.length);
   const daysIn = (xs) => new Set(xs.map((a) => dayOf(a.barCloseMs))).size;
@@ -1333,30 +1505,35 @@ export function sampleStatus(events, sample = foldSample(events)) {
   const reachedN = counted.length >= N;
   const enoughDays = G >= MIN_VERDICT_DAYS;
 
-  // Weekdays that should have been checked on the feed and were not.
-  const dayRecs = foldDays(events, sample.method);
-  const checkedDays = [...dayRecs.values()].filter((d) => sample.pairs.includes(d.pair)).map((d) => d.day).sort();
+  // Weekdays that should have been checked on the feed and were not; days
+  // recorded twice, differently; days recorded with a hole.
+  const inSample = [...dayRecs.values()].filter((d) => sample.pairs.includes(d.pair) && d.day >= commitDay && dayStartMs(d.day) < endMs);
+  const checkedDays = inSample.map((d) => d.day).sort();
   const lastDay = reachedN && judged.length ? dayOf(judged[judged.length - 1].barCloseMs) : checkedDays[checkedDays.length - 1] || null;
   const uncovered = [];
   if (lastDay) {
-    for (const { day, dow } of calendar(dayOf(sample.committedAt), lastDay)) {
-      if (dow === 0 || dow === 6 || (Number.isFinite(endMs) && day > dayOf(endMs))) continue;
+    for (const { day, dow } of calendar(commitDay, lastDay)) {
+      if (dow === 0 || dow === 6 || dayStartMs(day) >= endMs) continue;
       for (const p of sample.pairs) if (!dayRecs.has(dayIdOf(p, sample.method.tf, day))) uncovered.push(`${day} ${p}`);
     }
   }
+  const contested = contestedDays(events, key, sample.pairs).filter((x) => x.slice(0, 10) >= commitDay && dayStartMs(x.slice(0, 10)) < endMs);
+  // Once N are in, a contested day after the last judged one cannot change the verdict.
+  const blocking = reachedN && lastDay ? contested.filter((x) => x.slice(0, 10) <= lastDay) : contested;
+  const gapDays = inSample.filter((d) => d.gap).map((d) => `${d.day} ${d.pair}`).sort();
 
   const st = clusteredByDay(judged.map((a) => ({ at: iso16(dayOf(a.barCloseMs)), r: a.outcome.r })));
   const se = st && G > 1 ? st.seDay * Math.sqrt(G / (G - 1)) : null;
   const range = se === null ? null : [st.mean - 1.96 * se, st.mean + 1.96 * se];
   // A sample that reached its verdict before it ended keeps it.
-  const reached = reachedN && enoughDays && !uncovered.length;
+  const reached = reachedN && enoughDays && !uncovered.length && !blocking.length;
   const ended = !reached && Number.isFinite(endMs);
   const complete = reached;
   const verdict = complete ? (range[0] > 0 ? 'edge' : range[1] < 0 ? 'against' : 'break-even') : null;
   return {
     planned: N, pairs: sample.pairs, committedAt: sample.committedAt,
     count: counted.length, judged: judged.length, gapped: all.length - counted.length,
-    days: G, mean: st ? st.mean : null, se, range, uncovered,
+    days: G, mean: st ? st.mean : null, se, range, uncovered, contested, gapDays,
     tooFewDays: reachedN && !enoughDays,
     ended, endedReason: !ended ? null : nextMs <= changedMs ? 'new-sample' : 'method-changed',
     complete, verdict, verdictText: verdict ? VERDICTS[verdict] : null,
@@ -1423,8 +1600,20 @@ function feedWords(labels) {
 
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
-function sampleLines(st) {
+const CONTESTED_WHY = (n) => `${plural(n, 'day')} recorded twice with different alerts (two machines' journals merged), to be settled by hand first`;
+const GAP_LINE = (n) => `${plural(n, 'day')} had a hole in the price feed's bars, so ${n === 1 ? 'its' : 'their'} alerts are left out of the sample.`;
+
+/*
+ * `settingsChanged`: the settings' window, costs or server offset are no
+ * longer the sample's method's (summary works it out from cfg). The record is
+ * then read under a different method, so the sample has stopped, whether or
+ * not a day has been recorded under the new settings yet.
+ */
+function sampleLines(st, { settingsChanged = false } = {}) {
   if (!st) return ['**The alert sample**: none committed yet, so there is no verdict to give.'];
+  if (!st.complete && settingsChanged) {
+    return [`**The alert sample**: stopped at ${Math.min(st.count, st.planned)} of ${st.planned} because your settings changed after you committed to it (the session window, the costs or the broker's server offset), and that makes it a different method; it gives no verdict. A new sample can be committed under the new settings.`];
+  }
   if (st.ended) {
     return [`**The alert sample**: stopped at ${Math.min(st.count, st.planned)} of ${st.planned} because the method changed, so it gives no verdict.`];
   }
@@ -1436,6 +1625,7 @@ function sampleLines(st) {
     const why = [];
     if (st.tooFewDays) why.push(`they come from only ${plural(st.days, 'day')}, and a verdict needs at least ${MIN_VERDICT_DAYS}, so the judged alerts run on to the end of the ${MIN_VERDICT_DAYS}th day`);
     if (st.uncovered.length) why.push(`${plural(st.uncovered.length, 'day')} still to be checked on the price feed`);
+    if (st.contested.length) why.push(CONTESTED_WHY(st.contested.length));
     out.push(`**The alert sample**: all ${st.planned} alerts are in, but no verdict yet: ${why.join('; ')}.`);
   } else {
     let head = `**The alert sample**: ${st.count} of the ${st.planned} alerts you committed to`;
@@ -1446,8 +1636,10 @@ function sampleLines(st) {
     } else head += '.';
     out.push(head);
     if (st.uncovered.length) out.push(`${plural(st.uncovered.length, 'day')} not yet checked on the price feed; the count can still grow for them.`);
+    if (st.contested.length) out.push(`${CONTESTED_WHY(st.contested.length)[0].toUpperCase()}${CONTESTED_WHY(st.contested.length).slice(1)}.`);
     out.push(noVerdictLine(st.planned));
   }
+  if (st.gapDays.length) out.push(GAP_LINE(st.gapDays.length));
   if (st.count >= st.planned && st.tooFewDays) out.push(noVerdictLine(st.planned, 'days'));
   return out;
 }
@@ -1481,8 +1673,14 @@ export function summary(events, { nowMs = Date.now(), cfg, method = null, fromMs
   const [defFrom, defTo] = defaultPeriod(nowMs, cfg);
   const from = fromMs ?? defFrom, to = toMs ?? defTo;
   const sample = foldSample(events);
-  const m = method || (sample && sample.method) || null;
+  // The method the settings make of the sample's: if the window, costs or
+  // server offset changed since the commitment, the record is now read under
+  // that one, and the sample has stopped.
+  const current = sample && cfg.account ? methodUnder(sample.method, cfg) : sample ? sample.method : null;
+  const settingsChanged = !!sample && methodKey(current) !== methodKey(sample.method);
+  const m = method || current || null;
   const st = sampleStatus(events, sample);
+  const running = st && !st.ended && !(settingsChanged && !st.complete);
   const entries = [...fold(events, { method: m }).values()];
   const inPeriod = (t) => Number.isFinite(t) && t >= from && t < to;
   const period = entries.filter((e) => inPeriod(e.barCloseMs));
@@ -1501,7 +1699,7 @@ export function summary(events, { nowMs = Date.now(), cfg, method = null, fromMs
       ...(scans.length ? [`- Ideas from a one-off scan: ${scans.length}`] : []),
       `- Tickets you asked for: ${tickets}`,
       `- Trades you told me you took: ${taken}`,
-      ...(st && !st.ended ? [`- Alert sample: ${Math.min(st.count, st.planned)} of ${st.planned}, counted from the price feed after each session`] : []),
+      ...(running ? [`- Alert sample: ${Math.min(st.count, st.planned)} of ${st.planned}, counted from the price feed after each session`] : []),
     ].join('\n'), IN_SESSION_LINE].join('\n\n');
   }
 
@@ -1519,20 +1717,22 @@ export function summary(events, { nowMs = Date.now(), cfg, method = null, fromMs
   if (!main.length && !notSent.length && !notInRecord.length) body.push('- No alerts in this period.');
   for (const e of main) body.push(`- ${say(e)}`);
   if (notSent.length) {
-    body.push('- The method\'s alerts you were not sent, found afterwards on the price feed (they count in the sample):');
+    body.push(`- The method's alerts you were not sent, found afterwards on the price feed${running ? ' (they count in the sample)' : ''}:`);
     for (const e of notSent) body.push(`  - ${say(e)}`);
   }
   if (notInRecord.length) {
     body.push('- Sent to you, but not in the method\'s record on the price feed (not counted in the sample):');
     for (const e of notInRecord) body.push(`  - ${say(e)}`);
   }
-  if (st && !st.ended) {
+  const holed = [...dayRecs.values()].filter((d) => d.gap && inPeriod(dayStartMs(d.day) + 12 * 3600e3)).sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : 0));
+  for (const d of holed) body.push(`- ${dayLabel(dayStartMs(d.day) + 12 * 3600e3, tz)}: the price feed's ${nameOf(d.pair)} bars have a hole that day, so its alerts are left out of the sample.`);
+  if (running) {
     const todo = [];
     for (const { day, dow } of calendar(dayOf(from), dayOf(Math.min(Math.max(from, to - 1), nowMs)))) {
       if (dow === 0 || dow === 6) continue;
       const [y, mo, d] = day.split('-').map(Number);
       if (windowState(zonedTimeToUtc(y, mo, d, 12, 0, DAY_TZ), cfg.window).opensAtMs > nowMs) continue;
-      const missing = st.pairs.filter((p) => !dayRecs.has(dayIdOf(p, sample.method.tf, day)));
+      const missing = st.pairs.filter((p) => !dayRecs.has(dayIdOf(p, m.tf, day)));
       if (missing.length) todo.push(`${dayLabel(zonedTimeToUtc(y, mo, d, 12, 0, DAY_TZ), tz)} (${missing.map(nameOf).join(', ')})`);
     }
     if (todo.length) body.push(`- Not yet checked on the price feed: ${todo.join('; ')}.`);
@@ -1548,7 +1748,7 @@ export function summary(events, { nowMs = Date.now(), cfg, method = null, fromMs
     trades.push(modes.map(([mode, xs]) => `- ${mode === 'live' ? 'Live' : 'Demo'}: ${plural(xs.length, 'trade')}, on average ${fmtR(xs.reduce((s, e) => s + e.actual.r, 0) / xs.length)} times the risk`).join('\n'));
   }
 
-  const blocks = [alerts.join('\n'), trades.join('\n'), sampleLines(st).join('\n')];
+  const blocks = [alerts.join('\n'), trades.join('\n'), sampleLines(st, { settingsChanged }).join('\n')];
   const earlierEnded = foldSamples(events).filter((s) => sample && s.committedAt < sample.committedAt)
     .map((s) => ({ s, x: sampleStatus(events, s) })).filter(({ x }) => !x.complete);
   if (earlierEnded.length) blocks.push(earlierEnded.map(({ s, x }) => `An earlier sample (committed ${dayLabel(s.committedAt, tz)}) stopped at ${Math.min(x.count, x.planned)} of ${x.planned} when the method changed.`).join('\n'));

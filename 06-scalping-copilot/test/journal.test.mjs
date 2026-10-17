@@ -20,7 +20,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   ALLOWED, FORBIDDEN, SOURCES, VERDICTS, IN_SESSION_LINE, TAKEN_WITHIN_MS, DEFAULT_PLANNED_ALERTS, MIN_PLANNED_ALERTS,
-  MIN_VERDICT_DAYS, REFERENCE_FEEDS, HOLDOUT, LiveConsentError, KNOWN_FEEDS, alertChecksum, accountMismatch, sensitiveText, foldDays,
+  MIN_VERDICT_DAYS, REFERENCE_FEEDS, HOLDOUT, GAP_SETTLE_MS, TICKET_BAND, LiveConsentError, KNOWN_FEEDS, alertChecksum, accountMismatch, sensitiveText, foldDays,
   sanitize, setFeatureNames, journalPath, readEvents, appendEvents, fold, foldSample, foldSamples, foldCanonical, foldConsent,
   canonicalAlerts, shownEvent, resolveOpen, markTicketed, markTaken, markActual, needsLiveConsent, consentEvent,
   setSample, sampleStatus, outcomeSentence, summary, fmtR, noVerdictLine, sampleQuestion, idOf, methodOf, methodKey, takenWithinMs,
@@ -30,6 +30,7 @@ import { outcome } from '../desk/outcome.mjs';
 import { clusteredByDay } from '../desk/stats.mjs';
 import { withDefaults, costFor } from '../desk/lib.mjs';
 import { windowState } from '../src/sessions.js';
+import { HISTORY_FEEDS } from '../desk/history.mjs';
 
 let passed = 0, failed = 0;
 const pending = [];
@@ -73,7 +74,7 @@ const read = (args) => {
   if (!memo.has(key)) { readsMade++; memo.set(key, liveRead(args)); }
   return memo.get(key);
 };
-const canon = (o = {}) => canonicalAlerts({ pair: 'BTCUSD', bars: BARS, feedId: REF.id, cfg, method: METHOD, lookback: LOOKBACK, nowMs: NOW, read, fromMs: Date.UTC(2026, 9, 21), toMs: Date.UTC(2026, 9, 23), ...o });
+const canon = (o = {}) => canonicalAlerts({ pair: 'BTCUSD', bars: BARS, feedId: 'binance-vision', cfg, method: METHOD, lookback: LOOKBACK, nowMs: NOW, read, fromMs: Date.UTC(2026, 9, 21), toMs: Date.UTC(2026, 9, 23), ...o });
 const recAt = (closeMs) => {
   const k = kOf(closeMs);
   const r = read({ pair: 'BTCUSD', bars: BARS.slice(k - LOOKBACK + 1, k + 1), nowMs: closeMs + 20000, cfg: { ...cfg, timeframe: 'M15' }, source: FEED, targetRule: '1.5R' });
@@ -89,7 +90,7 @@ const mkShown = ({ pair = 'BTCUSD', closeMs, side = 'sell', source = 'watch', ac
   sanitize({ type: 'shown', id: idOf(pair, method.tf, closeMs), at, account, source, pair, tf: method.tf, method, barCloseMs: closeMs, side, feed: FEED.label, feedId: FEED.id, ...lv, ...rest });
 const dayStr = (ms) => new Date(ms).toISOString().slice(0, 10);
 // A day record naming the alert events it found (the record keeps only those).
-const mkDay = (pair, day, alerts = [], method = METHOD, at = Date.parse(`${day}T15:00:00Z`)) =>
+const mkDay = (pair, day, alerts = [], method = METHOD, at = Date.parse(`${day}T23:00:00Z`)) =>
   sanitize({ type: 'day', id: `${pair}-${method.tf}-${day}`, at, pair, tf: method.tf, method, day, alerts: alerts.length, ids: alerts.map((a) => a.id), sums: alerts.map(alertChecksum), kinds: {} });
 const resolvedEv = (id, r, how = r >= 1 ? 'target' : r === -1 ? 'stop' : 'window', extra = {}) =>
   sanitize({ type: 'resolved', id, at: 1, account: 'demo', r, how, bars: 3, mfe: 1, mae: 0.5, bothTouched: false, scoring: 'half', gap: false, feed: FEED.label, spreadNum: 6, ...extra });
@@ -169,7 +170,7 @@ test('free text from the user cannot get in: how a trade ended is one of a short
 });
 test('a shown alert comes only from a live feed read, and keeps only allowed fields', () => {
   const rec = { ...recAt(C1315), caution: 'some gate text', lastStretch: false };
-  const e = shownEvent(rec, { source: 'watch', method: METHOD, cfg, at: 1 });
+  const e = shownEvent(rec, { source: 'watch', method: METHOD, cfg, at: C1315 + 20000 });
   const ok = new Set([...ALLOWED.common, ...ALLOWED.shown]);
   for (const k of Object.keys(e)) assert.ok(ok.has(k), k);
   assert.deepEqual([e.id, e.feed, e.feedId, e.side, e.account], [`BTCUSD-M15-${C1315}`, 'Binance (BTCUSDT)', 'binance-vision', 'sell', 'demo']);
@@ -241,7 +242,7 @@ test('when the settings\' mode differs from the alert\'s, the desk asks which ac
   const path = join(tmp(), 'journal.jsonl');
   const ev = markActual(entry, { r: 1, how: 'target', at: 5, account: 'live' });
   assert.equal(ev.account, 'live');
-  assert.equal(markTicketed(entry, { userPrice: 1, at: 4, account: 'live' }).account, 'live');
+  assert.equal(markTicketed(entry, { userPrice: 84100, at: 4, account: 'live' }).account, 'live');
   assert.equal(markTaken(new Map([[entry.id, entry]]), { alertId: entry.id, at: 4, account: 'live' }).event.account, 'live');
   assert.throws(() => appendEvents(path, [ev]), LiveConsentError);
   assert.throws(() => markActual(entry, { r: 1, how: 'target', account: 'paper' }), /must be one of/);
@@ -259,7 +260,7 @@ test('the fold does not depend on the order of the lines (a union merge, a rebas
     markActual(fold([mkShown({ closeMs: C1315 })]).get(id), { r: 0.8, how: 'by-hand', at: 1000 }),
     markActual(fold([mkShown({ closeMs: C1315 })]).get(id), { r: 0.5, how: 'by-hand', at: 2000 }),   // the correction
     resolvedEv(id, -1), resolvedEv(id, 0.3, 'window', { at: 5 }),
-    setSample({ plannedAlerts: 100, method: METHOD, committedAt: C1315 - 1, events: [] }),
+    setSample({ cfg, plannedAlerts: 100, method: METHOD, committedAt: C1315 - 1, events: [] }),
   ];
   evs.push(mkDay('BTCUSD', '2026-10-21', [evs[0]]));
   const once = fold(evs, { method: METHOD });
@@ -299,8 +300,8 @@ test('two commands appending at once keep every line (lock, temporary file, rena
     const { appendEvents } = await import(mod);
     const method = ${JSON.stringify(METHOD)};
     for (let i = 0; i < +n; i++) {
-      const t = (+tag + i) * 900000;
-      appendEvents(path, [{ type: 'shown', id: 'BTCUSD-M15-' + t, at: i, account: 'demo', pair: 'BTCUSD', tf: 'M15', source: 'watch', method, barCloseMs: t, side: 'buy', feedId: 'binance-vision', stopDist: 1, tp1Dist: 2 }]);
+      const t = ${Date.UTC(2027, 0, 4)} + (+tag + i) * 900000;
+      appendEvents(path, [{ type: 'shown', id: 'BTCUSD-M15-' + t, at: t + 20000, account: 'demo', pair: 'BTCUSD', tf: 'M15', source: 'watch', method, barCloseMs: t, side: 'buy', feedId: 'binance-vision', stopDist: 1, tp1Dist: 2 }]);
     }
   `);
   const run = (tag) => new Promise((ok, no) => {
@@ -426,21 +427,38 @@ test('a late replay adds nothing to a frozen day, and a completed sample keeps i
   assert.equal(appendEvents(path, blind).added.length, 0);
   assert.deepEqual(foldCanonical(readEvents(path), METHOD), foldCanonical(A, METHOD));
   // A sample: once complete, a second computation of a judged day (here union-merged
-  // in, with an extra alert) changes neither the judged alerts nor the mean.
+  // in, with an extra alert) changes neither the judged alerts nor the mean —
+  // but the day is CONTESTED, and the verdict is withheld until it is settled.
   const done = sampleOf(byDay(100, 1.4, 0.2));
   const st = sampleStatus(done);
+  assert.deepEqual([st.complete, st.contested], [true, []]);
   const d = weekdays(1)[0];
   const redo = [mkAlert({ closeMs: d + 10 * 3600e3, r: -1 }), mkAlert({ closeMs: d + 11 * 3600e3, r: -1 }), mkAlert({ closeMs: d + 12 * 3600e3, r: -1 })];
-  const merged = [...done, ...redo, mkDay('BTCUSD', dayStr(d), redo, METHOD, Date.parse(`${dayStr(d)}T15:00:00Z`) + 3600e3)];
-  assert.deepEqual(sampleStatus(merged), st);
-  assert.deepEqual(sampleStatus(shuffle(merged, rng(3))), st);
+  const merged = [...done, ...redo, mkDay('BTCUSD', dayStr(d), redo, METHOD, Date.parse(`${dayStr(d)}T23:00:00Z`) + 3600e3)];
+  for (const evs of [merged, shuffle(merged, rng(3))]) {
+    const x = sampleStatus(evs);
+    assert.deepEqual([x.judged, x.mean, x.range, x.count], [st.judged, st.mean, st.range, st.count]);
+    assert.deepEqual([x.contested, x.complete, x.verdict], [[`${dayStr(d)} BTCUSD`], false, null]);
+  }
+  assert.match(summary(merged, { nowMs: Date.UTC(2027, 0, 20, 18), cfg }), /all 100 alerts are in, but no verdict yet: 1 day recorded twice with different alerts \(two machines' journals merged\), to be settled by hand first\./);
+  // The same record twice (another machine, the same alerts, recorded later) is not contested.
+  const same = [...done, mkDay('BTCUSD', dayStr(d), foldCanonical(done, METHOD).filter((a) => dayStr(a.barCloseMs) === dayStr(d)), METHOD, Date.parse(`${dayStr(d)}T23:00:00Z`) + 7200e3)];
+  assert.deepEqual(sampleStatus(same), st);
 });
-test('the method\'s record is read only on the reference feed; a fallback feed is refused, not mislabelled', () => {
-  assert.throws(() => canon({ feedId: undefined }), /only on Binance \(BTCUSDT\)/);
-  assert.throws(() => canon({ feedId: 'binance-vision' }), /only on Binance/);
-  assert.throws(() => canon({ feedId: 'coinbase' }), /only on Binance/);
-  assert.throws(() => canonicalAlerts({ pair: 'XAUUSD', bars: [], feedId: REF.id, cfg, method: METHOD, fromMs: 1, toMs: 2 }), /only on Twelve Data/);
+test('the method\'s record is read on the sources that serve the reference series; a fallback feed is refused, not mislabelled', () => {
+  // The ids history.mjs and the live feeds actually produce.
+  for (const p of ['BTCUSD', 'XAUUSD']) assert.ok(REFERENCE_FEEDS[p].sources.includes(HISTORY_FEEDS[p]), p);
+  assert.deepEqual([...REFERENCE_FEEDS.BTCUSD.sources], ['binance-vision', 'binance']);
+  assert.deepEqual([...REFERENCE_FEEDS.XAUUSD.sources], ['twelvedata']);
+  // Either Binance host gives the same lines, which carry the series' id.
+  assert.deepEqual(canon({ feedId: 'binance' }).events, canon({ feedId: 'binance-vision' }).events);
   assert.equal(canon().alerts[0].feedId, REF.id);
+  for (const feedId of [undefined, 'coinbase', 'kraken', 'okx', 'binance-btcusdt', 'twelvedata']) assert.throws(() => canon({ feedId }), /only on Binance \(BTCUSDT\)/, String(feedId));
+  const gold = (feedId) => canonicalAlerts({ pair: 'XAUUSD', bars: [], feedId, cfg, method: METHOD, nowMs: NOW, fromMs: Date.UTC(2026, 9, 21), toMs: Date.UTC(2026, 9, 22) });
+  assert.deepEqual(gold('twelvedata').pending.map((x) => x.why), ['not-yet']);
+  for (const feedId of ['paxg-kraken', 'alphavantage', 'binance-vision']) assert.throws(() => gold(feedId), /only on Twelve Data/, feedId);
+  // The method must name the reference series for the instrument read.
+  assert.throws(() => canon({ method: { ...METHOD, feeds: { ...METHOD.feeds, BTCUSD: 'coinbase-btcusd' } } }), /read only on the reference feed binance-btcusdt/);
 });
 test('the window and the costs are part of the method: a settings change is a new method', () => {
   const pricier = withDefaults({ account: { commissionPerSideGBP: 3 } });
@@ -466,7 +484,7 @@ test('the window and the costs are part of the method: a settings change is a ne
 console.log('\nwhat the user was shown: scoring (silent)');
 test('a shown alert is scored on the feed it names, with its own spread, once its window has closed', () => {
   const rec = recAt(C1315);
-  const entries = fold([shownEvent(rec, { source: 'watch', method: METHOD, cfg, at: 1 })]);
+  const entries = fold([shownEvent(rec, { source: 'watch', method: METHOD, cfg, at: C1315 + 20000 })]);
   const [ev] = resolveOpen(entries, BARS, cfg, { pair: 'BTCUSD', feed: FEED, nowMs: NOW });
   const o = outcome(BARS, kOf(C1315), rec, { spread: rec.spreadNum, comm: costFor('BTCUSD', 0, cfg).comm, closesAtMs: windowState(C1315, cfg.window).closesAtMs, tfMinutes: 15 });
   assert.deepEqual([ev.how, ev.r, ev.feed, ev.spreadNum, ev.scoring], [o.how, +o.r.toFixed(4), 'Binance (BTCUSDT)', rec.spreadNum, 'half']);
@@ -504,7 +522,14 @@ test('a bar touching both the stop and the target is scored as half of each', ()
   const entries = fold([mkShown({ closeMs: T0 + M15, side: 'buy', stopDist: 10, tp1Dist: 15, spreadNum: 1, commNum: 0 })]);
   const [ev] = resolveOpen(entries, bars, cfg, { pair: 'BTCUSD', feed: FEED, nowMs: Date.UTC(2030, 0, 9, 17) });
   const target = (15 - 1) / (10 + 1);
-  assert.deepEqual([ev.bothTouched, ev.r], [true, +((target - 1) / 2).toFixed(4)]);
+  assert.deepEqual([ev.bothTouched, ev.how, ev.r], [true, 'both', +((target - 1) / 2).toFixed(4)]);
+  // outcome.mjs's 'both' is a valid result on the method's record too, and is said the same way.
+  const a = mkAlert({ closeMs: T0 + M15, side: 'buy', r: ev.r, how: 'both', bothTouched: true });
+  assert.equal(a.outcome.how, 'both');
+  const path = join(tmp(), 'journal.jsonl');
+  assert.equal(appendEvents(path, [a, mkDay('BTCUSD', dayStr(T0), [a])]).added.length, 2);
+  assert.match(outcomeSentence(fold(readEvents(path)).get(a.id), cfg), /touched its stop and its target in the same bar, so it counts as half of each \(\+0\.14\)$/);
+  assert.throws(() => mkAlert({ closeMs: T0 + M15, how: 'touched' }), /outcome.how must be one of target, stop, window, both/);
   const said = outcomeSentence(fold([...entries.values()].map((e) => e.shown).concat([ev])).get(ev.id), cfg);
   assert.equal(said, 'The 15:15 bitcoin buy alert touched its stop and its target in the same bar, so it counts as half of each (+0.14)');
 });
@@ -524,23 +549,23 @@ test('"took it" links to a ticket built within its freshness (30 minutes on M15,
 });
 test('a ticket already taken is not a candidate again; a second trade 15 minutes later links cleanly', () => {
   const a = mkShown({ closeMs: C1315 }), b = mkShown({ closeMs: C1330 });
-  const ta = markTicketed(fold([a]).get(a.id), { userPrice: 1, at: C1315 + 60000 });
+  const ta = markTicketed(fold([a]).get(a.id), { userPrice: 84100, at: C1315 + 60000 });
   const taken = markTaken(fold([a, ta]), { tf: 'M15', nowMs: C1315 + 120000 }).event;
-  const tb = markTicketed(fold([b]).get(b.id), { userPrice: 1, at: C1315 + 16 * 60000 });
+  const tb = markTicketed(fold([b]).get(b.id), { userPrice: 84100, at: C1315 + 16 * 60000 });
   const r = markTaken(fold([a, b, ta, taken, tb]), { tf: 'M15', nowMs: C1315 + 17 * 60000 });
   assert.deepEqual([r.ok, r.event.id], [true, b.id]);
 });
 test('never by recency; two fresh tickets are asked about; an alert never sent cannot be taken', () => {
   const a = mkShown({ closeMs: C1315 }), b = mkShown({ closeMs: C1330 });
   assert.deepEqual(markTaken(fold([a, b]), { tf: 'M15', nowMs: C1330 + 60000 }), { ok: false, reason: 'no-ticket' });
-  const two = fold([a, b, markTicketed(fold([a]).get(a.id), { userPrice: 1, at: C1315 + 60000 }), markTicketed(fold([b]).get(b.id), { userPrice: 1, at: C1330 + 60000 })]);
+  const two = fold([a, b, markTicketed(fold([a]).get(a.id), { userPrice: 84100, at: C1315 + 60000 }), markTicketed(fold([b]).get(b.id), { userPrice: 84100, at: C1330 + 60000 })]);
   assert.deepEqual(markTaken(two, { tf: 'M15', nowMs: C1330 + 120000 }), { ok: false, reason: 'ambiguous', candidates: [a.id, b.id] });
   const r = markTaken(fold([a]), { alertId: a.id, at: 5 });
   assert.deepEqual([r.ok, r.event.how, r.event.id], [true, 'named', a.id]);
   assert.deepEqual(markTaken(fold([a]), { alertId: 'BTCUSD-M15-1' }), { ok: false, reason: 'no-alert' });
   const unsent = mkAlert({ closeMs: NEXT_DAY }), unsentDay = mkDay('BTCUSD', dayStr(NEXT_DAY), [unsent]);
   assert.deepEqual(markTaken(fold([unsent, unsentDay]), { alertId: `BTCUSD-M15-${NEXT_DAY}` }), { ok: false, reason: 'not-shown' });
-  assert.throws(() => markTicketed(fold([unsent, unsentDay]).get(`BTCUSD-M15-${NEXT_DAY}`), { userPrice: 1 }), /never sent/);
+  assert.throws(() => markTicketed(fold([unsent, unsentDay]).get(`BTCUSD-M15-${NEXT_DAY}`), { userPrice: 84100 }), /never sent/);
   assert.throws(() => markTaken(fold([a]), {}), /needs an alert id, or a timeframe/);
 });
 
@@ -565,7 +590,7 @@ const sampleOf = (rs, { perDay = 2, N = rs.length, method = METHOD, extra = [], 
   const alerts = rs.map((r, i) => mkAlert({ closeMs: days[Math.floor(i / perDay)] + (10 + (i % perDay)) * 3600e3, r, method }));
   const extraAlerts = extra.filter((e) => e.type === 'alert');
   const evs = [...alerts, ...withDays([...alerts, ...extraAlerts], { days, method, dropDays })];
-  evs.push(setSample({ plannedAlerts: N, method: METHOD, pairs: ['BTCUSD'], committedAt: COMMIT, events: [] }));
+  evs.push(setSample({ cfg, plannedAlerts: N, method: METHOD, pairs: ['BTCUSD'], committedAt: COMMIT, events: [] }));
   return [...evs, ...extra];
 };
 const wave = (n, a, b) => Array.from({ length: n }, (_, i) => (i % 2 ? a : b));
@@ -634,29 +659,28 @@ test('only the method\'s record counts: not what the watcher sent, not scans, no
   assert.deepEqual(sampleStatus(sampleOf(rs, { extra: shownMany })), baseline);
   const st = sampleStatus(sampleOf(rs, { N: 150, extra: [
     mkAlert({ closeMs: COMMIT - DAY }),                                       // before the commitment
-    mkAlert({ closeMs: COMMIT + 6 * 3600e3, method: methodOf({ version: 'm1', targetRule: '2R', tf: 'M15', cfg }) }),
     mkAlert({ closeMs: COMMIT + 7 * 3600e3, gap: true }),                      // across a feed gap
   ] }));
-  assert.deepEqual([st.count, st.gapped], [100, 1]);
+  assert.deepEqual([st.count, st.gapped, st.ended], [100, 1, false]);
 });
 test('committing: at least 100 alerts, after the held-back years, and no restart of a sample in progress', () => {
   const evs = sampleOf(wave(60, 1.4, 0.9), { N: 100 });
   assert.equal(DEFAULT_PLANNED_ALERTS, 190);
   assert.equal(MIN_PLANNED_ALERTS, 100);
-  assert.throws(() => setSample({ plannedAlerts: 99, method: METHOD, events: [] }), /at least 100/);
-  assert.throws(() => setSample({ method: METHOD }), /journal's events/);
-  assert.throws(() => setSample({ method: METHOD, events: [], committedAt: HOLDOUT.toMs }), /held-back/);
-  assert.throws(() => setSample({ method: METHOD, events: evs, committedAt: NOW + 60 * DAY }), /no verdict yet; it ends only when the method changes/);
-  assert.throws(() => setSample({ method: METHOD, events: evs, committedAt: NOW + 60 * DAY, replaces: 'method-changed' }), /method is unchanged/);
+  assert.throws(() => setSample({ cfg, plannedAlerts: 99, method: METHOD, events: [] }), /at least 100/);
+  assert.throws(() => setSample({ cfg, method: METHOD }), /journal's events/);
+  assert.throws(() => setSample({ cfg, method: METHOD, events: [], committedAt: HOLDOUT.toMs }), /held-back/);
+  assert.throws(() => setSample({ cfg, method: METHOD, events: evs, committedAt: NOW + 60 * DAY }), /no verdict yet; it ends only when the method changes/);
+  assert.throws(() => setSample({ cfg, method: METHOD, events: evs, committedAt: NOW + 60 * DAY, replaces: 'method-changed' }), /method is unchanged/);
   const m2 = methodOf({ version: 'm2', tf: 'M15', cfg });
-  const s2 = setSample({ method: m2, events: evs, committedAt: Date.UTC(2027, 0, 4), replaces: 'method-changed' });
+  const s2 = setSample({ cfg, method: m2, events: evs, committedAt: Date.UTC(2027, 0, 4), replaces: 'method-changed' });
   const after = [...evs, s2];
   assert.deepEqual(foldSamples(after).map((s) => s.id), [`sample-${COMMIT}`, `sample-${Date.UTC(2027, 0, 4)}`]);
   const old = sampleStatus(after, foldSamples(after)[0]);
   assert.deepEqual([old.ended, old.endedReason, old.verdict], [true, 'new-sample', null]);
   // A sample that reached its verdict may be followed by another, and keeps its verdict.
   const done = sampleOf(byDay(100, 1.4, 0.2));
-  const next = setSample({ method: METHOD, events: done, committedAt: Date.UTC(2027, 3, 5) });
+  const next = setSample({ cfg, method: METHOD, events: done, committedAt: Date.UTC(2027, 3, 5) });
   assert.equal(sampleStatus([...done, next], foldSamples([...done, next])[0]).verdict, 'edge');
   assert.match(sampleQuestion(), /^Shall I judge the alerts on the next 190 of them, every alert scored on the price feed whether you take it or not, and give no verdict before then\?/);
 });
@@ -694,7 +718,7 @@ const dayEvents = () => {
     mkShown({ closeMs: t(12, 0), source: 'scan' }), resolvedEv(ids(t(12, 0)), 0.2, 'window'),                  // sent, not in the record
     mkAlert({ pair: 'XAUUSD', closeMs: t(13, 0), side: 'buy', r: 0.0813, how: 'window', stopDist: 3, tp1Dist: 4.5, spreadNum: 0.05 }),
     mkShown({ pair: 'XAUUSD', closeMs: t(13, 0), side: 'buy', stopDist: 3, tp1Dist: 4.5, spreadNum: 0.05 }),
-    setSample({ plannedAlerts: 190, method: METHOD, committedAt: t(0, 0), events: [] }),
+    setSample({ cfg, plannedAlerts: 190, method: METHOD, committedAt: t(0, 0), events: [] }),
   ];
   evs.push(...withDays(evs.filter((x) => x.type === 'alert')));
   const e = fold(evs).get(ids(t(7, 15)));
@@ -796,6 +820,161 @@ test('never "won", "lost", "you made", "missed", pounds, or a feed price, in any
     assert.doesNotMatch(x, PRICE_LEVEL);
   }
   for (const r of [1.5, -1, 0.3]) assert.doesNotMatch(said({ r, how: r === 1.5 ? 'target' : r === -1 ? 'stop' : 'window' }), FORBIDDEN_WORDS);
+});
+
+console.log('\nre-check, 17 Oct: holes, settings changes, contested days, held-back lines, number fields');
+const without = (from, to) => BARS.filter((b) => b.t < from || b.t >= to);
+const WITHIN_SETTLE = Date.UTC(2026, 9, 22, 16, 0);       // a day after the 21st's close: inside 48 h
+test('a day whose bars have a hole (more than 4 missing) is held, not frozen; after 48 h it is recorded flagged, out of the sample', () => {
+  assert.equal(GAP_SETTLE_MS, 48 * 3600e3);
+  // 10:00–12:00 UTC on the 21st missing: 8 bars, inside the window and inside the 22nd's lookback.
+  const holed = without(Date.UTC(2026, 9, 21, 10), Date.UTC(2026, 9, 21, 12));
+  const held = canon({ bars: holed, nowMs: WITHIN_SETTLE });
+  assert.deepEqual([held.events, held.pending.map((x) => [x.day, x.why])], [[], [['2026-10-21', 'gap'], ['2026-10-22', 'gap']]]);
+  // The feed fills the hole: the day is recorded as if it had never been there.
+  const filled = canon({ nowMs: WITHIN_SETTLE });
+  assert.deepEqual([filled.alerts, filled.pending], [canon().alerts, []]);
+  assert.ok(filled.days.every((d) => !('gap' in d)));
+  // A hole only in the lookback (the 19th) holds the days that read it.
+  const back = canon({ bars: without(Date.UTC(2026, 9, 19, 10), Date.UTC(2026, 9, 19, 12)), nowMs: WITHIN_SETTLE });
+  assert.deepEqual(back.pending.map((x) => x.why), ['gap', 'gap']);
+  // Four missing bars is not a hole (the plan's "more than 4").
+  const four = canon({ bars: without(Date.UTC(2026, 9, 21, 10), Date.UTC(2026, 9, 21, 11)), nowMs: WITHIN_SETTLE });
+  assert.deepEqual([four.pending, four.days.map((d) => d.gap ?? false)], [[], [false, false]]);
+  // 48 h after the close, still holed: recorded with gap: true, and its alerts are left out.
+  const late = canon({ bars: holed });
+  assert.deepEqual([late.pending, late.days.map((d) => d.gap)], [[], [true, true]]);
+  const evs = [...late.events, setSample({ cfg, method: METHOD, pairs: ['BTCUSD'], committedAt: Date.UTC(2026, 9, 20), events: [] })];
+  const st = sampleStatus(evs);
+  assert.deepEqual([st.count, st.gapped, st.gapDays], [0, late.alerts.length, ['2026-10-21 BTCUSD', '2026-10-22 BTCUSD']]);
+  assert.ok(late.alerts.length > 0);
+  const text = summary(evs, { nowMs: Date.UTC(2026, 9, 21, 20), cfg });
+  assert.match(text, /^- Wed 21 Oct: the price feed's bitcoin bars have a hole that day, so its alerts are left out of the sample\.$/m);
+  assert.match(text, /^2 days had a hole in the price feed's bars, so their alerts are left out of the sample\.$/m);
+  // A gap-flagged day is frozen like any other.
+  assert.deepEqual(canon({ events: late.events }).events, []);
+});
+
+const pricier = withDefaults({ account: { commissionPerSideGBP: 3 } });
+const M_COST = methodOf({ version: 'm1', tf: 'M15', cfg: pricier });
+test('a settings change ends the sample at the first day recorded under the new method, with no alert shown', () => {
+  // 50 weekdays from Mon 2 Nov, two alerts a day; the commission changes and Mon 9 Nov is recorded under it.
+  const evs = sampleOf(byDay(100, 1.4, 0.2), { extra: [mkDay('BTCUSD', '2026-11-09', [], M_COST)] });
+  assert.ok(!evs.some((e) => e.type === 'shown'));
+  const st = sampleStatus(evs);
+  assert.deepEqual([st.ended, st.endedReason, st.count, st.complete, st.verdict], [true, 'method-changed', 12, false, null]);
+  // An alert recorded under another method ends it too (at its day record's time).
+  const m2R = methodOf({ version: 'm1', targetRule: '2R', tf: 'M15', cfg });
+  const viaAlert = sampleStatus(sampleOf(byDay(100, 1.4, 0.2), { extra: [mkAlert({ closeMs: COMMIT + 6 * 3600e3, method: m2R })] }));
+  assert.deepEqual([viaAlert.ended, viaAlert.endedReason, viaAlert.count], [true, 'method-changed', 2]);
+  // A replay under the new settings that records an EARLIER day, later, does not cut what the
+  // old method recorded while it was in force, nor take away a verdict already reached.
+  const backfill = sampleStatus(sampleOf(byDay(100, 1.4, 0.2), { extra: [mkDay('BTCUSD', '2026-11-02', [], M_COST, Date.UTC(2027, 0, 20))] }));
+  assert.deepEqual([backfill.complete, backfill.verdict, backfill.count], [true, 'edge', 100]);
+  // A day recorded under another method before the commitment ends nothing.
+  const before = sampleStatus(sampleOf(byDay(100, 1.4, 0.2), { extra: [mkDay('BTCUSD', '2026-10-30', [], M_COST)] }));
+  assert.equal(before.ended, false);
+});
+test('the summary builds the method from the settings, and says plainly the sample stopped because they changed', () => {
+  // The reviewer's case: ten days under METHOD, then five under the pricier commission, no shown alerts.
+  const days = weekdays(15);
+  const old = days.slice(0, 10).flatMap((d) => [mkAlert({ closeMs: d + 10 * 3600e3, r: 1.4 }), mkAlert({ closeMs: d + 11 * 3600e3, r: -1 })]);
+  const neu = days.slice(10).map((d) => mkAlert({ closeMs: d + 10 * 3600e3, r: 1.4, method: M_COST }));
+  const evs = [...old, ...neu, ...withDays(old), ...withDays(neu), setSample({ cfg, plannedAlerts: 100, method: METHOD, pairs: ['BTCUSD'], committedAt: COMMIT, events: [] })];
+  const st = sampleStatus(evs);
+  assert.deepEqual([st.ended, st.endedReason, st.count], [true, 'method-changed', 20]);
+  const text = summary(evs, { nowMs: Date.UTC(2026, 10, 25, 18), cfg: pricier, fromMs: days[10], toMs: days[14] + DAY });
+  assert.doesNotMatch(text, /No alerts in this period|Not yet checked on the price feed/);
+  assert.equal((text.match(/^ {2}- On .* bitcoin sell alert reached its target/gm) || []).length, 5);
+  assert.match(text, /- The method's alerts you were not sent, found afterwards on the price feed:\n/);   // not "they count in the sample": it has stopped
+  assert.match(text, /\*\*The alert sample\*\*: stopped at 20 of 100 because your settings changed after you committed to it \(the session window, the costs or the broker's server offset\), and that makes it a different method; it gives no verdict\./);
+  // Even before anything is recorded under the new settings, the summary says so.
+  const early = [...old, ...withDays(old), setSample({ cfg, plannedAlerts: 100, method: METHOD, pairs: ['BTCUSD'], committedAt: COMMIT, events: [] })];
+  assert.equal(sampleStatus(early).ended, false);
+  assert.match(summary(early, { nowMs: Date.UTC(2026, 10, 25, 18), cfg: pricier }), /stopped at 20 of 100 because your settings changed/);
+  assert.match(summary(early, { nowMs: Date.UTC(2026, 10, 25, 18), cfg }), /20 of the 100 alerts you committed to/);
+});
+test('setSample takes the settings and refuses a method that is not theirs', () => {
+  assert.throws(() => setSample({ method: METHOD, events: [] }), /needs the settings/);
+  assert.throws(() => setSample({ cfg: pricier, method: METHOD, events: [] }), /different method/);
+  assert.throws(() => setSample({ cfg: withDefaults({ broker: { serverOffset: 2 } }), method: METHOD, events: [] }), /different method/);
+  assert.equal(setSample({ cfg: pricier, method: M_COST, events: [] }).method.costs.BTCUSD.comm, M_COST.costs.BTCUSD.comm);
+});
+test('the broker\'s server offset is part of the method', () => {
+  const two = withDefaults({ broker: { serverOffset: 2 } });
+  assert.equal(METHOD.serverOffset, 'auto');
+  const m2 = methodOf({ version: 'm1', tf: 'M15', cfg: two });
+  assert.deepEqual([m2.serverOffset, methodKey(m2) === methodKey(METHOD)], [2, false]);
+  assert.throws(() => canon({ cfg: two }), /server offset differ/);
+  assert.throws(() => shownEvent(recAt(C1315), { source: 'watch', method: METHOD, cfg: two }), /different method/);
+  assert.throws(() => sanitize({ ...base(), method: { ...METHOD, serverOffset: 'x' } }), /serverOffset/);
+  assert.throws(() => sanitize({ ...base(), method: { ...METHOD, serverOffset: 51234567 } }), /serverOffset/);
+  const { serverOffset: _o, ...noOffset } = METHOD;
+  assert.throws(() => sanitize({ ...base(), method: noOffset }), /server offset/);
+});
+test('a day record dated before its window closed is refused; so are alerts, shown alerts and days in the held-back years', () => {
+  // 21 Oct (BST): the window closes 16:00 London, 15:00 UTC.
+  assert.throws(() => mkDay('BTCUSD', '2026-10-21', [], METHOD, Date.UTC(2026, 9, 21, 14, 59)), /dated before 2026-10-21's window closed/);
+  assert.throws(() => mkDay('BTCUSD', '2026-10-21', [], METHOD, 1), /window closed/);
+  assert.equal(mkDay('BTCUSD', '2026-10-21', [], METHOD, Date.UTC(2026, 9, 21, 15, 0)).day, '2026-10-21');
+  // The reviewer's swap: the real record copied with at: 1 and no ids is skipped on reading.
+  const A = canon().events;
+  const dir = tmp();
+  const forged = { ...A.find((e) => e.type === 'day'), at: 1, ids: [], sums: [], alerts: 0 };
+  writeFileSync(join(dir, 'j.jsonl'), [...A, forged].map((e) => JSON.stringify(e)).join('\n') + '\n');
+  assert.deepEqual(foldCanonical(readEvents(join(dir, 'j.jsonl')), METHOD), foldCanonical(A, METHOD));
+  // Held back: to 14 Oct 2026 20:45 UTC inclusive.
+  const june = Date.UTC(2025, 5, 4, 10);
+  for (const make of [() => mkAlert({ closeMs: june }), () => mkShown({ closeMs: june }), () => mkDay('BTCUSD', '2025-06-04'),
+    () => mkShown({ closeMs: HOLDOUT.toMs }), () => mkDay('BTCUSD', '2026-10-14')]) assert.throws(make, /held-back years/);
+  assert.equal(mkShown({ closeMs: HOLDOUT.toMs + M15 }).barCloseMs, HOLDOUT.toMs + M15);
+  assert.equal(mkDay('BTCUSD', '2026-10-15').day, '2026-10-15');
+  // Such lines in a file are skipped, so no summary prints a held-back result.
+  const lines = [{ ...mkAlert({ closeMs: C1315 }), barCloseMs: june, id: idOf('BTCUSD', 'M15', june), at: june + 20000 },
+    { ...mkShown({ closeMs: C1315 }), barCloseMs: june, id: idOf('BTCUSD', 'M15', june), at: june + 20000 }];
+  writeFileSync(join(dir, 'h.jsonl'), lines.map((e) => JSON.stringify(e)).join('\n') + '\n');
+  assert.deepEqual(readEvents(join(dir, 'h.jsonl')), []);
+  assert.match(summary(readEvents(join(dir, 'h.jsonl')), { nowMs: Date.UTC(2025, 5, 8), cfg, fromMs: Date.UTC(2025, 5, 1), toMs: Date.UTC(2025, 5, 8) }), /No alerts in this period/);
+});
+test('the text filter catches the ways round it the re-check found; prices still pass', () => {
+  const bad = ['call 07700/900123', 'call 07700–900123', 'call 07700—900123', 'call 077 00  900 123', 'call 07700_900123',
+    'ben at example.com', 'ben [at] example [dot] com', 'ben (at) example (dot) co (dot) uk', 'ben＠example.com',
+    'made 400$ today', '400 pounds', '50 quid', '20 bucks', '300 dollars', 'balance is 9816', 'balance of 9,816', 'equity now 12000',
+    'account 51234567.89', 'sold at 9816107.46', 'call 077 4375.20', 'ring 0770.09 00123'];
+  for (const x of bad) {
+    assert.equal(sensitiveText(x), true, x);
+    assert.throws(() => sanitize({ ...base(), reasons: [x] }), /money amount, an email address or a long number/, x);
+  }
+  for (const ok of ['lows swept at 84,399.55 then reclaimed, 3 bars ago', '0.8 ATR below a 3-touch level at 4375.20', 'unfilled up gap 84250.00-84300.00 overhead',
+    'held at M15. RSI 55', 'the dollar index firmed', 'swept at 84,399.55, rejected at 84250.00', 'price 999999.99']) assert.equal(sensitiveText(ok), false, ok);
+  // Every engine read the suite has made writes text the filter lets through.
+  for (const r of memo.values()) for (const t of [...(r.reasons || []), ...(r.against || [])].filter((x) => typeof x === 'string')) assert.equal(sensitiveText(t), false, t);
+});
+test('number fields are held to plausible ranges: bar times and commitments 13 digits, prices near the alert\'s', () => {
+  assert.throws(() => mkShown({ closeMs: 7700900123 }), /barCloseMs must be a whole number from/);
+  assert.throws(() => mkShown({ closeMs: C1315 + 60000 }), /grid/);                       // not a bar close on M15
+  assert.throws(() => sanitize({ ...setSample({ cfg, method: METHOD, committedAt: COMMIT, events: [] }), committedAt: 7700900123, id: 'sample-7700900123' }), /committedAt/);
+  const tk = { type: 'ticketed', id: base().id, at: C1315 + 60000, account: 'demo' };
+  assert.throws(() => sanitize({ ...tk, userPrice: 7700900123 }), /userPrice/);
+  assert.throws(() => sanitize({ ...tk, userPrice: 84100, stopLoss: 51234567 }), /stopLoss/);
+  assert.throws(() => sanitize({ ...tk, userPrice: -5 }), /userPrice/);
+  const entry = fold([base()]).get(base().id);
+  assert.equal(TICKET_BAND, 0.2);
+  assert.throws(() => markTicketed(entry, { userPrice: 84000 * 1.3, at: C1315 + 60000 }), /within 20% of the alert's price/);
+  assert.throws(() => markTicketed(entry, { userPrice: 84100, stopLoss: 9816, at: C1315 + 60000 }), /stopLoss must be within 20%/);
+  assert.equal(markTicketed(entry, { userPrice: 84100, stopLoss: 84700, takeProfit: 83300, at: C1315 + 60000 }).stopLoss, 84700);
+  assert.throws(() => resolvedEv(base().id, 400), /r must be/);
+  assert.throws(() => sanitize({ ...mkDay('BTCUSD', '2026-10-21'), alerts: 1.5 }), /alerts must be a whole number/);
+  assert.throws(() => sanitize({ ...mkDay('BTCUSD', '2026-10-21'), kinds: { idea: 7700900123 } }), /kinds.idea/);
+  assert.throws(() => sanitize({ ...base(), at: 1.5 }), /at must be a whole number/);
+  assert.throws(() => sanitize({ ...base(), at: 1 }), /time \(at\) in milliseconds/);
+  assert.throws(() => sanitize({ ...base(), refPrice: 51234567 }), /refPrice/);
+});
+test('the header says what a merge can still do, and does not claim it cannot swap an alert', () => {
+  const head = readFileSync(JOURNAL, 'utf8').split('*/')[0];
+  assert.doesNotMatch(head, /cannot add or swap an alert after a\s+\*?\s*verdict/);
+  assert.match(head, /CONTESTED/);
+  assert.match(head, /dated before that day's window closed is refused/);
 });
 
 for (const run of pending) await run();
