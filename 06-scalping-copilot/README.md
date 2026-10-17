@@ -29,6 +29,11 @@ The same day the desk gained a watcher that reads the live chart on that timefra
 [Watching the live chart](#watching-the-live-chart-in-the-chat). The page's own live engine
 still reads five-minute bars.
 
+**Since 17 October 2026 the desk also keeps a record of every alert** and has a replay of nine
+years of bitcoin and a learning layer behind it — see [The multi-year
+replay](#the-multi-year-replay-bitcoin-2017-onward), [The trade journal](#the-trade-journal) and
+[The learning layer](#the-learning-layer). None of them changes which alerts are sent.
+
 ---
 
 ## In a Claude chat: the desk
@@ -81,8 +86,9 @@ check the clock on their MT5 chart.
 
 Since 11 October 2026 the cloud environment may reach the price feeds, so the desk can read
 the live chart itself. `desk.mjs watch` wakes 20 seconds after every bar close inside the
-user's window, fetches the last 1,000 bars, and runs them through the same engine, gate and
-`checkPlan()` as everything else (`desk/live.mjs`). It stops and hands the session an alert
+user's window, fetches the last 1,000 bars (999 of them closed; the newest is still forming and
+is not read), and runs them through the same engine, gate and `checkPlan()` as everything else
+(`desk/live.mjs`). It stops and hands the session an alert
 only when an idea passes every check; the session sends it and starts watching again.
 `scan` is one such read on request.
 
@@ -104,6 +110,10 @@ only when an idea passes every check; the session sends it and starts watching a
 - **The target.** The engine's first target is the next level in the trade's direction.
   When no level stands in the way it aims for 1.5× the risk (the engine's own fallback, 1×,
   can never pay the risk after costs). A level closer than that is never skipped.
+- **Every alert is recorded** in the trade journal (below; on a live account only once the user
+  has agreed), and every alert ends: "_From the live
+  chart, not your screenshot, and not your broker's price. It has no live record yet, and the
+  decision is yours._" Nothing from the learning layer is ever added to an alert.
 
 **What the history says.** `node desk/replay.mjs --pair bitcoin --from 2026-01-01 --to 2026-10-11` runs the
 watcher over past bars and follows each alert to its stop, its target or 16:00. Over 2026 to
@@ -123,6 +133,121 @@ only evidence there is. It does not run unless the session keeps it running — 
 can pause, and a background command is capped at two hours, so the session restarts it; if
 the container is reclaimed the watch ends without notice. It can push to a phone only when
 Remote Control is connected from a computer; otherwise its alerts are chat messages.
+
+---
+
+## The multi-year replay (bitcoin, 2017 onward)
+
+`desk/replay.mjs` runs the watcher over years of past bitcoin bars — every bar close in the
+London window since September 2017 — and follows each alert to its stop, its target or the 16:00
+close. It is the code the live watcher runs: the gate, the engine, the checks, the cooldown and
+one alert at a time.
+
+- **Fast enough for nine years.** Each check's read is computed once, in parallel, and kept on
+  disk (`desk/reads.mjs`); the one-at-a-time alert rules are then applied in order, exactly as
+  live. The 2026 figures come out the same whichever way it is run, to the last digit.
+- **Costs as they were.** Bitcoin cost a tenth as much in 2019, so a fixed $6 spread would
+  overstate its cost then; `--cost scaled` keeps the spread at the same share of the price.
+- **Why each alert fired.** `--by-condition` splits the results by the conditions the alerts
+  fired in — the engine's regime and confidence, whether the hourly and four-hour charts agreed,
+  each part of the score for or against the trade, the hour, the weekday, buy or sell: 30 groups.
+  Thirty questions asked of pure noise throw up a "finding" or two by luck, so a group is marked
+  only if it clears a bar set for all thirty at once, a group of fewer than 30 trades says "too
+  few to say", and the table prints how many groups would clear the ordinary bar by chance beside
+  how many did. It never words a group as advice.
+- **2025 and 2026 are held back.** They are kept for one final test of the learning layer
+  (below). The replay reports them only when asked with `--holdout`, and every such run is
+  written into `desk/model.json`, where that test will find it. The one exception is the 2026
+  report the target rule was chosen on, labelled "already seen". 2025 and 2026 are always
+  reported apart, never as one figure.
+- **History is cached and only grows** (`desk/history.mjs`): bitcoin from Binance, gold from
+  Twelve Data with the user's key. A new fetch adds bars; it never throws years away.
+
+**What the replay does not do.** It uses an exchange's bars, not IC Markets' prices, and has no
+slippage, partial fills or weekend spreads. Before 2025 the news calendar is incomplete (every
+Fed meeting, but only the jobs and inflation releases a source confirmed), so those years include
+trades the live desk would have sat out. A group marked in the by-condition table is not a rule:
+acting on it would change the method and need a test of its own. It cannot tell a whole Friday or
+Monday of missing gold data next to a weekend from a holiday weekend. Gold needs the key and has
+not been run. And it is one market's past: an average with its uncertainty, not a promise.
+
+---
+
+## The trade journal
+
+Since 17 October 2026 the desk keeps a record of the alerts in `desk/journal.jsonl`, committed to
+the repository. It answers what a replay cannot: what the alerts actually do from now on.
+
+- **Two records, kept apart.** The method's own record: after each session the desk replays the
+  watcher over that day's bars from the reference feed (Binance for bitcoin, Twelve Data for gold)
+  and scores every alert it would have sent — so the record does not depend on whether the
+  watcher happened to be running. And what the user was actually sent, the tickets they asked
+  for, the trades they say they took and how those ended. Only the first decides the test.
+- **A test committed in advance.** The user will be asked to commit to judging the alerts on about
+  190 of them, every one scored on the feed whether they took it or not. No verdict comes before
+  then: checking after every alert and stopping on a good run turns a 5% test into a 20% one. The
+  rules that decide the verdict — at least 30 different days, days with holes in the data left
+  out, any change to the method ending the test — were written down before the first alert.
+- **No results mid-session.** During the user's hours the record gives counts only (alerts,
+  tickets, trades taken); results come after the close, because checking them mid-session tends
+  to make the next decision worse. A question about one named alert is always answered.
+- **Plain, fixed wording.** An alert "reached its target", "hit its stop" or "was closed at the
+  end of the session", in multiples of the risk. Never "won" or "lost", never pounds. The alerts
+  and the user's own trades are two blocks, never added together.
+- **Public, so private by construction.** The repository is public. The record keeps only a fixed
+  list of fields — results in multiples of the risk, the MT5 prices of a ticket, the engine's
+  reasons — and refuses anything else: no lot sizes, money, balance, account details or anything
+  the user typed. A result given in pounds is turned into a multiple of the risk and the pounds
+  are not kept. Before anything from a live account is written, the user is asked whether a live
+  record may sit in public.
+- **Safe on two machines.** It is a log that is only ever added to, so two sessions' additions
+  merge without one overwriting the other, and a day once recorded cannot be changed by a later
+  run.
+
+**What the journal does not do.** It is not the user's MT5 history: alerts are scored on
+Binance's or Twelve Data's prices, which differ from the broker's, and the user's own results are
+only what they report. It cannot see their fills, lot sizes or balance. It gives no verdict before
+the committed number of alerts, and no breakdown by condition before then either. Nothing in it
+changes which alerts are sent. If two machines record the same day differently, it withholds the
+verdict until a person settles it. No alert has been recorded yet and no test has been committed
+(17 October).
+
+---
+
+## The learning layer
+
+The user asked for "a way for the tool to learn the algorithm of the charts". Markets do not run
+on a fixed algorithm, so what this does is narrower and honest: it looks for measurable conditions
+that came before better or worse alerts on bitcoin's 2017–2024 prices, and checks once whether
+that still held on 2025 to mid-October 2026, which it never saw. The plan, written before any
+result, is `LEARNING-PLAN.md`.
+
+- **Small, plain models.** One ridge regression predicts how the watcher's own trade would do — a
+  filter that can only remove an alert, never add one or overrule a check. A second predicts a
+  standard buy and sell at every moment, to answer "did it learn anything about the charts at
+  all?". Both see 47 price-free measurements of the chart: the engine's scores, volatility, the
+  higher timeframes, distances to levels, the hour and the weekday.
+- **Chosen on the past, tested once.** Every setting is picked by training on earlier years and
+  testing on the next, year by year through 2019–2024. The full recipe is committed to the
+  repository before the held-back years are touched; the test then runs once, is recorded before
+  its first result is computed, and a second run is refused for good. Its two tests and the bars
+  they must clear were declared in advance, and every result sits beside a coin-flip baseline.
+- **Off unless it passes, and even then only watching.** If the filter passes, its call is to be
+  recorded beside each alert for a later live test; the alerts stay exactly as they are until the
+  user says yes to a new committed test. If it fails, it stays a research report.
+- **On request only.** `learn report` gives the result in plain words; `learn similar` describes
+  what happened after the 200 most similar past moments ("20 in 100 reached the target…"), always
+  beside the same trade's average at every earlier moment.
+
+**What the learning layer does not do.** It does not forecast, does not trade, and never appears
+on an alert or a phone notification. It cannot add an alert, pick a side, or get past the news
+blackouts, gold's quiet hours or the checks. It does not keep retraining itself: it is refitted
+only when asked, and never after the held-back test has run. A pass would mean "held up on
+2025–26", not proof, and would overstate the edge; a fail means "could not show an improvement",
+not "found nothing" — the test is too small to see a small real edge. "Similar setups" describe
+the past and were never tested as a predictor. It is built and checked but has not been run for
+real: as of 17 October the recipe is not committed and the held-back years are untouched. Gold
+waits for its key.
 
 ---
 
@@ -394,11 +519,18 @@ reason to be flat.
 
 ```
 node build.mjs        # inline src/*.js into a single self-contained index.html
-node test/run-all.mjs # 436 assertions across 11 suites, the desk's and the watcher's included
+node test/run-all.mjs # 727 assertions across 20 suites, run in parallel (~45 s)
 node test/smoke.mjs   # real browser; needs playwright, see the file header
 node desk/desk.mjs now                         # the desk, as the chat session runs it
 node desk/desk.mjs gate --pair gold --price 4400
+node desk/desk.mjs journal                     # the record of alerts (counts only in session)
+node desk/replay.mjs --pair bitcoin --from 2017-09-01 --by-condition   # development years
+node desk/learn.mjs status --pair bitcoin      # where the learning layer stands
 ```
+
+`desk/dataset.mjs` builds the learner's rows and `desk/learn.mjs fit` / `final` fit it and run
+the one held-back test; HANDOFF.md says when (they are not to be run casually: the held-back
+years can be used once).
 
 `index.html` has no build dependency, no backend and no imports. Open it from anywhere,
 including offline — the news calendar, the session clock and the risk arithmetic are all
@@ -418,8 +550,10 @@ with the safe areas handled.
   broker's CFD all differ in level and in spread, and they diverge most at exactly the
   moments the tool finds interesting. Entries, stops and targets come from MT5. This is
   context and a news clock, not an execution price source.
-- **Nothing in it is backtested and it has no track record.** The weights are reasoned,
-  not fitted. That makes them honest rather than optimal.
+- **The engine's weights are reasoned, not fitted**, and it has no live track record. That
+  makes them honest rather than optimal. The chat's watcher has been replayed over past bitcoin
+  bars (decision 26: roughly break-even after the spread over 2026, no evidence of an edge); the
+  learning layer fits nothing that decides an alert.
 - **It knows *when* releases are scheduled, not what they say.** It cannot read the number
   and has no idea an unscheduled headline just landed.
 - **It does not watch the dollar, real yields or the Nasdaq.** Gold can be technically
@@ -701,13 +835,22 @@ desk/
   replay.mjs        the watcher over past bars, with what happened next
   reads.mjs         the watcher's read at every past check, computed once and in parallel
                     (reads-worker.mjs), kept in a read store; the serial alert pass
+  history.mjs       years of closed bars, cached, only ever extended
   outcome.mjs       how one alert ended on a feed's bars (stop, target or 16:00), in R
+  conditions.mjs    the replay's by-condition table, with the chance of a false finding
+  features.mjs      one moment on the chart as 47 price-free numbers (features-extra.mjs feeds it)
+  dataset.mjs       one row per past check: features, two labels, whether it alerted
+  learn.mjs         the learning layer: ridge models, walk-forward, the one held-back test
+  journal.mjs       the record of alerts: an append-only log, allowlisted, worded by the rules
   stats.mjs         the replay's averages, and its range clustered by day
   net.mjs           re-runs a network command so Node's fetch uses the proxy
   config.json       account settings and the trade record, committed
+  journal.jsonl     the record of alerts, committed (created by the first alert)
+  model.json        the learner's recipe and its one held-back test, committed (created by the first fit)
 ../.claude/skills/scalp-desk/SKILL.md   how a session runs the desk
-test/               463 assertions; run-all.mjs runs the lot
+test/               727 assertions in 20 suites; run-all.mjs runs the lot
                     smoke.mjs loads the page in a real browser at seven
                     frozen session moments and fails on any page error
 HANDOFF.md          state, decisions and research, for picking this up cold
+LEARNING-PLAN.md    the replay, journal and learner, declared before any result
 ```

@@ -15,6 +15,9 @@ several decisions below look like mistakes and are not.
 | Live page | https://claude.ai/artifact/R1FY8JSKruN8kvhu7XQ3B9 (private to the user) |
 | Shipped file | `06-scalping-copilot/index.html`, **generated** by `node build.mjs` from `src/` — never edit it directly |
 | In the chat | `06-scalping-copilot/desk/` + `.claude/skills/scalp-desk/SKILL.md` — the session runs it when the user sends a screenshot |
+| The plan | `06-scalping-copilot/LEARNING-PLAN.md` — replay, journal and learner; the pre-registration (decisions 27–29) |
+| Journal | `desk/journal.jsonl`, committed — does not exist until the first alert is recorded (decision 28) |
+| Learner's record | `desk/model.json`, committed — does not exist until the first real `fit` (decision 29) |
 
 ### Republishing the page from a new conversation
 
@@ -30,12 +33,25 @@ refuse a plain publish and would otherwise create a *second* page. Do this:
 
 ```
 node build.mjs            # inline src/*.js into index.html; refuses on name collisions
-node test/run-all.mjs     # 463 assertions across 12 suites — unit level only
+node test/run-all.mjs     # 727 assertions across 20 suites, run in parallel (~45 s) — unit level only
 node desk/desk.mjs now    # the in-chat desk; see .claude/skills/scalp-desk/SKILL.md
 node desk/desk.mjs scan --pair bitcoin   # one live read now (watch = poll each bar close)
-node desk/replay.mjs --pair bitcoin --from 2026-01-01 --to 2026-10-11   # the watcher over history (decision 26's stretch; 2025-01-01 on is held back, see LEARNING-PLAN.md)
+node desk/desk.mjs journal               # the alert record (in session: counts only); journal update = record days on the reference feed
+node desk/desk.mjs learn status          # the learner, in the user's words (report, similar --at <UTC bar close>)
+node desk/replay.mjs --pair bitcoin --from 2026-01-01 --to 2026-10-11   # the watcher over history (decision 26's stretch; 2025-01-01 on is held back, see decision 27)
+node desk/replay.mjs --pair bitcoin --from 2017-09-01 --by-condition    # development years, by condition (developer report)
+node desk/dataset.mjs --pair bitcoin --workers 4   # the learner's rows, 2017-09 → 2024-12-31 (never held-back labels without --holdout)
+node desk/learn.mjs status --pair bitcoin          # developer status: recipe, commit state, armed or not, held-back years used or not
+node desk/learn.mjs fit --pair bitcoin             # walk-forward + recipe → desk/model.json; ONLY when "Where we stopped" says so
+node desk/learn.mjs final [--run] --pair bitcoin   # the one look at 2025–26, in two steps; ONLY when "Where we stopped" says so
 node test/smoke.mjs       # real browser, 7 frozen moments x both views, fills in the brief; fails on page errors, overflow, "undefined"/"NaN"
 ```
+
+The network commands (`scan`, `watch`, `take`, `now`, `brief`, `journal`, `learn`, the replay,
+the dataset and the learner) re-run themselves with `NODE_USE_ENV_PROXY=1` when the container has
+a proxy (`desk/net.mjs`). History, read stores and rows live under `$SCALP_DESK_HOME`
+(`~/.scalp-desk/history/`, `~/.scalp-desk/learn/`) and die with the container: a new one fetches
+bitcoin's history again (~2 minutes) and rebuilds what it needs.
 
 `smoke.mjs` needs playwright, which is deliberately **not** a project dependency.
 If it is missing: `(cd /tmp && npm i --no-save playwright@1.47.2)`. In the cloud
@@ -44,42 +60,70 @@ container it uses the preinstalled headless_shell under `/opt/pw-browsers`.
 **Run the smoke test after any UI change.** The unit suites do not touch the DOM
 and stayed fully green twice while the page was broken.
 
-### Where we stopped (17 Oct 2026, ~00:30 London) — BUILDING the learning plan; read this first
+### Where we stopped (17 Oct 2026, early morning London) — BUILT and reviewed; next: the one bitcoin run. Read this first
 
-**Resumed 16 Oct; the user is waiting for the bitcoin results.** Work follows
-`06-scalping-copilot/LEARNING-PLAN.md` (reviewed by three critics on 16 Oct; its "Engineering"
-section has the build order). Done and pushed:
-- Step 0 foundation (`df60b1f`, `f413203`): `desk/reads.mjs` (one read per check, worker threads,
-  read store with slice fingerprints, serial alert pass with a predicate), `desk/net.mjs`,
-  formatter cache (65 ms → ~5 ms a check), replay `--workers/--cost/--calendar/--both-touched/
-  --holdout` with holdout discipline, volumeBucket fix (moved nothing), release dates 2017–2025
-  in src/news-calendar.js from `data/calendar-history.json` (two 2026 dates corrected: Jan NFP
-  11 Feb, Jan CPI 13 Feb → 2026 1.5R figure +0.028R → +0.029R; decision 26 note).
-- Step 1 modules, reviewed and fixed: `desk/history.mjs`, `desk/features.mjs`,
-  `desk/conditions.mjs` (cherry-picked into the branch). 556 unit assertions pass.
-- In progress (17 Oct, 00:30): `desk/learn.mjs`, `desk/dataset.mjs`, `desk/features-extra.mjs`
-  (uncommitted in the main checkout while agents build them) and the journal's last fix on branch
-  `worktree-wf_b57a6c58-cf4-3` (worktree under `.claude/worktrees/`; merge it when its check passes).
+**The learning plan is built, integrated and reviewed; the user is still waiting for the bitcoin
+results.** Commits `df60b1f` → `87ed32f` on the branch, all pushed: the replay's foundation
+(`desk/reads.mjs`, decision 27), `desk/history.mjs`, `desk/features.mjs` (+ `features-extra.mjs`),
+`desk/conditions.mjs`, `desk/dataset.mjs`, `desk/learn.mjs` (decision 29), `desk/journal.mjs`
+(decision 28), and the integration (desk.mjs `journal` and `learn`, METHOD_VERSION and its hash
+test, the footer, 999 closed bars, `account.mode`, `.gitattributes`). Every module was re-checked
+by independent reviewers and its findings fixed under test. **727 unit assertions across 20 suites
+pass** (17 Oct). LEARNING-PLAN.md now matches what was built and is the pre-registration.
 
-**Still to do, in order:** integration (desk.mjs `journal`/`learn` commands and now/brief on the
-proxy path; live.mjs METHOD_VERSION + method-hash test, journal entries, footer; `account.mode`;
-`.gitattributes` union merge for desk/journal.jsonl; the `conditionReport` adapter replay.mjs
-calls; SKILL.md, README, this file); the minor findings left by the module re-checks (history:
-deadline overflow, opts prototype guard, head drop when nowMs < first bar, Twelve Data spacing
-vs short deadlines, re-read shorter-file check; features: analysis provenance check, live reads
-999 closed bars vs replay 1,000 — fix FETCH_BARS+1 or slice k−998; conditions: refuse 'fresh'
-rows before a complete sample, footer wording, splitByPeriod drops, `at` = bar close semantics,
-import the lists from features.mjs; plan text: 30 cells not 32, journal.jsonl and `PAIR-TF-ms`
-ids, the feature list's 960-value ATR rank and log features); then build bitcoin rows, run the
-walk-forward on dev years, **commit desk/model.json with the recipe**, run `learn final` ONCE,
-independent review, rebuild/smoke/republish the page, report to the user in the plan's shape,
-and ask the sample question (about 190 alerts, scored on mean R).
+**State that matters:**
+- `desk/model.json` does **not** exist: **the recipe is not committed.** **The held-back years
+  (2025-01-01 → 2026-10-14 20:45 UTC) have not been looked at**: no final armed or run, no
+  `--holdout` look in desk/model.json. A development-years-only walk-forward ran in a scratch
+  model file on 17 Oct (λ 10, q 0.75; kept 540 alerts at +0.009R against 723 unfiltered at
+  −0.011R; LEARNING-PLAN.md "What has been seen"). It is not the recipe.
+- `desk/journal.jsonl` does **not** exist: no alert has been recorded, and **no sample is
+  committed.** desk/config.json still has `plannedSample` 0 for the user's own trades.
+- The live page is still **version 21** (12 Oct). `index.html` was rebuilt in `f413203` (formatter
+  cache, volume fix, corrected 2026 February dates); the page has not been republished since.
+- Gold still waits for `TWELVEDATA_API_KEY`; everything below is bitcoin.
 
-**Flagged by agents, not changed (need a decision or a later pass):** the weekly claims holiday
-rule may be wrong (DOL may move the release only when Thursday itself is closed; today any
-earlier holiday moves it to Wednesday, live too); 2026 PCE January–June missing from the table;
-monthly ADP lands on Tuesday when NFP is on a Thursday; FOMC minutes table is 2026-only; the
-history cache now runs to 2026-10-16 (an agent extended it — it only grows).
+**Next, in order** (each step's command prints what to do next; stop and tell the user if any
+step refuses):
+1. **In a fresh container**: `git rev-parse --is-shallow-repository` must print `false` (else
+   `git fetch --unshallow`); `node desk/learn.mjs status --pair bitcoin` should say no recipe and
+   the held-back years unused.
+2. **Build the rows**: `node desk/dataset.mjs --pair bitcoin --workers 4` (2017-09 → 2024-12-31,
+   cost scaled, calendar rules; fetches the history first if the container has none).
+3. **Fit for real**: `node desk/learn.mjs fit --pair bitcoin`. Read its developer report; it
+   should reproduce the scratch run (deterministic). Whatever it prints is the recipe.
+4. **Commit the recipe**: commit `desk/model.json` (and nothing uncommitted among the method
+   files — the final refuses otherwise); push.
+5. **Arm**: `node desk/learn.mjs final --pair bitcoin` (no outcome is computed). Commit
+   `desk/model.json` again; push.
+6. **Run once**: `node desk/learn.mjs final --run --pair bitcoin`. **Commit and push
+   `desk/model.json` at once**, whatever it says (a crash after `started` still uses the years).
+7. **Independent review** of the result and the figures (the plan's lenses), then **report to the
+   user** with `node desk/desk.mjs learn report` in the plan's shape — "held up" only if T1 passed,
+   and then as "held up on unseen history", never as proof; beside the coin-flip baseline; 2025
+   and 2026 apart. If T1 fails the status is info-only and nothing changes for the user's alerts.
+8. **Rebuild, smoke-test and republish the page** (see "Republishing" above).
+9. **Ask the sample question**, in the words `node desk/desk.mjs journal sample` prints (about 190
+   alerts, judged on the mean R per alert, every alert scored on the price feed whether they take
+   it or not, no verdict before then; their own trades stay in "Is it working yet?"). **First
+   settle the flagged power point below** and write the answer into LEARNING-PLAN.md Part 3. Only
+   on their yes: `journal sample --alerts 190`, then pull with rebase, commit and push the journal.
+
+**Flagged, not changed (need a decision or a later pass):**
+- **The sample's power** (17 Oct): the verdict uses the two-sided 95% range (a 2.5% one-sided
+  test) but N = 190 was sized at 5% one-sided; at 190 the power against +0.2R is ~70%, not 80%
+  (80% needs ~240). Decide before the question is asked, never after (LEARNING-PLAN.md Part 3).
+- **Not built, by plan text**: shadow-scoring on each alert if T1 passes (the `filterFor` hook
+  exists; build it only then); the monthly `learn update` (none exists, and `fit` refuses after a
+  final — so never tell the user it can add last month's prices); gold's scaled spread and the
+  2×/3× cost sensitivity runs; "a release during the trade" in `journal alert`.
+- The weekly claims holiday rule may be wrong (DOL may move the release only when Thursday itself
+  is closed; today any earlier holiday moves it to Wednesday, live too).
+- 2026 PCE January–June is missing from the table.
+- Monthly ADP lands on Tuesday when NFP is on a Thursday.
+- The FOMC minutes table is 2026-only.
+- history.mjs reads a whole Friday or Monday lost beside a gold weekend as a holiday weekend (no
+  holiday table); it says so in its header.
 
 ### The pause of 14 Oct 2026 (~22:15 London), for reference
 
@@ -744,6 +788,160 @@ A fresh session is likely to "fix" some of these. Don't, without reading why.
       +0.029R, −0.168..0.226 (reads none 2,624 / rejected 3,327 / idea 368 / blocked 145); level
       50, +0.041R; 2R 117, +0.042R. The conclusion stands: roughly break-even after the spread,
       no evidence of an edge. The figures in the table above are the ones the user was shown.
+    - **17 Oct 2026: the history path reads 999 closed bars, as the live watcher does — nothing
+      moved.** The watcher fetches 1,000 bars and the newest is still forming, so it reads
+      `CLOSED_BARS = FETCH_BARS − 1 = 999` closed bars (desk/live.mjs); the replay and the dataset
+      had handed the engine 1,000. They now read the same 999 (the features' ATR percentile was
+      fixed at 960 values for the same reason). Re-run `--pair bitcoin --from 2026-01-01 --to
+      2026-10-11 --workers 4`, before and after, **byte-identical**:
+      | rule | alerts | average | clustered range | target / stop / window | buys / sells |
+      |---|---|---|---|---|---|
+      | next level only | 50 | +0.041R | −0.350 to +0.432 | 16 / 29 / 5 | 17 / 33 |
+      | 1.5R when clear | 120 | +0.029R | −0.168 to +0.226 | 24 / 41 / 55 | 55 / 65 |
+      | 2R when clear | 117 | +0.042R | −0.164 to +0.249 | 18 / 41 / 58 | 53 / 64 |
+      1.5R reads: none 2,600 / rejected 3,288 / idea 362 / blocked 214; halves −0.034R / +0.092R.
+      Decision 26 stands as written.
+
+27. **The replay's foundation, the read store and the held-back years (16–17 Oct 2026;
+    LEARNING-PLAN.md Parts 1–2).** `desk/reads.mjs` computes the watcher's read at every past
+    check once — in worker threads, all three target rules from one engine run — and keeps it in a
+    read store; the alert sequence is then applied serially. The replay, the dataset and the learner
+    all stand on it; `desk/history.mjs` holds the bars. Things that look like mistakes and are not:
+    - **Two phases, not one loop.** A read is a pure function of the 999 closed bars ending at the
+      check, the clock 20 s after the close, the settings and the costs; only the alert sequence (no
+      repeat bar, the cooldown, still running) depends on earlier alerts. So reads run in parallel
+      and the sequence serially. `--workers 1` takes the same two-phase path; both print the same
+      figures byte for byte.
+    - **A filter is a predicate inside the alert pass, never a deletion from the alert list.**
+      Removing one alert changes which later ones are still-running-blocked or inside the cooldown —
+      which is why kept + removed can exceed the unfiltered count.
+    - **The store serves a read only when its bars match.** Each read keeps a fingerprint of its
+      slice; the key hashes the engine's source, cost mode, calendar mode, window, timeframe, bar
+      source, spread override and broker block. A changed engine is never answered from old reads.
+    - **Historical cost goes into the read**, not only into the outcome: the spread feeds the
+      engine's spread verdict, the stop floor and netR (2019 at a scaled spread gave 281 ideas, at a
+      fixed $6 192). The cost mode is in every key and report header.
+    - **History only grows.** Bars are merged in, never swapped in; the last cached bar is fetched
+      again unless this module saved it knowing it had closed; a hole in the middle is reported, not
+      refetched. Gold's scheduled closures are told apart from missing data by the New York clock; a
+      whole Friday or Monday lost beside a weekend reads as a holiday weekend (no holiday table —
+      said in the module header).
+    - **Held-back rows only with `--holdout`, and every such run is appended to desk/model.json
+      under `looks`.** 2025 (clean) and 2026 (seen) print as separate blocks, never one figure. A
+      later final counts the looks: its result then says it is not on unseen data and cannot set
+      status shadow.
+    - **The decision-26 exception.** The plain report of 1 Jan–11 Oct 2026 at default settings runs
+      without `--holdout`, labelled "already seen (decision 26)": decision 26 printed it and chose
+      the 1.5R rule on it. Any other flag on those rows (`--by-condition`, another calendar or cost)
+      is a new look and needs `--holdout`. The two `--calendar rules` looks of 16 Oct went to a
+      scratch model file, not desk/model.json (decision 26's note).
+    - **The by-condition table has 30 cells and a Student-t level.** No volatility bucket
+      (volatility has no direction). A cell is marked only at the Bonferroni level over 30 cells,
+      as a Student-t(G − 1) quantile on its days with the G/(G − 1) factor — the plain z ≈ 3.14 lets
+      noise through about ten times too often on a 30-trade, 10-day cell. "Too few to say" below 30
+      trades or 10 days, with no average; the number expected by chance beside the number found;
+      never worded as advice. A marked cell is still not a rule: acting on one is a method change
+      that needs its own sample.
+
+28. **The trade journal (16–17 Oct 2026; LEARNING-PLAN.md Part 3).** `desk/journal.mjs`, wired into
+    desk.mjs: `desk/journal.jsonl` records the alerts the method sends, how each ended on the price
+    feed, what the user was shown, and which they took; `journal sample` commits the alert sample
+    the verdict waits for. Things that look like mistakes and are not:
+    - **Append-only events, folded by their own fields.** Never edited in place: watch and scan can
+      write at once, and a union merge or a pull with rebase puts the other side's lines after this
+      side's, so "last line wins" would let a merge rewrite history. Writes take a lock and rename a
+      temporary file. `.gitattributes` gives the file `merge=union`; the session pulls with rebase,
+      then commits and pushes it.
+    - **The sample is the method's own record on the reference feed, not what the watcher caught.**
+      `journal update` replays the method over every weekday window close on Binance BTCUSDT (gold:
+      Twelve Data), serially, and scores each alert (a bar touching both levels = half of each). The
+      first design — watcher alerts plus a backfill of unwatched bars — let which alerts counted
+      depend on who wrote first and on watcher state in one container (review, 16 Oct). What the
+      user was shown is linked by the same id (`PAIR-TF-barCloseMs`) but never is the sample; a
+      method alert they were not sent is said plainly, never as a missed trade. Fallback feeds are
+      refused for the record.
+    - **A recorded day is frozen.** Its `day` record lists its alert ids with checksums; a replay
+      over revised bars cannot add or swap an alert; the earliest record stands. A merge that brings
+      a different record of the same day makes it *contested*: no verdict until settled by hand.
+    - **The method is more than the engine**: version, target rule, filter, timeframe, reference
+      feeds, window and costs, per instrument. Changing one ends a sample in progress, at the first
+      day recorded under the new method. **The broker's server offset is not part of it**: a day is
+      recorded only when every read falls inside the broker's session, so correcting the offset in
+      the clocks-change week does not end a sample.
+    - **The verdict rules were declared before any alert** (LEARNING-PLAN.md Part 3, DECLARED
+      RULES): at least 100 planned alerts (190 by default); at least 30 London days, the judged set
+      running on to the end of the 30th; a holed day held 48 h, then left out if a hole exceeds 4
+      bars; every weekday recorded; contested days withhold it; three verdict phrases. None may change
+      once a sample is committed. (One point is flagged for before the first commitment: "Where we
+      stopped".)
+    - **Privacy is an allowlist that throws.** The repository is public: no lots, money, balance,
+      risk %, account details or free text, and a forbidden key at any depth throws rather than being
+      dropped quietly; engine text is screened for amounts, emails and long digit runs. A £ result
+      becomes R with the risk the ticket gave, and only R is kept; spread and commission are stored
+      as price distances.
+    - **A live-account record needs the user's yes.** Before the first live entry the desk asks rule
+      6's question (with the point that config.json's balance is public too, and a shadow balance
+      avoids that); `config livejournal=yes|no` records the answer as an event. Until yes, live
+      entries are held, not written.
+    - **Resolution is silent.** A ~5-second, one-day-at-a-time update runs at the start of watch,
+      scan, now, brief and journal; it never adds a line (NOTEs included) and can never fail the
+      command. The full `journal update` has no time limit and runs after a pull.
+    - **In session, counts only.** Between the window's open and close on a weekday, `journal` gives
+      alerts sent, tickets, trades taken and the sample's count, and rule 4's sentence. A question
+      about one named alert (`journal alert`) is answered in R at any hour.
+    - **Wording**: three forms — "reached its target (+1.5 times the risk)", "hit its stop (−1)",
+      "was closed at the end of the session (+0.3)" — plus two declared additions ("touched its stop
+      and its target in the same bar, so it counts as half of each", "has not finished yet"). Never
+      won, lost or "you made", never £, never a feed price. The alerts and the user's trades are two
+      blocks, never added together.
+    - **"Took it" links only explicitly** — the one ticket built in the last 30 minutes, or a named
+      alert; two fresh tickets and the desk asks. `plan undo` does not unmark (append-only).
+
+29. **The learner (17 Oct 2026; LEARNING-PLAN.md Part 4).** `desk/dataset.mjs` writes one row per
+    window check (47 features; label (a), the watcher's own trade; label (b), a standard long and
+    short; whether it alerted); `desk/learn.mjs` fits, validates and runs the one held-back test;
+    `desk.mjs learn status | report | similar` gives its words to the user, on request. Things that
+    look like mistakes and are not:
+    - **What it learns** is which measurable conditions came before better or worse trades, and
+      whether that held on years it never saw — not "the algorithm of the charts", which markets do
+      not have.
+    - **Ridge regression, nothing cleverer.** Exact, deterministic, pure JavaScript; the penalty is
+      on the mean loss, so a λ means the same at any size. Features are price-free and **signed by
+      the trade side** (positive = in the trade's favour), so longs and shorts pool with mirrored
+      features. Standardising, clipping and filling gaps are fitted inside each training fold only.
+    - **Two models, two jobs.** The filter (label a) can only *remove* an engine alert — never add
+      one, propose a side, or pass the gate, dead zone, blackouts or checkPlan. The ranking model
+      (label b) answers "did it learn anything about the charts?" and switches nothing on.
+    - **Everything is chosen by walk-forward on 2019–2024**, through the real alert sequence, with a
+      two-day purge; near-ties go to the larger λ, then the larger q. The scratch run picked λ 10,
+      q 0.75 although λ 1, q 0.5 scored best: that is the near-tie rule, not a bug.
+    - **T1 (filter) and T2 (ranking), each at z = 2.241** (Bonferroni over two). **P2 is
+      exploratory**: picking a side from scratch is not what the desk does and was not one of the two
+      declared tests, so it is reported and never passes or fails; its threshold rule was confirmed
+      on 17 Oct, before any recipe. A fail is worded "could not show an improvement", never "found
+      nothing": the test has little power against a small real edge.
+    - **The final is two steps and runs once.** `final` arms it, checking everything that sees no
+      outcome, and the armed entry must be committed; `final --run` refuses without it, then writes
+      `started` to model.json and three logs outside the working tree before the first outcome — a
+      run killed after that still uses the years. Any final for the window, in any committed version
+      of model.json, the working copy or a log, refuses every later final and every refit. Only
+      `desk/model.json` (a second file would carry a history of its own: a fresh clone ran a second
+      final that way in review), and never in a shallow clone. Each guard closes a way a second look
+      was actually achieved in review.
+    - **The rows never hold held-back labels by default**, and the final makes its own reads (cost
+      `max`, calendar `full`) instead of reading rows. Training uses calendar `rules` (decision D1,
+      17 Oct), because 2017–2024's tables are partial.
+    - **Shadow, not on.** A T1 pass sets status `shadow` (only if no `--holdout` look is recorded):
+      alerts unchanged, the keep/remove call recorded beside them. Filter-only alerts need the user's
+      explicit yes and start a new sample from zero; a fail leaves it info-only. The per-alert shadow
+      record is not built — build it only if T1 passes.
+    - **Refits only when asked, and never after a final.** There is no monthly `learn update` (the
+      16 Oct plan had one). `fit` and `final` are developer commands the session runs only when
+      "Where we stopped" says so.
+    - **Never on an alert.** No number and no "similar setups" on an alert or a push, in any mode;
+      `learn report` and `learn similar` only when the user asks. Similar setups refuse moments
+      inside the held-back window, and are always "in 100", beside the same standard trade at every
+      earlier moment.
 
 ---
 
@@ -802,6 +1000,8 @@ the commit messages are the durable record.
   clock — see above).
 - Optionally set a **shadow balance** and switch "Size from" to it (now remembered).
 - Set a **committed sample size** in "Is it working yet?" before logging trades.
+- Answer the **alert sample question** once it is asked (about 190 alerts, judged on the feed
+  whether taken or not; "Where we stopped", step 9). Separate from the line above.
 - Optional: tap **gbp / lot** on the BTCUSD margin row; it should read ≈ £125 at
   ~$84k (confirms the notional-rate reading of 0.002).
 - Before going live: confirm whether the live account charges **commission**, which
@@ -811,7 +1011,9 @@ the commit messages are the durable record.
 ## Not yet built — research-recommended, roughly in priority order
 
 1. **Hide running P&L during the session**; show process counters instead
-   (myopic loss aversion — frequent outcome evaluation worsens decisions).
+   (myopic loss aversion — frequent outcome evaluation worsens decisions). *In the chat this is
+   now so for the alert record: `journal` gives counts only in session (decision 28). The page
+   still has no P&L to hide.*
 2. ~~Pre-session brief~~ — **built 26 Sep 2026**, see decision 19.
 3. **Releases that already happened** (e.g. UK ONS at 07:00) shown as settled-outcome
    cards, never as an overdue red badge.
@@ -821,7 +1023,9 @@ the commit messages are the durable record.
    final hour begins; treat as one hazard, not two flags.
 6. **Per-trade log**, minimal: auto-capture facts, manual taps only for setup name
    and a pre-outcome rule-followed flag. Log in **R**, with an account-mode field so
-   demo and live series stay separate.
+   demo and live series stay separate. *Partly built 17 Oct as the chat's journal (decision 28):
+   alerts and the user's trades in R, split by account mode. Not built: the setup name and the
+   rule-followed flag (free text cannot go in a public file; they would need a short fixed list).*
 7. **Gate the running stats behind a daily close-out review.**
 8. **Cost as a share of gross R** ("costs consumed X% of your edge this month").
 9. **Partial-fill recompute** — if filled volume < requested, recompute stop and R
