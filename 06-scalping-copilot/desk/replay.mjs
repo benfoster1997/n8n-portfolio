@@ -190,7 +190,10 @@ const barFile = process.env.SCALP_DESK_BARS || join(HOME, 'history', `${pair}-${
 const bars = process.env.SCALP_DESK_BARS ? loadBarsFile(barFile, pair) : await history(fromMs, toMs);
 const inst = INSTRUMENTS[pair];
 const spread = inst.typicalSpread.observed;
-const costWords = cost === 'scaled' ? `spread ${spread} scaled with price (${spread} × close / ${SCALED_REFERENCE[pair].toLocaleString('en-GB')})` : `spread ${spread}`;
+const refWords = SCALED_REFERENCE[pair] ? `${spread} × close / ${SCALED_REFERENCE[pair].toLocaleString('en-GB')}` : null;
+const costWords = cost === 'scaled' ? `spread ${spread} scaled with price (${refWords})`
+  : cost === 'max' ? `spread max(${spread}, ${refWords}) per check, the larger of fixed and scaled`
+    : `spread ${spread}`;
 const extras = [calendar !== 'full' ? `calendar ${calendar}` : null, bothTouched !== 'stop' ? 'a bar touching both stop and target scores half' : null].filter(Boolean);
 console.log(`${pair} ${tf.id}: ${bars.length} bars ${new Date(bars[0].t).toISOString().slice(0, 10)} → ${new Date(bars[bars.length - 1].t).toISOString().slice(0, 16)} · ${costWords} · cooldown ${COOLDOWN_BARS} bars${extras.map((x) => ` · ${x}`).join('')}`);
 

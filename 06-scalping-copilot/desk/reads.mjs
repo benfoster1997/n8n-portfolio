@@ -57,10 +57,14 @@ export const GAP_BARS = 4;
  * Cost modes. 'fixed' is the confirmed usual spread (bitcoin $6), as live and
  * as decision 26 measured. 'scaled' keeps the spread at the same share of the
  * price — bitcoin's $6 was measured at about $84,400, and in 2019 bitcoin cost
- * a tenth of that — so it is spread × close / reference. The commission (gold
- * only) comes from the config either way.
+ * a tenth of that — so it is spread × close / reference. 'max' takes, check
+ * by check, the larger of the two: the plan's holdout test charges every trade
+ * the more pessimistic figure (LEARNING-PLAN.md Part 1, costs), so a filter
+ * cannot pass on years when the scaled spread happens to flatter it. That is
+ * the fixed spread below the reference price and the scaled one above it. The
+ * commission (gold only) comes from the config in every mode.
  */
-export const COST_MODES = ['fixed', 'scaled'];
+export const COST_MODES = ['fixed', 'scaled', 'max'];
 export const SCALED_REFERENCE = { BTCUSD: 84400 };
 
 /** The spread a read at this bar assumes, under a cost mode. */
@@ -72,7 +76,8 @@ export function spreadAt(pair, close, cost = 'fixed') {
     if (!ref) throw new Error(`No reference price for scaling ${pair}'s spread; only ${Object.keys(SCALED_REFERENCE).join(', ')} has one.`);
     return observed * close / ref;
   }
-  throw new Error(`Unknown cost mode "${cost}" (fixed or scaled).`);
+  if (cost === 'max') return Math.max(observed, spreadAt(pair, close, 'scaled'));
+  throw new Error(`Unknown cost mode "${cost}" (${COST_MODES.join(', ')}).`);
 }
 
 /**
@@ -152,7 +157,7 @@ function verdict(plan, result) {
  * after that bar closed, from the 1,000 bars ending there.
  *   opts.pair, opts.cfg      instrument and desk config
  *   opts.rules               target rules to judge the lean under (DEFAULT_RULES)
- *   opts.cost                'fixed' | 'scaled' (COST_MODES); opts.spreadNum overrides both
+ *   opts.cost                'fixed' | 'scaled' | 'max' (COST_MODES); opts.spreadNum overrides all
  *   opts.calendar            'full' | 'rules' | 'none'
  *   opts.extra(ctx)          optional; its return value is stored as `extra`.
  *                            The hook NEVER sees a bar after k: it is handed the

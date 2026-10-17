@@ -151,6 +151,23 @@ test('the scaled cost keeps the spread at the same share of the price', () => {
   assert.equal(spreadAt('BTCUSD', 8440, 'fixed'), 6);
   assert.throws(() => spreadAt('XAUUSD', 4000, 'scaled'), /reference price/);
 });
+test('the "max" cost charges each check the larger of the fixed and the scaled spread', () => {
+  for (const close of [4000, 8440, 84400, 120000]) {
+    const max = spreadAt('BTCUSD', close, 'max');
+    assert.equal(max, Math.max(spreadAt('BTCUSD', close, 'fixed'), spreadAt('BTCUSD', close, 'scaled')), `at ${close}`);
+    assert.ok(max >= spreadAt('BTCUSD', close, 'fixed') && max >= spreadAt('BTCUSD', close, 'scaled'));
+  }
+  assert.equal(spreadAt('BTCUSD', 8440, 'max'), 6, 'below the reference price, the fixed spread');
+  assert.ok(Math.abs(spreadAt('BTCUSD', 168800, 'max') - 12) < 1e-9, 'above it, the scaled one');
+  assert.throws(() => spreadAt('XAUUSD', 4000, 'max'), /reference price/, 'gold has no reference to scale by yet');
+  assert.throws(() => spreadAt('BTCUSD', 4000, 'dear'), /Unknown cost mode/);
+  // The read records what it charged, and the store keeps the modes apart.
+  const k = kAt(BARS, '2026-10-07T13:15Z');
+  const r = readAt(BARS, k, { ...opts, cost: 'max' });
+  assert.equal(r.spreadNum, spreadAt('BTCUSD', BARS[k].c, 'max'));
+  const home = mkdtempSync(join(tmpdir(), 'reads-'));
+  assert.notEqual(storePath(home, { ...opts, cost: 'max' }), storePath(home, { ...opts, cost: 'scaled' }));
+});
 
 console.log('\nthe calendar mode');
 test('at the October NFP, "full" stands aside; "rules" and "none" do not, and the read records which event', () => {
@@ -237,6 +254,10 @@ test('a held-back range is refused without --holdout, and every --holdout run is
   assert.equal(model.looks.length, 1);
   assert.equal(model.looks[0].settings.cost, 'scaled');
   assert.match(run([...range, '--holdout']), /already been looked at 1 time/);
+  // Cost 'max' names itself in the header rather than passing for the fixed spread.
+  const max = run([...range, '--cost', 'max', '--holdout']);
+  assert.match(max, /spread max\(6, 6 × close \/ 84,400\) per check/);
+  assert.doesNotMatch(max, /spread 6 ·/);
 });
 
 /**
