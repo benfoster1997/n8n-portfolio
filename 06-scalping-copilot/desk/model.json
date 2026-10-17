@@ -2185,7 +2185,28 @@
       "p2Share": 0.011957423278960464
     }
   },
-  "finals": [],
+  "finals": [
+    {
+      "kind": "armed",
+      "at": "2026-10-17T05:21:11.689Z",
+      "pair": "BTCUSD",
+      "recipeHash": "e79767125fa69a138ef4c5b3c4d06f7648965859c71bcb4669652200f0d97cff",
+      "window": {
+        "from": "2025-01-01T00:00Z",
+        "to": "2026-10-14T20:45Z"
+      },
+      "modelHash": "57b29b7d762d64f76f047a384a9222c944a9992fb7927636b450bcc6b34ef7e0",
+      "codeCommit": "8bbbe161fc2b2a5310f3524bf0058251f5d5caed",
+      "readsHash": "5291593f10b1da333c4af63694de7ee3a0d3f52dd450c2146fcbf08f2172b087",
+      "data": {
+        "expected": 14912,
+        "got": 14912,
+        "missing": 0,
+        "gaps": 0,
+        "outside": 0
+      }
+    }
+  ],
   "status": "info-only",
   "modelHash": "57b29b7d762d64f76f047a384a9222c944a9992fb7927636b450bcc6b34ef7e0"
 }
