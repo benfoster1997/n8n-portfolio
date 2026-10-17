@@ -33,11 +33,11 @@ refuse a plain publish and would otherwise create a *second* page. Do this:
 
 ```
 node build.mjs            # inline src/*.js into index.html; refuses on name collisions
-node test/run-all.mjs     # 727 assertions across 20 suites, run in parallel (~45 s) — unit level only
+node test/run-all.mjs     # 745 assertions across 21 suites, run in parallel (~45 s) — unit level only
 node desk/desk.mjs now    # the in-chat desk; see .claude/skills/scalp-desk/SKILL.md
 node desk/desk.mjs scan --pair bitcoin   # one live read now (watch = poll each bar close)
 node desk/desk.mjs journal               # the alert record (in session: counts only); journal update = record days on the reference feed
-node desk/desk.mjs learn status          # the learner, in the user's words (report, similar --at <UTC bar close>)
+node desk/desk.mjs learn status          # the learner, in the user's words (report, similar --at <UTC bar close> --side buy|sell)
 node desk/replay.mjs --pair bitcoin --from 2026-01-01 --to 2026-10-11   # the watcher over history (decision 26's stretch; 2025-01-01 on is held back, see decision 27)
 node desk/replay.mjs --pair bitcoin --from 2017-09-01 --by-condition    # development years, by condition (developer report)
 node desk/dataset.mjs --pair bitcoin --workers 4   # the learner's rows, 2017-09 → 2024-12-31 (never held-back labels without --holdout)
@@ -68,8 +68,11 @@ results.** Commits `df60b1f` → `87ed32f` on the branch, all pushed: the replay
 `desk/conditions.mjs`, `desk/dataset.mjs`, `desk/learn.mjs` (decision 29), `desk/journal.mjs`
 (decision 28), and the integration (desk.mjs `journal` and `learn`, METHOD_VERSION and its hash
 test, the footer, 999 closed bars, `account.mode`, `.gitattributes`). Every module was re-checked
-by independent reviewers and its findings fixed under test. **727 unit assertions across 20 suites
-pass** (17 Oct). LEARNING-PLAN.md now matches what was built and is the pre-registration.
+by independent reviewers and its findings fixed under test; then a final review of the whole
+learning build confirmed fifteen findings, all fixed under test the same day, and a last round of
+small findings after it (see the bullets marked "final review" in decisions 27–29). **745 unit
+assertions across 21 suites pass** (17 Oct). LEARNING-PLAN.md now matches what was built and is
+the pre-registration; the sample size is settled at **240** (below).
 
 **State that matters:**
 - `desk/model.json` does **not** exist: **the recipe is not committed.** **The held-back years
@@ -103,16 +106,17 @@ step refuses):
    and then as "held up on unseen history", never as proof; beside the coin-flip baseline; 2025
    and 2026 apart. If T1 fails the status is info-only and nothing changes for the user's alerts.
 8. **Rebuild, smoke-test and republish the page** (see "Republishing" above).
-9. **Ask the sample question**, in the words `node desk/desk.mjs journal sample` prints (about 190
-   alerts, judged on the mean R per alert, every alert scored on the price feed whether they take
-   it or not, no verdict before then; their own trades stay in "Is it working yet?"). **First
-   settle the flagged power point below** and write the answer into LEARNING-PLAN.md Part 3. Only
-   on their yes: `journal sample --alerts 190`, then pull with rebase, commit and push the journal.
+9. **Ask the sample question**, in the words `node desk/desk.mjs journal sample` prints: "Shall I
+   judge the alerts on the next 240 of them, every alert scored on the price feed whether you take
+   it or not, and give no verdict before then? Your own trades stay in 'Is it working yet?',
+   separately." (Judged on the mean R per alert.) Only on their yes: `journal sample --alerts 240`,
+   then commit the journal, `git pull --rebase`, and push.
+
+**Settled 17 Oct, before any sample: the sample's size.** The verdict is the two-sided 95% range,
+so N is sized for it: ((1.96 + 0.842) × 1.10 / 0.2)² ≈ 238, so **240** (190 gave ~70% power).
+LEARNING-PLAN.md Part 3 holds it; `MIN_PLANNED_ALERTS` stays 100.
 
 **Flagged, not changed (need a decision or a later pass):**
-- **The sample's power** (17 Oct): the verdict uses the two-sided 95% range (a 2.5% one-sided
-  test) but N = 190 was sized at 5% one-sided; at 190 the power against +0.2R is ~70%, not 80%
-  (80% needs ~240). Decide before the question is asked, never after (LEARNING-PLAN.md Part 3).
 - **Not built, by plan text**: shadow-scoring on each alert if T1 passes (the `filterFor` hook
   exists; build it only then); the monthly `learn update` (none exists, and `fit` refuses after a
   final — so never tell the user it can add last month's prices); gold's scaled spread and the
@@ -834,7 +838,15 @@ A fresh session is likely to "fix" some of these. Don't, without reading why.
       without `--holdout`, labelled "already seen (decision 26)": decision 26 printed it and chose
       the 1.5R rule on it. Any other flag on those rows (`--by-condition`, another calendar or cost)
       is a new look and needs `--holdout`. The two `--calendar rules` looks of 16 Oct went to a
-      scratch model file, not desk/model.json (decision 26's note).
+      scratch model file, not desk/model.json (decision 26's note). **Default means decision 26's
+      own settings** (final review, 17 Oct): M15, the default window and broker block, the
+      commission from the specification. On M5, another server offset, window or commission, the
+      same dates are rows nobody has seen, and the replay refuses them without `--holdout`, saying
+      which setting differs.
+    - **The reads hash leaves out each read's index (`k`).** The index depends only on where the bar
+      array starts (the whole cached file with workers, the loaded window with one, a cache
+      refilled in a fresh container); closeMs and the slice fingerprint pin the read. With it in,
+      arming with 4 workers and running with 1 was refused as "reads changed" (final review).
     - **The by-condition table has 30 cells and a Student-t level.** No volatility bucket
       (volatility has no direction). A cell is marked only at the Bonferroni level over 30 cells,
       as a Student-t(G − 1) quantile on its days with the G/(G − 1) factor — the plain z ≈ 3.14 lets
@@ -850,8 +862,9 @@ A fresh session is likely to "fix" some of these. Don't, without reading why.
     - **Append-only events, folded by their own fields.** Never edited in place: watch and scan can
       write at once, and a union merge or a pull with rebase puts the other side's lines after this
       side's, so "last line wins" would let a merge rewrite history. Writes take a lock and rename a
-      temporary file. `.gitattributes` gives the file `merge=union`; the session pulls with rebase,
-      then commits and pushes it.
+      temporary file. `.gitattributes` gives the file `merge=union`; the session commits it, then
+      pulls with rebase, then pushes — in that order, because git refuses a pull with rebase over
+      changes not committed (final review, 17 Oct: the NOTE had it the other way round).
     - **The sample is the method's own record on the reference feed, not what the watcher caught.**
       `journal update` replays the method over every weekday window close on Binance BTCUSDT (gold:
       Twelve Data), serially, and scores each alert (a bar touching both levels = half of each). The
@@ -864,16 +877,25 @@ A fresh session is likely to "fix" some of these. Don't, without reading why.
       over revised bars cannot add or swap an alert; the earliest record stands. A merge that brings
       a different record of the same day makes it *contested*: no verdict until settled by hand.
     - **The method is more than the engine**: version, target rule, filter, timeframe, reference
-      feeds, window and costs, per instrument. Changing one ends a sample in progress, at the first
-      day recorded under the new method. **The broker's server offset is not part of it**: a day is
-      recorded only when every read falls inside the broker's session, so correcting the offset in
-      the clocks-change week does not end a sample.
+      feeds, window and costs, per instrument. **Only an `ended` event ends a sample** — written by
+      `config … --end-sample`, the user's yes (final review, 17 Oct; settled the same day). A change
+      made any other way while a sample runs (a hand edit, a pulled config, a new `METHOD_VERSION`)
+      **pauses** it, it does not end it (`samplePause` in journal.mjs): no update, silent or full,
+      records a day for it and nothing is counted while the method differs; `journal` says so
+      plainly — the settings no longer match the sample's method, nothing is counted while they
+      differ, and they can change them back or end it — and refuses a new sample over it. Put
+      back, it carries on, and the days in between are recorded then like any other (the sample is
+      the method's record over every weekday, a property of the feed, not of the settings). A day
+      or alert recorded under another method never ends a sample. **The broker's server offset is
+      not part of it**: a day is recorded only when every read falls inside the broker's session,
+      so correcting the offset in the clocks-change week neither pauses nor ends a sample.
     - **The verdict rules were declared before any alert** (LEARNING-PLAN.md Part 3, DECLARED
-      RULES): at least 100 planned alerts (190 by default); at least 30 London days, the judged set
+      RULES): at least 100 planned alerts (240 by default — settled 17 Oct for the verdict's
+      two-sided 95% range; 190 had been sized at 5% one-sided); at least 30 London days, the judged set
       running on to the end of the 30th; a holed day held 48 h, then left out if a hole exceeds 4
       bars; every weekday recorded; contested days withhold it; three verdict phrases. None may change
-      once a sample is committed. (One point is flagged for before the first commitment: "Where we
-      stopped".)
+      once a sample is committed. The size was the last open point, and it was settled at 240 on
+      17 Oct, before any sample (see "Where we stopped").
     - **Privacy is an allowlist that throws.** The repository is public: no lots, money, balance,
       risk %, account details or free text, and a forbidden key at any depth throws rather than being
       dropped quietly; engine text is screened for amounts, emails and long digit runs. A £ result
@@ -895,7 +917,45 @@ A fresh session is likely to "fix" some of these. Don't, without reading why.
       won, lost or "you made", never £, never a feed price. The alerts and the user's trades are two
       blocks, never added together.
     - **"Took it" links only explicitly** — the one ticket built in the last 30 minutes, or a named
-      alert; two fresh tickets and the desk asks. `plan undo` does not unmark (append-only).
+      alert; two fresh tickets and the desk asks. `plan undo` does not unmark (append-only). When
+      `plan took --alert` cannot link (an older alert, or two that fit), the plan's count is already
+      done, so the NOTE says "only if they say it was, run: journal took --alert <id> (the count is
+      already done)" — never `plan took` again, which would count the trade twice.
+    - **A second result by a short reference asks first.** `journal result` by `last` or a London
+      time on an alert that already has their result replies "You told me that trade ended at −1. Is
+      this a different trade?" and writes nothing; only the full id or `--replace`, on their word,
+      replaces it. A second "hit my stop" the same afternoon is more often a second trade (perhaps a
+      screenshot one, which is not kept) than a correction.
+    - **Final review (17 Oct), fixed under test — each looks like a choice and is one:**
+      - *A setting that would end the sample asks first.* While a sample runs, `config` refuses a
+        change that makes the desk a different method (timeframe, commission, GBP/USD for gold,
+        window) and says in plain words that it ends the sample for good, with no verdict; only
+        `config … --end-sample` applies it, and writes an `ended` event, so a change undone at
+        once has still ended the sample, as the user was told. A sample already paused (above) is
+        ended by `config --end-sample` alone, on their word; settings put back resume it.
+      - *An ended sample can always be followed by a new one*, even when the method has since
+        changed back: the desk had refused ("no verdict yet"), and no sample could be committed
+        again without a hand edit.
+      - *Gold's history is asked for in bars, not days* (`fromForBars` in history.mjs): 1,095 bar
+        lengths of calendar time hold about 700 gold bars across its breaks and weekends, so every
+        gold day stayed "short-history" for ever and a two-instrument sample could never reach a
+        verdict.
+      - *"last" is the alert they acted on.* For a result or "took it", `last` is the newest alert
+        with a ticket or a "took it" — never a scan idea or an alert nobody acted on; two open and
+        the desk asks. `last` and a London time reach back only to today or 24 hours: an older
+        alert is named with its day, and needs its id (a result two days later is more often a
+        screenshot trade, which is not kept).
+      - *On live without a yes, no "which alert?" loop.* The live alert was never kept, so the
+        desk says so (consent no) or asks rule 6's question (no answer yet) instead.
+      - *Marks wait with the question.* A "took it" made while the ticket waits for "which
+        account?" waits with it, and a result's account question goes through the same pending
+        file, so `journal account demo|live` applies them all.
+      - *Each shown alert is scored on its own timeframe's bars*, never on the setting's after a
+        switch; bars of another timeframe leave it unscored, not scored wrongly for good.
+      - *The watcher's last alert comes back from the journal* after a container restart
+        (state.json lives in ~/.scalp-desk), so "still running" and the cooldown hold.
+      - *`watch` prints WATCHING before the silent update*, so the session reading its output at
+        once can say what is watched.
 
 29. **The learner (17 Oct 2026; LEARNING-PLAN.md Part 4).** `desk/dataset.mjs` writes one row per
     window check (47 features; label (a), the watcher's own trade; label (b), a standard long and
@@ -939,9 +999,16 @@ A fresh session is likely to "fix" some of these. Don't, without reading why.
       16 Oct plan had one). `fit` and `final` are developer commands the session runs only when
       "Where we stopped" says so.
     - **Never on an alert.** No number and no "similar setups" on an alert or a push, in any mode;
-      `learn report` and `learn similar` only when the user asks. Similar setups refuse moments
-      inside the held-back window, and are always "in 100", beside the same standard trade at every
-      earlier moment.
+      `learn report` and `learn similar` only when the user asks. **One side, the one the user
+      names** (final review, 17 Oct; settled the same day): `learn similar` describes one standard
+      trade, on the side the user named; with none named it asks "Similar setups describe one
+      standard trade. Which side are you thinking of — buy or sell?" (`need-input`) and shows
+      nothing. It never shows both sides at once — two figures side by side read as a comparison,
+      and the better one as a lean — and never takes the engine's lean, which on a rejected idea
+      or a closed gate is a direction the desk withheld (rule 3, decisions 2, 22). The developer
+      `learn.mjs similar` requires `--side` too.
+      Similar setups refuse moments inside the held-back window, and are always "in 100", beside
+      the same standard trade at every earlier moment.
 
 ---
 
@@ -1000,7 +1067,7 @@ the commit messages are the durable record.
   clock — see above).
 - Optionally set a **shadow balance** and switch "Size from" to it (now remembered).
 - Set a **committed sample size** in "Is it working yet?" before logging trades.
-- Answer the **alert sample question** once it is asked (about 190 alerts, judged on the feed
+- Answer the **alert sample question** once it is asked (240 alerts, judged on the feed
   whether taken or not; "Where we stopped", step 9). Separate from the line above.
 - Optional: tap **gbp / lot** on the BTCUSD margin row; it should read ≈ £125 at
   ~$84k (confirms the notional-rate reading of 0.002).

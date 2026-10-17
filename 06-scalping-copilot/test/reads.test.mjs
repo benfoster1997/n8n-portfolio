@@ -301,6 +301,39 @@ test('a held-back range is refused without --holdout, and every --holdout run is
   assert.doesNotMatch(max, /spread 6 ·/);
 });
 
+test('decision 26\'s exception holds only at its own settings: on M5, another server offset or window, the same dates need --holdout and are recorded', () => {
+  const home = mkdtempSync(join(tmpdir(), 'replay-'));
+  const bars = join(home, 'bars.json');
+  writeFileSync(bars, JSON.stringify({ BTCUSD: BARS }));
+  const config = join(home, 'config.json');
+  const env = { ...process.env, SCALP_DESK_HOME: home, SCALP_DESK_CONFIG: config, SCALP_DESK_BARS: bars };
+  const run = (args) => { try { return execFileSync('node', [REPLAY, ...args], { encoding: 'utf8', env, stdio: ['ignore', 'pipe', 'ignore'] }); } catch (x) { return `EXIT ${x.status}\n${x.stdout}`; } };
+  const range = ['--from', '2026-10-09T13:00', '--to', '2026-10-09T15:00', '--rule', '1.5R', '--workers', '1'];
+  const model = join(home, 'model.json');
+  for (const [cfg, why] of [
+    [{ timeframe: 'M5' }, /the desk is on M5/],
+    [{ broker: { serverOffset: 3 } }, /server offset/],
+    [{ window: { start: { h: 9, m: 0 } } }, /session window/],
+    [{ account: { commissionPerSideGBP: 1 } }, /commission/],
+  ]) {
+    writeFileSync(config, JSON.stringify(cfg));
+    const out = run(range);
+    assert.match(out, /^EXIT 2\n2025-01-01 onward is held back/, JSON.stringify(cfg));
+    assert.match(out, why);
+    assert.doesNotMatch(out, /already seen \(decision 26\)/);
+    assert.equal(existsSync(model), false, 'nothing printed, so nothing to record');
+  }
+  // With --holdout the M5 look is recorded, under its own timeframe.
+  writeFileSync(config, JSON.stringify({ timeframe: 'M5' }));
+  run([...range, '--holdout']);
+  const looks = JSON.parse(readFileSync(model, 'utf8')).looks;
+  assert.deepEqual(looks.map((l) => l.settings.timeframe), ['M5']);
+  // The defaults written out in full are still decision 26's settings.
+  rmSync(model);
+  writeFileSync(config, JSON.stringify({ timeframe: 'M15', broker: { fillMode: 'ioc', serverOffset: 'auto' }, account: { commissionPerSideGBP: null } }));
+  assert.match(run(range), /already seen \(decision 26\)/);
+});
+
 /**
  * The replay in a scratch copy of desk/ and src/, so a stand-in desk/conditions.mjs
  * can be dropped in without touching the real tree (step 1E builds the real one).

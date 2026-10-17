@@ -158,7 +158,8 @@ one alert at a time.
 - **2025 and 2026 are held back.** They are kept for one final test of the learning layer
   (below). The replay reports them only when asked with `--holdout`, and every such run is
   written into `desk/model.json`, where that test will find it. The one exception is the 2026
-  report the target rule was chosen on, labelled "already seen". 2025 and 2026 are always
+  report the target rule was chosen on, labelled "already seen" — and only at the settings it was
+  chosen with (fifteen-minute chart, default window, broker and commission). 2025 and 2026 are always
   reported apart, never as one figure.
 - **History is cached and only grows** (`desk/history.mjs`): bitcoin from Binance, gold from
   Twelve Data with the user's key. A new fetch adds bars; it never throws years away.
@@ -183,11 +184,16 @@ the repository. It answers what a replay cannot: what the alerts actually do fro
   and scores every alert it would have sent — so the record does not depend on whether the
   watcher happened to be running. And what the user was actually sent, the tickets they asked
   for, the trades they say they took and how those ended. Only the first decides the test.
-- **A test committed in advance.** The user will be asked to commit to judging the alerts on about
-  190 of them, every one scored on the feed whether they took it or not. No verdict comes before
+- **A test committed in advance.** The user will be asked to commit to judging the alerts on the
+  next 240 of them, every one scored on the feed whether they took it or not (240 gives the
+  verdict's 95% range an 80% chance of showing a real +0.2 times the risk). No verdict comes before
   then: checking after every alert and stopping on a good run turns a 5% test into a 20% one. The
   rules that decide the verdict — at least 30 different days, days with holes in the data left
-  out, any change to the method ending the test — were written down before the first alert.
+  out, one method for the whole test — were written down before the first alert. A settings change
+  that would end the test is not made until the user has been told so and agreed; the test ends
+  only on their word. If the settings change some other way (edited by hand, say), the test is
+  paused, not ended: nothing is counted while they differ, and the desk says so and that they can
+  change them back or end it.
 - **No results mid-session.** During the user's hours the record gives counts only (alerts,
   tickets, trades taken); results come after the close, because checking them mid-session tends
   to make the next decision worse. A question about one named alert is always answered.
@@ -202,15 +208,20 @@ the repository. It answers what a replay cannot: what the alerts actually do fro
   record may sit in public.
 - **Safe on two machines.** It is a log that is only ever added to, so two sessions' additions
   merge without one overwriting the other, and a day once recorded cannot be changed by a later
-  run.
+  run. The watcher's memory of its last alert is restored from it after a container restart.
+- **A trade is linked only to an alert the user acted on.** "Hit my stop" goes on the alert they
+  asked a ticket for or said they took, from today; an older alert must be confirmed, and a scan
+  idea they did nothing with is never assumed. A second result for an alert that already has one
+  is asked about ("Is this a different trade?") before anything is replaced.
 
 **What the journal does not do.** It is not the user's MT5 history: alerts are scored on
 Binance's or Twelve Data's prices, which differ from the broker's, and the user's own results are
 only what they report. It cannot see their fills, lot sizes or balance. It gives no verdict before
 the committed number of alerts, and no breakdown by condition before then either. Nothing in it
 changes which alerts are sent. If two machines record the same day differently, it withholds the
-verdict until a person settles it. No alert has been recorded yet and no test has been committed
-(17 October).
+verdict until a person settles it. It does not keep trades from screenshot ideas, nor anything
+from a live account until the user has said a live record may sit in public. No alert has been
+recorded yet and no test has been committed (17 October).
 
 ---
 
@@ -237,7 +248,9 @@ result, is `LEARNING-PLAN.md`.
   user says yes to a new committed test. If it fails, it stays a research report.
 - **On request only.** `learn report` gives the result in plain words; `learn similar` describes
   what happened after the 200 most similar past moments ("20 in 100 reached the target…"), always
-  beside the same trade's average at every earlier moment.
+  beside the same trade's average at every earlier moment — for one standard trade, on the side
+  the user names. If they name none it asks which side they mean; it never shows a buy and a sell
+  side by side, and never picks a side for them.
 
 **What the learning layer does not do.** It does not forecast, does not trade, and never appears
 on an alert or a phone notification. It cannot add an alert, pick a side, or get past the news
@@ -519,7 +532,7 @@ reason to be flat.
 
 ```
 node build.mjs        # inline src/*.js into a single self-contained index.html
-node test/run-all.mjs # 727 assertions across 20 suites, run in parallel (~45 s)
+node test/run-all.mjs # 745 assertions across 21 suites, run in parallel (~45 s)
 node test/smoke.mjs   # real browser; needs playwright, see the file header
 node desk/desk.mjs now                         # the desk, as the chat session runs it
 node desk/desk.mjs gate --pair gold --price 4400
@@ -848,7 +861,7 @@ desk/
   journal.jsonl     the record of alerts, committed (created by the first alert)
   model.json        the learner's recipe and its one held-back test, committed (created by the first fit)
 ../.claude/skills/scalp-desk/SKILL.md   how a session runs the desk
-test/               727 assertions in 20 suites; run-all.mjs runs the lot
+test/               745 assertions in 21 suites; run-all.mjs runs the lot
                     smoke.mjs loads the page in a real browser at seven
                     frozen session moments and fails on any page error
 HANDOFF.md          state, decisions and research, for picking this up cold

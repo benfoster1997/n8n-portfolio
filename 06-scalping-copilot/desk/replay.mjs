@@ -64,7 +64,7 @@ import { join, dirname, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { COOLDOWN_BARS } from './live.mjs';
-import { withDefaults, pairOf } from './lib.mjs';
+import { withDefaults, pairOf, DEFAULT_CONFIG } from './lib.mjs';
 import { clusteredByDay } from './stats.mjs';
 import { ensureProxy } from './net.mjs';
 import {
@@ -117,7 +117,21 @@ const SEEN = { from: YEAR_2026, to: Date.UTC(2026, 9, 12) };
 // without anyone remembering to add it here (found in review, 16 Oct 2026).
 const PLAIN_FLAGS = new Set(['pair', 'from', 'to', 'rule', 'workers', 'cost', 'calendar', 'both-touched', 'no-store', 'list']);
 const extraFlags = argv.filter((a) => a.startsWith('--')).map((a) => a.slice(2)).filter((f) => !PLAIN_FLAGS.has(f) && f !== 'holdout');
-const defaults = cost === 'fixed' && calendar === 'full' && bothTouched === 'stop';
+// Decision 26 ran on M15, with the default window and broker block and the
+// commission from the specification; the exception holds only for those. On
+// M5, another window, another server offset or a commission of the user's,
+// the same dates are rows nobody has seen (review, 17 Oct 2026).
+const canon = (v) => JSON.stringify(v, (k, x) => (x && typeof x === 'object' && !Array.isArray(x) ? Object.fromEntries(Object.entries(x).sort(([a], [b]) => (a < b ? -1 : 1))) : x));
+const notDecision26 = [
+  cost !== 'fixed' && `--cost ${cost}`,
+  calendar !== 'full' && `--calendar ${calendar}`,
+  bothTouched !== 'stop' && `--both-touched ${bothTouched}`,
+  tf.id !== 'M15' && `the desk is on ${tf.id}`,
+  canon(cfg.window) !== canon(DEFAULT_CONFIG.window) && 'the session window is not the default one',
+  canon(cfg.broker) !== canon(DEFAULT_CONFIG.broker) && 'the broker settings (server offset) are not the default ones',
+  cfg.account.commissionPerSideGBP !== null && 'the commission is your own figure, not the specification\'s',
+].filter(Boolean);
+const defaults = !notDecision26.length;
 const settings = { pair, timeframe: tf.id, rules, cost, calendar, bothTouched, window: cfg.window };
 const notes = [];
 if (toMs >= HOLDOUT_FROM) {
@@ -135,6 +149,7 @@ if (toMs >= HOLDOUT_FROM) {
     if (extraFlags.length) fail(`1 Jan – 11 Oct 2026 is open without --holdout only to the plain report decision 26 already printed. ${extraFlags.map((f) => `--${f}`).join(' ')} on those rows would be a new look at held-back data: add --holdout (it is recorded in model.json).`);
     notes.push('1 Jan – 11 Oct 2026: already seen (decision 26) — the 1.5R rule was chosen on these bars, so this is not a test on unseen data.');
   } else {
+    if (fromMs >= SEEN.from && toMs < SEEN.to) fail(`2025-01-01 onward is held back for one final test. 1 Jan – 11 Oct 2026 is open without --holdout only at the settings decision 26 ran with (M15, the default window and broker, cost fixed, calendar full, both-touched stop); here ${notDecision26.join('; ')}. Add --holdout for a new look (it is recorded in model.json).`);
     if (fromMs >= HOLDOUT_FROM) fail('2025-01-01 onward is held back for one final test. Nothing before it is in this range; add --holdout only for that test (it is recorded).');
     toMs = HOLDOUT_FROM - 1;
     notes.push('Stopped at 2024-12-31: 2025-01-01 onward is held back for one final test (--holdout, recorded in model.json).');

@@ -64,7 +64,7 @@
  *   node desk/learn.mjs status|report --pair bitcoin
  *   node desk/learn.mjs fit --pair bitcoin [--rows <file>] [--bars <file>] [--store <file>] [--test-model <file>]
  *   node desk/learn.mjs final [--run] --pair bitcoin [--bars <file>] [--workers <n>]
- *   node desk/learn.mjs similar --pair bitcoin --at <UTC time> [--side buy|sell] [--rows <file>]
+ *   node desk/learn.mjs similar --pair bitcoin --at <UTC time> --side buy|sell [--rows <file>]
  *
  * Paths: the rows are exactly dataset.mjs rowsPath() for the recipe's dataset
  * settings (cost scaled, calendar rules, bars from binance), under
@@ -1468,8 +1468,14 @@ export function holdoutDataCheck(reads, expected) {
   return { ok: true, ...out };
 }
 
-/** A hash of the held-back reads, so `--run` can confirm it evaluates exactly what was checked when armed. */
-export const readsHashOf = (reads) => sha256(canonicalJSON(reads));
+/**
+ * A hash of the held-back reads, so `--run` can confirm it evaluates exactly
+ * what was checked when armed. Each read's index into its bar array (`k`) is
+ * left out: it depends only on where that array starts (the whole cached file
+ * with workers, the loaded window without; a cache refilled in a fresh
+ * container), while closeMs and the slice's fingerprint already pin the read.
+ */
+export const readsHashOf = (reads) => sha256(canonicalJSON(reads.map(({ k: _k, ...r }) => r)));
 
 /**
  * The steps of a final that see no outcome: the pair, the features module,
@@ -1697,7 +1703,7 @@ export async function runFinal({ pair, cfg, modelPath, home, bars = null, worker
     if (!armed) return refuse('not-armed', 'The final is not armed in the committed model.json. Run `node desk/learn.mjs final --pair bitcoin`, commit model.json, then run `final --run`.');
     const prep = await prepareHoldout({ pair, cfg, tf, home, bars, workers, readsFn });
     if (!prep.ok) return refuse(prep.code, prep.reason);
-    if (prep.readsHash !== armed.readsHash) return refuse('reads-changed', 'The held-back reads are not the ones checked when the final was armed (the bars or the code changed since). Arm it again and commit model.json.');
+    if (prep.readsHash !== armed.readsHash) return refuse('reads-changed', 'The held-back reads are not the ones checked when the final was armed (the bars they were read from, the code or the settings differ). Arm it again and commit model.json.');
     const looks = earlierLooks({ modelPath, model });
     const again = usedFinals({ pair, modelPath, home, userHome });
     if (again.length) return refuse('already-run', `${ALREADY_USED} ${describeUse(again[0])} A second final run is refused.`);
@@ -1952,7 +1958,7 @@ async function main() {
   const cfg = withDefaults(JSON.parse(readFileSync(CONFIG, 'utf8')));
   const tf = tfInfo(timeframeFor(cfg)).id;
   const pair = pairOf(arg('pair', 'bitcoin'));
-  if (!['status', 'fit', 'final', 'report', 'similar'].includes(cmd)) fail('Usage: node desk/learn.mjs status|report|fit|final [--run]|similar --pair bitcoin [--rows <file>] [--bars <file>] [--store <file>] [--workers <n>] [--at <UTC time>] [--side buy|sell] [--test-model <file>]');
+  if (!['status', 'fit', 'final', 'report', 'similar'].includes(cmd)) fail('Usage: node desk/learn.mjs status|report|fit|final [--run]|similar --pair bitcoin [--rows <file>] [--bars <file>] [--store <file>] [--workers <n>] [--at <UTC time> --side buy|sell] [--test-model <file>]');
   if (!pair) fail('--pair is bitcoin or gold.');
   // A final runs on desk/model.json alone: its git history is where every
   // final is looked for, and a second model file would start a history of its
@@ -2038,12 +2044,15 @@ async function main() {
     const closeMs = Date.parse(at.endsWith('Z') ? at : `${at}Z`);
     if (!Number.isFinite(closeMs)) fail('--at takes a time like 2024-06-05T10:15 (UTC).');
     if (closeMs >= FROM_MS) fail('Similar setups from the command line cover development checks only (before 2025).');
+    // One standard trade, on the side asked about: never both at once, never
+    // the engine's lean (plan rule 3; decisions 2, 22).
+    const side = arg('side');
+    if (!['buy', 'sell'].includes(side)) fail('--side buy or --side sell: similar setups describe one standard trade, on the side asked about (never both at once, never the engine\'s lean).');
     const { rows } = await loadDataset(rowsFile(), { pair, cfg });
     const row = rows.find((r) => r.closeMs === closeMs);
     if (!row || !row.vL) fail(`No check with features closes at ${at} in the rows.`);
-    const side = arg('side', row.lean === 'short' ? 'sell' : 'buy');
-    const s = similarSetups(side === 'sell' ? row.vS : row.vL, rows, { beforeDay: row.day, side });
     const first = rows[0].day.slice(0, 4), last = String(Math.min(2024, Number(row.day.slice(0, 4))));
-    console.log(similarWords(s, { pairWord: (PAIR_WORD[pair] || pair).toLowerCase(), years: `${first}–${last}` }));
+    const words = { pairWord: (PAIR_WORD[pair] || pair).toLowerCase(), years: `${first}–${last}` };
+    console.log(similarWords(similarSetups(side === 'sell' ? row.vS : row.vL, rows, { beforeDay: row.day, side }), words));
   }
 }

@@ -247,12 +247,34 @@ function goldShut(closeAt, reopenAt, ms) {
 }
 
 /** Whether gold's market is on its scheduled break at `t` (daily 17:00-18:00, or Friday 17:00 to Sunday 18:00, New York). */
-function goldOnBreak(t) {
+export function goldOnBreak(t) {
   const { dow, min } = newYork(t);
   if (dow === 'Sat') return true;
   if (dow === 'Fri' && min >= GOLD_CLOSE_ET_MIN) return true;
   if (dow === 'Sun' && min < GOLD_REOPEN_ET_MIN) return true;
   return min >= GOLD_CLOSE_ET_MIN && min < GOLD_REOPEN_ET_MIN;
+}
+
+/** How many days before the walk's start fromForBars adds for gold: a holiday or an early close (there is no holiday table). */
+export const GOLD_MARGIN_DAYS = 3;
+
+/**
+ * Where a request must start to hold at least `bars` bars of `tf` before
+ * `endMs`. Bitcoin trades every hour of every day, so it is `bars` bar
+ * lengths back. Gold is shut an hour a day and from Friday to Sunday
+ * evening, so the same number of bars spans far more calendar time (about
+ * 700 M15 bars in the 1,095 bar lengths before a Monday): the walk back
+ * counts only bars outside its scheduled breaks, then adds GOLD_MARGIN_DAYS
+ * (review, 17 Oct 2026: the journal's gold days were never recorded).
+ */
+export function fromForBars(pair, tf, endMs, bars, { marginDays = GOLD_MARGIN_DAYS } = {}) {
+  const tfId = timeframeOf(tf);
+  if (!tfId) throw new TypeError(`fromForBars: "${tf}" is not a chart timeframe`);
+  const ms = TIMEFRAMES[tfId].minutes * 60000;
+  if (historyPair(pair) !== 'XAUUSD') return endMs - bars * ms;
+  let t = Math.floor(endMs / ms) * ms, n = 0;
+  while (n < bars) { t -= ms; if (!goldOnBreak(t)) n++; }
+  return t - marginDays * DAY_MS;
 }
 
 /* ------------------------------------------------------------ gaps */

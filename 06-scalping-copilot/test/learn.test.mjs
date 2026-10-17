@@ -33,7 +33,7 @@ import {
   deserialiseModel, canonicalJSON, recipeHashOf, buildRecipe, finalGuard, runFinal, armFinal, readModel, writeModel, modelHashOf,
   similarSetups, similarWords, userReport, loadRows, loadDataset, manifestRecord, manifestPath, quantile, ALREADY_USED, CLIPPED, LAMBDAS,
   recordFinal, appendFinalsLog, readFinalsLog, finalsLogPath, codeClean, methodFiles, fitAll, p2ThresholdFor, defaultRowsPath, MULTI_YEAR, T2_SEED,
-  finalsLogPaths, readLogFile, GIT_FINALS_LOG, MODEL_PATH, modelPathRefusal, isShallowRepo,
+  finalsLogPaths, readLogFile, GIT_FINALS_LOG, MODEL_PATH, modelPathRefusal, isShallowRepo, readsHashOf,
 } from '../desk/learn.mjs';
 import { rowsKeyFor, rowsPath, sha256File } from '../desk/dataset.mjs';
 import { FEATURE_NAMES, FEATURES_VERSION, DIRECTIONAL, SWAPPED, sideSigned, conditionOf } from '../desk/features.mjs';
@@ -671,6 +671,24 @@ test('--run refuses until the armed entry is committed; then it records started 
   } finally { s.done(); }
 });
 
+test('the same reads from a bar array that starts earlier (the whole cached file, or a refilled cache) are the reads armed', async () => {
+  const s = scratch();
+  try {
+    await armFinal(finalOpts(s));
+    git(s.dir, 'commit', '-q', '-am', 'armed');
+    // 300 more bars before the first: every read's index moves, nothing else does.
+    const earlier = Array.from({ length: 300 }, (_, i) => ({ ...holdBars[0], t: holdBars[0].t - (300 - i) * M15 }));
+    const longer = [...earlier, ...holdBars];
+    const a = await fakeReads(holdBars), b = await fakeReads(longer);
+    assert.equal(b[0].k - a[0].k, 300);
+    assert.equal(readsHashOf(a), readsHashOf(b), 'the index is not part of the hash');
+    assert.notEqual(readsHashOf(a), readsHashOf(a.map((r, i) => (i === 7 ? { ...r, spreadNum: 7 } : r))), 'a changed read still is');
+    const res = await runFinal(finalOpts(s, { bars: longer, evaluate: () => { throw new Error('boom'); } }));
+    assert.notEqual(res.code, 'reads-changed');
+    assert.equal(res.crashed, true, 'it got past the reads check to the run');
+  } finally { s.done(); }
+});
+
 test('a run that fails after it started counts as the one look, and the report says it did not finish', async () => {
   const s = scratch();
   try {
@@ -769,6 +787,23 @@ test('the wording is "in 100", beside the same trade at every earlier moment, sa
   assert.match(similarWords({ n: 10, days: 10, side: 'short', reachedTarget: 50, hitStop: 20, closedAtEnd: 30, bothInOneBar: 0, meanR: 0.4, baseline: { n: 10, meanR: 0 } }), /above a standard sell at every earlier moment/);
   assert.match(w, /Before 2025 there is no news calendar/);
   assert.doesNotMatch(w, /won|%/);
+});
+
+test('similar setups describe one standard trade: the developer command needs --side, and the module has no both-sides form', async () => {
+  const mod = await import('../desk/learn.mjs');
+  assert.equal(mod.similarBothWords, undefined, 'no buy-and-sell side-by-side wording to reach for');
+  const LEARN = fileURLToPath(new URL('../desk/learn.mjs', import.meta.url));
+  const home = mkdtempSync(join(tmpdir(), 'learn-similar-'));
+  try {
+    const env = { ...process.env, SCALP_DESK_HOME: home, SCALP_DESK_MODEL: join(home, 'model.json') };
+    const cli = (args) => { try { return `ran\n${execFileSync('node', [LEARN, ...args], { encoding: 'utf8', env, stdio: ['ignore', 'pipe', 'ignore'] })}`; } catch (e) { return `EXIT ${e.status}\n${e.stdout}`; } };
+    const at = ['similar', '--pair', 'bitcoin', '--at', '2024-06-05T10:15', '--rows', join(home, 'none.jsonl')];
+    for (const side of [[], ['--side'], ['--side', 'both']]) {
+      assert.match(cli([...at, ...side]), /^EXIT 2\n--side buy or --side sell: similar setups describe one standard trade/, side.join(' ') || 'no side');
+    }
+    // With a side it goes on (here to the missing rows): unchanged.
+    for (const side of ['buy', 'sell']) assert.match(cli([...at, '--side', side]), /^EXIT 2\nNo rows at/, side);
+  } finally { rmSync(home, { recursive: true, force: true }); }
 });
 
 /* -------------------------------------------------------- recipe and rows */

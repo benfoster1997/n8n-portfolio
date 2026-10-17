@@ -42,17 +42,20 @@
  *    timeframe and reference feeds, and also the settings that shape what it
  *    reads and how it scores — the window (open, close, time zone) and the
  *    costs (the spread it reads with and the commission as a price distance,
- *    per instrument). Changing any of them in the settings is a new method
- *    and ends a sample in progress (rule 1), whether or not an alert was
- *    shown under the new one: the first day recorded under it is enough. An
+ *    per instrument). Changing any of them is a new method (rule 1). Through
+ *    `config` the desk asks first and only the user's yes applies it, which
+ *    ends the sample in progress (an `ended` event); changed any other way
+ *    (a hand edit, a pulled config, a new METHOD_VERSION) the sample is
+ *    PAUSED, not ended (samplePause): nothing is recorded or counted for it
+ *    while the method differs. Only an `ended` event ends a sample. An
  *    instrument's record is keyed by the shared parts and ITS OWN feed and
- *    costs (keyFor), so gold's commission or GBP/USD changing does not end a
- *    sample of bitcoin alone. The broker's server offset is not part of the
+ *    costs (keyFor), so gold's commission or GBP/USD changing does not touch
+ *    a sample of bitcoin alone. The broker's server offset is not part of the
  *    method: it can only make a read "market closed", and a day is recorded
  *    only when every read of it falls inside the broker's session under the
  *    configured offset (canonicalAlerts), so on a recorded day no offset can
  *    change a read — correcting it in the clocks-change week (SKILL.md)
- *    does not end a sample (re-check, 17 Oct).
+ *    neither pauses nor ends a sample (re-check, 17 Oct).
  *  - WHAT THE USER WAS SHOWN (`shown`, and their `ticketed`, `taken`, `actual`).
  *    The watcher's and a scan's alerts, as sent, linked to the method's record
  *    by the same natural id. They are never the sample. A method alert with no
@@ -104,7 +107,8 @@
  * alert is recorded; to be written into LEARNING-PLAN.md Part 3 and a HANDOFF
  * decision at integration, with the API notes at the end):
  *  - MIN_PLANNED_ALERTS = 100: no sample is committed below 100 alerts
- *    (DEFAULT_PLANNED_ALERTS = 190, the plan's size).
+ *    (DEFAULT_PLANNED_ALERTS = 240, the plan's size: 80% power for the
+ *    verdict's two-sided 95% range against a true +0.2R per alert).
  *  - MIN_VERDICT_DAYS = 30: no verdict until the judged alerts span 30
  *    London days; if the first N span fewer, the judged set runs on to the
  *    END of the 30th distinct day, every alert of it — a rule on dates alone.
@@ -114,13 +118,20 @@
  *    window closes (GAP_SETTLE_MS), then recorded as it stands; if a hole
  *    is of more than 4 bars it is flagged `gap` and its alerts are left out
  *    of the sample (so is any alert whose own trade spans a gap).
- *  - The sample ends ('method-changed') at the first day recorded (by its
- *    `at`, not its date), alert recorded or alert shown, after the
- *    commitment, under a different method key for one of its instruments:
- *    version, target rule, filter, timeframe, window, or that instrument's
- *    reference feed or costs. The server offset is not in the key; a day
- *    with a read outside the broker's session is never recorded instead.
- *    A verdict reached before the end is kept.
+ *  - A sample ends ('method-changed') only at an `ended` event
+ *    (sampleEndEvent: the user agreed to end it — desk.mjs config
+ *    --end-sample). While the method the desk runs is not the sample's for
+ *    one of its instruments — version, target rule, filter, timeframe,
+ *    window, or that instrument's reference feed or costs, changed outside
+ *    `config` (a hand edit, a pulled config, a new METHOD_VERSION) — the
+ *    sample is PAUSED (samplePause): nothing is recorded for it and nothing
+ *    is counted while they differ; changed back, it carries on, and the
+ *    days in between are recorded then like any other. A day or alert of
+ *    another method never ends it. The server offset is not in the key; a
+ *    day with a read outside the broker's session is never recorded
+ *    instead. A verdict reached before the end is kept. A sample that has
+ *    ended may be followed by a new one at once, whatever the method is by
+ *    then (setSample); one still running or paused may not.
  *  - Contested days (two records of one day that differ in their alert ids,
  *    checksums or gap flag — a merge) withhold the verdict while any falls on
  *    or before the last judged alert; they are settled by hand.
@@ -167,7 +178,7 @@ import { gapsIn, gapInWindow } from './history.mjs';
 
 /* ---------------------------------------------------------------- vocabulary */
 
-export const TYPES = Object.freeze(['alert', 'day', 'shown', 'resolved', 'ticketed', 'taken', 'actual', 'sample', 'consent']);
+export const TYPES = Object.freeze(['alert', 'day', 'shown', 'resolved', 'ticketed', 'taken', 'actual', 'sample', 'ended', 'consent']);
 export const ACCOUNT_MODES = Object.freeze(['demo', 'live']);
 export const PAIRS = Object.freeze(['XAUUSD', 'BTCUSD']);
 
@@ -231,10 +242,14 @@ export const TAKEN_WITHIN_MS = takenWithinMs('M15');
 
 /**
  * The committed sample's size, declared before any live alert is seen
- * (LEARNING-PLAN.md Part 3): detecting +0.2R per alert, 5% one-sided, 80%
- * power, at sd ≈1.10R, clustered by day, needs about 190.
+ * (LEARNING-PLAN.md Part 3). The verdict is the two-sided 95% range of the
+ * mean R per alert, so "lower bound above 0" is a 2.5% one-sided test; at
+ * that level, 80% power against a true +0.2R at sd ≈1.10R per alert needs
+ * n = ((1.96 + 0.842) × 1.10 / 0.2)² ≈ 238, so 240. (The 16 Oct figure, 190,
+ * was sized at 5% one-sided and gave the verdict's own test only ~70% power;
+ * settled 17 Oct, before any sample was committed.)
  */
-export const DEFAULT_PLANNED_ALERTS = 190;
+export const DEFAULT_PLANNED_ALERTS = 240;
 
 /**
  * Below this a "sample" cannot detect anything the plan cares about, and a
@@ -296,6 +311,8 @@ export const ALLOWED = Object.freeze({
   taken: Object.freeze(['account', 'how']),
   actual: Object.freeze(['account', 'r', 'how']),
   sample: Object.freeze(['plannedAlerts', 'method', 'pairs', 'committedAt', 'replaces']),
+  // The user agreed to end the sample in progress (desk.mjs config --end-sample): the only way a sample ends.
+  ended: Object.freeze(['reason']),
   consent: Object.freeze(['answer']),
   outcome: Object.freeze(['r', 'how', 'bars', 'mfe', 'mae', 'bothTouched', 'scoring', 'gap']),
   kinds: Object.freeze(['idea', 'rejected', 'none', 'blocked', 'stale', 'no-data']),
@@ -622,6 +639,7 @@ const FIELD = {
   plannedAlerts: (x) => within(x, 'plannedAlerts', 1, 10000, { int: true }),
   committedAt: (x) => epochMs(x, 'committedAt'),
   replaces: (x) => oneOf(x, ['method-changed'], 'replaces'),
+  reason: (x) => oneOf(x, ['method-changed'], 'reason'),
   answer: (x) => oneOf(x, ['yes', 'no'], 'answer'),
 };
 // `how` means different things on different events, each from a short list.
@@ -688,6 +706,7 @@ function required(e) {
     need(Number.isInteger(e.plannedAlerts) && fullMethod(e.method, e.pairs) && e.method.tf && e.pairs && Number.isFinite(e.committedAt), 'plannedAlerts, method, pairs and committedAt');
     need(e.id === sampleIdOf(e.committedAt), 'the sample id');
   }
+  if (e.type === 'ended') need(e.reason && /^sample-\d{13}$/.test(e.id), 'a reason and the id of the sample it ends');
   if (e.type === 'consent') need(e.answer && e.id === CONSENT_ID, `an answer and the id "${CONSENT_ID}"`);
 }
 
@@ -885,7 +904,7 @@ const valid = (e) => e && typeof e === 'object' && typeof e.id === 'string' && T
  * broker's session under the configured offset, so on any day it records the
  * offset cannot change a read (re-check, 17 Oct: offsets from −5 to +4 gave
  * the same alerts, R and kinds as 'auto'). Correcting it in the clocks-change
- * week therefore does not end a sample.
+ * week therefore neither pauses nor ends a sample.
  */
 export const methodKey = (m) => {
   const c = cleanMethod(m) || { version: null, targetRule: null, filter: 'none', tf: null, feeds: {}, window: null, costs: null };
@@ -899,8 +918,8 @@ export const methodKey = (m) => {
  * The method as one instrument's record sees it: the shared parts, and only
  * that instrument's feed and costs. Alert and day lines carry this, and every
  * comparison of a line with a sample's method goes through keyFor, so a
- * change to gold's costs (its commission, or GBP/USD) does not end a sample
- * of bitcoin alone, whose record it cannot change (re-check, 17 Oct).
+ * change to gold's costs (its commission, or GBP/USD) neither pauses nor ends
+ * a sample of bitcoin alone, whose record it cannot change (re-check, 17 Oct).
  */
 export function forPair(m, pair) {
   const c = cleanMethod(m);
@@ -1118,6 +1137,9 @@ function indexOfOpen(bars, t) {
 function scoreOn(bars, rec, { spread, comm, closesAtMs, tfMs }) {
   const k = indexOfOpen(bars, rec.barCloseMs - tfMs);
   if (k < 0) return null;
+  // Bars closer together than the alert's timeframe are another timeframe's
+  // (an M15 alert handed M5 bars): not scored, rather than scored wrongly for good.
+  if (k + 1 < bars.length && bars[k + 1].t - bars[k].t < tfMs) return null;
   let end = k;
   while (end + 1 < bars.length && bars[end + 1].t + tfMs <= closesAtMs) end++;
   const inWin = bars.slice(0, end + 1);
@@ -1498,15 +1520,18 @@ export function consentEvent({ answer, at = Date.now() } = {}) {
 
 /**
  * Commit the alert sample (the user said yes to sampleQuestion). Refused while
- * an earlier sample is unfinished, unless the method changed — restarting a
- * run after a bad start is the optional stopping decision 8 forbids — and
- * refused below MIN_PLANNED_ALERTS, or with a commitment inside the held-back
- * years. `events` are the journal's events (pass [] for an empty one). `cfg`
- * is the settings: a method whose window or costs (for the sample's
- * instruments) are not the settings' own is out of date and is refused, so a
- * sample is never committed to a method the record will not be read with.
+ * an earlier sample is still running or paused (no verdict, not ended) —
+ * restarting a run after a bad start is the optional stopping decision 8
+ * forbids, and a sample ends only when the user agrees to end it
+ * (sampleEndEvent) — and refused below MIN_PLANNED_ALERTS, or with a
+ * commitment inside the held-back years. After an ended sample the new one
+ * says it `replaces` it ('method-changed'). `events` are the journal's events
+ * (pass [] for an empty one). `cfg` is the settings: a method whose window or
+ * costs (for the sample's instruments) are not the settings' own is out of
+ * date and is refused, so a sample is never committed to a method the record
+ * will not be read with.
  */
-export function setSample({ plannedAlerts = DEFAULT_PLANNED_ALERTS, method, cfg, pairs = [...PAIRS], committedAt = Date.now(), at = committedAt, events, replaces = null } = {}) {
+export function setSample({ plannedAlerts = DEFAULT_PLANNED_ALERTS, method, cfg, pairs = [...PAIRS], committedAt = Date.now(), at = committedAt, events } = {}) {
   if (!Number.isInteger(plannedAlerts) || plannedAlerts < MIN_PLANNED_ALERTS) fail(`the sample needs a whole number of at least ${MIN_PLANNED_ALERTS} alerts`);
   if (!cfg) fail('setSample needs the settings (cfg), to check the method is the current one');
   pairs = FIELD.pairs(pairs);
@@ -1515,16 +1540,69 @@ export function setSample({ plannedAlerts = DEFAULT_PLANNED_ALERTS, method, cfg,
   if (!Array.isArray(events)) fail('setSample needs the journal\'s events, to check for a sample in progress');
   if (!(committedAt > HOLDOUT.toMs)) fail('a sample cannot start inside the held-back years');
   const current = foldSample(events);
+  let replaces = null;
   if (current) {
     if (!(committedAt > current.committedAt)) fail('a new sample must start after the one in force');
     const st = sampleStatus(events, current);
-    if (!st.complete) {
-      if (replaces !== 'method-changed') fail(`the sample in progress (${st.count} of ${st.planned}) has no verdict yet; it ends only when the method changes`);
-      if (current.pairs.every((p) => keyFor(m, p) === keyFor(current.method, p))) fail('the method is unchanged, so the sample in progress cannot be restarted');
-    }
+    // A sample that has ended (the user agreed to end it, whatever the method
+    // is now) can be followed by a new one; one still running or paused is
+    // protected, whatever the method is now.
+    if (!st.complete && !st.ended) fail(`the sample in progress (${Math.min(st.count, st.planned)} of ${st.planned}) has no verdict yet, and it ends only if you agree to end it`);
+    if (st.ended) replaces = 'method-changed';
   }
   return sanitize({ type: 'sample', id: sampleIdOf(committedAt), at, plannedAlerts, method: m, pairs, committedAt, replaces });
 }
+
+/**
+ * The user agreed to end the sample in progress (rule 1: the desk says so and
+ * asks first; desk.mjs config --end-sample): a settings change that makes the
+ * desk a different method, or ending a sample that is paused because the
+ * method already differs (samplePause). The only way a sample ends. It ends
+ * at `at` with reason 'method-changed', whatever is recorded afterwards — so
+ * a change undone at once has still ended it, as the user was told.
+ */
+export function sampleEndEvent({ sample, at = Date.now(), reason = 'method-changed' } = {}) {
+  if (!sample || !sample.id) fail('sampleEndEvent needs the sample it ends');
+  if (!(at >= sample.committedAt)) fail('a sample cannot end before it was committed');
+  return sanitize({ type: 'ended', id: sample.id, at, reason });
+}
+
+/** The parts of a method, in the user's words; the first three are their settings (config.json), the rest the desk's own. */
+export const METHOD_PART_WORDS = Object.freeze({
+  tf: 'the chart timeframe', window: 'the session window', costs: 'the costs (commission or GBP/USD)',
+  version: 'the rules that decide alerts', targetRule: 'the target rule', filter: 'the filter', feeds: 'the price feed',
+});
+const SETTING_PARTS = ['tf', 'window', 'costs'];
+
+/**
+ * Whether the sample in force is PAUSED: it is still running (no verdict, not
+ * ended) and the method the desk runs now is not the sample's for one of its
+ * instruments — a setting changed outside `config` (a hand edit, a pulled
+ * config) or a new version of the desk's rules. Paused is not ended: nothing
+ * is recorded for the sample and nothing is counted while they differ;
+ * changed back, it carries on; only the user's agreement ends it
+ * (sampleEndEvent, desk.mjs config --end-sample). `methodNow` is the method
+ * the desk runs now (methodOf with live.mjs METHOD_VERSION and the settings);
+ * either way the window and costs are the settings' (`cfg`).
+ * Returns null, or { sample, st, pairs, parts, settingsOnly } — `parts` the
+ * METHOD_PART_WORDS keys that differ, `settingsOnly` when every one of them
+ * is a setting the user can change back.
+ */
+export function samplePause(events, { cfg = null, methodNow = null } = {}) {
+  const sample = foldSample(events);
+  if (!sample) return null;
+  const st = sampleStatus(events, sample);
+  if (st.complete || st.ended) return null;
+  const base = methodNow || sample.method;
+  const now = cfg && cfg.account ? methodUnder(base, cfg) : base;
+  const pairs = sample.pairs.filter((p) => keyFor(now, p) !== keyFor(sample.method, p));
+  if (!pairs.length) return null;
+  const parts = Object.keys(METHOD_PART_WORDS).filter((k) => pairs.some((p) => JSON.stringify(forPair(now, p)[k] ?? null) !== JSON.stringify(forPair(sample.method, p)[k] ?? null)));
+  return { sample, st, pairs, parts, settingsOnly: parts.length > 0 && parts.every((k) => SETTING_PARTS.includes(k)) };
+}
+
+/** Why a sample is paused, in a few words: "your settings no longer match it" or "the desk's method no longer matches it". */
+export const pauseReason = (pause) => (pause.settingsOnly ? 'your settings no longer match it' : 'the desk\'s method no longer matches it');
 
 const iso16 = (day) => `${day}T00:00`;
 
@@ -1570,14 +1648,14 @@ const dayStartMs = (day) => { const [y, mo, d] = day.split('-').map(Number); ret
  *    check could still add an earlier alert and change which N are judged);
  *  - no day up to the last judged alert is CONTESTED (two different records
  *    of it, from a merge): which one stands would otherwise decide the verdict;
- *  - the sample has not ended. A later commitment ends it ('new-sample'); so
- *    does the method changing under it ('method-changed'): the first alert
- *    shown, alert recorded, or day recorded, for the sample's instruments
- *    after the commitment, under a different method for that instrument
- *    (keyFor: version, target rule, filter, timeframe, window, and that
- *    instrument's feed and costs) — a settings change ends it even with the
- *    watcher off. The server offset and the other instrument's costs cannot
- *    change the record, so they never end it.
+ *  - the sample has not ended. Only an `ended` event (the user agreed to end
+ *    it: sampleEndEvent) ends it ('method-changed'), at its time; a later
+ *    commitment (setSample refuses one over a running sample, so only a
+ *    merge or a hand edit makes this) ends it too ('new-sample'). A day,
+ *    alert or shown alert under another method never ends it: while the
+ *    desk's method differs from the sample's the sample is paused
+ *    (samplePause — this function does not see the settings), and only its
+ *    own method's record is ever counted here.
  *
  * Returns null without a sample, else {
  *   planned, pairs, committedAt, count, judged, gapped, days, mean, se,
@@ -1589,32 +1667,16 @@ const dayStartMs = (day) => { const [y, mo, d] = day.split('-').map(Number); ret
  */
 export function sampleStatus(events, sample = foldSample(events)) {
   if (!sample) return null;
-  const same = (e) => keyFor(e.method, e.pair) === keyFor(sample.method, e.pair);
   const N = sample.plannedAlerts;
   const next = foldSamples(events).find((s) => s.committedAt > sample.committedAt);
   const nextMs = next ? next.committedAt : Infinity;
   const ours = (e) => sample.pairs.includes(e.pair) && e.barCloseMs >= sample.committedAt;
-  // The method changed at the first sign of another method after the
-  // commitment, for the sample's instruments:
-  //  - an alert shown under it: at its bar close;
-  //  - a day recorded under it: at the time it was RECORDED (its `at`, never
-  //    before that day's window closed). Not at the day's own date: a replay
-  //    under the new settings may record days from before the change, and
-  //    must not cut alerts the old method recorded while it was in force (or
-  //    take away a verdict already reached);
-  //  - an alert recorded under it: at its day record's time, as above; one no
-  //    day record names (not part of the record — a hand edit) at its own `at`.
   const commitDay = dayOf(sample.committedAt);
-  const otherDays = new Map();
-  for (const d of standingDays(events).values()) if (sample.pairs.includes(d.pair) && !same(d)) d.ids.forEach((id) => otherDays.set(`${keyFor(d.method, d.pair)}|${id}`, d.at));
-  const changeAt = (e) => {
-    if (!valid(e) || !sample.pairs.includes(e.pair) || same(e)) return Infinity;
-    if (e.type === 'shown') return ours(e) ? e.barCloseMs : Infinity;
-    if (e.type === 'day') return e.at >= sample.committedAt ? e.at : Infinity;
-    if (e.type === 'alert') { const t = otherDays.get(`${keyFor(e.method, e.pair)}|${e.id}`) ?? e.at; return t >= sample.committedAt ? t : Infinity; }
-    return Infinity;
-  };
-  const changedMs = Math.min(Infinity, ...(events || []).map(changeAt));
+  // The end the user agreed to (sampleEndEvent) — the only way a sample ends
+  // short of a second commitment. Lines of another method end nothing (the
+  // record below is the sample's own method's alone).
+  const endedAt = (e) => (valid(e) && e.type === 'ended' && e.id === sample.id && e.at >= sample.committedAt ? e.at : Infinity);
+  const changedMs = Math.min(Infinity, ...(events || []).map(endedAt));
   const endMs = Math.min(nextMs, changedMs);
   const dayRecs = foldDays(events, sample.method);
   const gapDay = (a) => { const d = dayRecs.get(dayIdOf(a.pair, a.tf, dayOf(a.barCloseMs))); return !!(d && d.gap); };
@@ -1688,7 +1750,8 @@ export function fmtR(x) {
 const tzOf = (cfg) => (cfg && cfg.window && cfg.window.tz) || DAY_TZ;
 const nameOf = (pair) => label(pair).toLowerCase();
 const dayFmt = new Map();
-const dayLabel = (ms, tz) => {
+/** A London day as said to the user: "Tue 20 Oct". */
+export const dayLabel = (ms, tz) => {
   if (!dayFmt.has(tz)) dayFmt.set(tz, new Intl.DateTimeFormat('en-GB', { timeZone: tz, weekday: 'short', day: 'numeric', month: 'short' }));
   return dayFmt.get(tz).format(ms).replace(',', '');
 };
@@ -1738,25 +1801,25 @@ const CONTESTED_WHY = (n) => `${plural(n, 'day')} recorded twice, with different
 const GAP_LINE = (n) => `${plural(n, 'day')} had a hole in the price feed's bars, so ${n === 1 ? 'its' : 'their'} alerts are left out of the sample.`;
 
 /*
- * `settingsChanged`: the settings' window or costs (for the sample's
- * instruments) are no longer the sample's method's (summary works it out from cfg). The record is
- * then read under a different method, so the sample has stopped, whether or
- * not a day has been recorded under the new settings yet.
- * `methodChanged`: the desk now runs another method for one of the sample's
- * instruments (summary's `methodNow`): a new METHOD_VERSION of the rules that
- * decide alerts, another target rule or chart timeframe. The same: stopped,
- * and said so at once (rule 1), before anything is recorded under it.
+ * `pause` (samplePause): the desk's method is not the sample's for one of its
+ * instruments — a setting changed outside `config`, or a new version of the
+ * desk's rules. The sample is paused, not ended, and the words say so: what
+ * no longer matches, that nothing is counted while it differs, and what the
+ * user can do — change their settings back, or end it (with no verdict).
+ * Ended means the user agreed to end it (sampleEndEvent), nothing else.
  */
-function sampleLines(st, { settingsChanged = false, methodChanged = false } = {}) {
+function sampleLines(st, { pause = null } = {}) {
   if (!st) return ['**The alert sample**: none committed yet, so there is no verdict to give.'];
-  if (!st.complete && methodChanged) {
-    return [`**The alert sample**: stopped at ${Math.min(st.count, st.planned)} of ${st.planned} because the desk's method changed after you committed to it (a new version of the rules that decide alerts, the target rule or the chart timeframe), and that makes it a different method; it gives no verdict. A new sample can be committed under the new one.`];
-  }
-  if (!st.complete && settingsChanged) {
-    return [`**The alert sample**: stopped at ${Math.min(st.count, st.planned)} of ${st.planned} because your settings changed after you committed to it (the session window or the costs), and that makes it a different method; it gives no verdict. A new sample can be committed under the new settings.`];
+  if (pause) {
+    const n = Math.min(st.count, st.planned);
+    const what = pause.parts.map((k) => METHOD_PART_WORDS[k]).join(' and ') || 'how the alerts are decided';
+    if (pause.settingsOnly) {
+      return [`**The alert sample**: paused at ${n} of ${st.planned}. Your settings no longer match the ones it is judged under: ${what} changed since you committed to it, so nothing is counted while they differ. You can change them back, and it carries on where it left off (the days in between are then checked on the price feed like any other); or you can end it, with no verdict, and commit a new one under the new settings.`];
+    }
+    return [`**The alert sample**: paused at ${n} of ${st.planned}. The desk's method no longer matches the one it is judged under: ${what} changed since you committed to it, so nothing is counted while they differ. That is not a setting you can change back, so it stays paused until you end it, with no verdict; a new one can then be committed under the new method.`];
   }
   if (st.ended) {
-    return [`**The alert sample**: stopped at ${Math.min(st.count, st.planned)} of ${st.planned} because the method changed, so it gives no verdict.`];
+    return [`**The alert sample**: stopped at ${Math.min(st.count, st.planned)} of ${st.planned}, with no verdict: you agreed to end it for a change that makes the desk a different method.`];
   }
   if (st.complete) {
     return [`**The alert sample**: complete — ${st.judged} alerts over ${st.days} days, on average ${fmtR(st.mean)} times the risk (range ${fmtR(st.range[0])} to ${fmtR(st.range[1])}, clustered by day). Verdict: ${st.verdictText}.`];
@@ -1808,9 +1871,10 @@ function defaultPeriod(nowMs, cfg) {
  * [fromMs, toMs); by default the most recent session day. `method` picks
  * whose record is shown (default: the sample's). `methodNow` is the method
  * the desk runs now (methodOf with live.mjs METHOD_VERSION and the settings'
- * timeframe): when it is not the sample's for one of its instruments, the
- * sample has stopped and the summary says so, and the record shown is the
- * new method's.
+ * timeframe): when it, or the settings' window or costs, are not the sample's
+ * for one of its instruments, a running sample is PAUSED (samplePause) — not
+ * ended — and the summary says so, and the record shown is the method the
+ * desk runs now.
  */
 export function summary(events, { nowMs = Date.now(), cfg, method = null, fromMs = null, toMs = null, methodNow = null } = {}) {
   if (!cfg || !cfg.window) fail('summary needs the settings (cfg.window)');
@@ -1818,15 +1882,16 @@ export function summary(events, { nowMs = Date.now(), cfg, method = null, fromMs
   const [defFrom, defTo] = defaultPeriod(nowMs, cfg);
   const from = fromMs ?? defFrom, to = toMs ?? defTo;
   const sample = foldSample(events);
-  // The method the settings make of the sample's: if the window or costs (of
-  // the sample's instruments) changed since the commitment, the record is now
-  // read under that one, and the sample has stopped.
+  // The method the desk runs now: the sample's own under the settings' window
+  // and costs, or `methodNow` when that differs. While it is not the sample's
+  // (for one of its instruments) a running sample is paused: nothing is
+  // counted, and the record shown is the method the desk runs now.
   const current = sample && cfg.account ? methodUnder(sample.method, cfg) : sample ? sample.method : null;
-  const settingsChanged = !!sample && cfg.account ? settingsDiffer(sample.method, cfg, sample.pairs) : false;
   const methodChanged = !!sample && !!methodNow && sample.pairs.some((p) => keyFor(methodNow, p) !== keyFor(current, p));
   const m = method || (methodChanged ? methodNow : current) || null;
   const st = sampleStatus(events, sample);
-  const running = st && !st.ended && !((settingsChanged || methodChanged) && !st.complete);
+  const pause = samplePause(events, { cfg, methodNow });
+  const running = !!st && !st.ended && !pause;
   const entries = [...fold(events, { method: m }).values()];
   const inPeriod = (t) => Number.isFinite(t) && t >= from && t < to;
   const period = entries.filter((e) => inPeriod(e.barCloseMs));
@@ -1846,6 +1911,7 @@ export function summary(events, { nowMs = Date.now(), cfg, method = null, fromMs
       `- Tickets you asked for: ${tickets}`,
       `- Trades you told me you took: ${taken}`,
       ...(running ? [`- Alert sample: ${Math.min(st.count, st.planned)} of ${st.planned}, counted from the price feed after each session`] : []),
+      ...(pause ? [`- Alert sample: paused at ${Math.min(st.count, st.planned)} of ${st.planned}, because ${pauseReason(pause)}; nothing is counted while it differs`] : []),
     ].join('\n'), IN_SESSION_LINE].join('\n\n');
   }
 
@@ -1894,9 +1960,9 @@ export function summary(events, { nowMs = Date.now(), cfg, method = null, fromMs
     trades.push(modes.map(([mode, xs]) => `- ${mode === 'live' ? 'Live' : 'Demo'}: ${plural(xs.length, 'trade')}, on average ${fmtR(xs.reduce((s, e) => s + e.actual.r, 0) / xs.length)} times the risk`).join('\n'));
   }
 
-  const blocks = [alerts.join('\n'), trades.join('\n'), sampleLines(st, { settingsChanged, methodChanged }).join('\n')];
+  const blocks = [alerts.join('\n'), trades.join('\n'), sampleLines(st, { pause }).join('\n')];
   const earlierEnded = foldSamples(events).filter((s) => sample && s.committedAt < sample.committedAt)
     .map((s) => ({ s, x: sampleStatus(events, s) })).filter(({ x }) => !x.complete);
-  if (earlierEnded.length) blocks.push(earlierEnded.map(({ s, x }) => `An earlier sample (committed ${dayLabel(s.committedAt, tz)}) stopped at ${Math.min(x.count, x.planned)} of ${x.planned} when the method changed.`).join('\n'));
+  if (earlierEnded.length) blocks.push(earlierEnded.map(({ s, x }) => `An earlier sample (committed ${dayLabel(s.committedAt, tz)}) stopped at ${Math.min(x.count, x.planned)} of ${x.planned}, with no verdict.`).join('\n'));
   return blocks.join('\n\n');
 }

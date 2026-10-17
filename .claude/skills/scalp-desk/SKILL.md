@@ -67,9 +67,23 @@ technical: never show them commands, file paths, JSON or STATUS lines.
 | "took it", "I took a trade" / "undo that" | `plan took` / `plan undo`. If there is no plan yet, it asks for one; once it is set, run `plan took` for the trade they mentioned. Linking it to an alert: see [The record](#the-record-of-alerts-and-the-learner). |
 | "breakout and range fade, max 4 trades" | `plan set --setups "Breakout, Range fade" --max 4` (anything not one of the four named setups goes in as their own words) |
 | "risk 0.5%", "shadow balance 10k", "size from shadow", "always fast" | `config risk=0.5`, `config shadow=10000 sizefrom=shadow`, `config mode=fast` — then commit and push `06-scalping-copilot/desk/config.json` |
-| "switch to M5", "I'm back on the five-minute", "use M15 again" | `config timeframe=M5` (or `M15`) — then commit and push the config, and ask them to send the chart and price again |
+| "switch to M5", "I'm back on the five-minute", "use M15 again" | `config timeframe=M5` (or `M15`) — then commit and push the config, and ask them to send the chart and price again. If it asks about ending the alert sample instead, see below |
 | "I've done 40 trades, 22 winners" | `edge --trades 40 --wins 22` — **totals so far, from MT5's History tab, not since last time** (`--rr`, `--planned`, `--stop` for a typical stop) — then commit and push the config |
 | "my MT5 clock says 12:00" (the clocks-change week asks) | `config serveroffset=<the offset that makes it right>`, e.g. 2 — then commit and push |
+
+**A setting that would end the alert sample.** While a committed alert sample is running, a
+change to the timeframe, the commission, GBP/USD (gold), or anything else that makes the desk a
+different method is not made at once: `config` replies `need-input` with a question saying the
+change ends the sample for good, with no verdict. Send it as it is and wait. Only if they say to
+go ahead, run the same `config` command again with `--end-sample` (then commit the config and the
+journal, `git pull --rebase`, push). If they say no, change nothing.
+
+**A paused sample.** If the settings were changed some other way (edited by hand, a pull) or the
+desk's rules changed, the sample is **paused, not ended**: `journal` says so (the settings no
+longer match the sample's method, nothing is counted while they differ) and a NOTE says what can
+be done. Send the reply as it is. If they want to carry on, put the setting back with `config`
+(the NOTE names it); if they say to end it, run `config --end-sample` (then commit the journal,
+`git pull --rebase`, push). Never end a sample without their words; nothing else ends one.
 
 ## Watching the live chart
 
@@ -92,7 +106,7 @@ its NOTE names a `--pair` to use instead.
 - `alert` → send the reply as it is, call PushNotification with one line ("Bitcoin sell idea —
   reply with your MT5 price for the ticket"), then start `watch` again. If the reply also says
   a feed stopped answering, restart with the `--pair` its NOTE names. Then, if a NOTE says the
-  journal changed, pull, commit and push it (below).
+  journal changed, commit it, pull with rebase and push (below).
 - `timeout` → start `watch` again; say nothing. Started before the window opens, it waits for
   the open up to its time limit and ends this way: that is expected.
 - `dropped` → one instrument's feed failed three polls in a row and that instrument alone is
@@ -120,20 +134,22 @@ repository is public, so it holds results in R only — never lots, money, balan
 
 | The user says | Run |
 |---|---|
-| "took it" for a named alert ("the 14:15 one") | `plan took --alert 14:15` (its London time, `last` or an id; `--pair` if two came then). Without `--alert` it links only through the one ticket built in the last 30 minutes; if a NOTE says two were built, ask which, then `journal took --alert <time>` |
-| "hit my stop", "it reached the target", "closed at the end", "closed it by hand at +0.4" or "+£40, I risked £100" | `journal result --alert <time or last> --how stop` (or `target`, `end`), or `--r 0.4`, or `--pounds 40 --risk 100` (turned into R; neither number is stored) |
+| "took it" for a named alert ("the 14:15 one") | `plan took --alert 14:15` (its London time, or an id; `--pair` if two came then). Without `--alert` it links only through the one ticket built in the last 30 minutes; if a NOTE says two were built, ask which, then `journal took --alert <time>`. If the alert is older or two fit, the reply asks and the NOTE names `journal took --alert <id>`: only on their yes run exactly that — **never `plan took` again** (the count is already done) |
+| "hit my stop", "it reached the target", "closed at the end", "closed it by hand at +0.4" or "+£40, I risked £100" — **for a trade on an alert only** (a trade from a screenshot idea is not kept) | `journal result --alert <the London time of the alert they took> --how stop` (or `target`, `end`), or `--r 0.4`, or `--pounds 40 --risk 100` (turned into R; neither number is stored). `last` means the last alert they asked a ticket for or said they took — never a scan idea or an alert they did nothing with. A time or `last` reaches back only to today (or 24 hours): for an older alert the reply asks whether the trade was on it; only on their yes run it again with the `--alert` id the NOTE gives. If that alert already has their result, the reply asks "Is this a different trade?" and nothing is written: only if they say it corrects the same trade, run it again with the full id the NOTE gives (or `--replace`) |
 | "how are the alerts doing?", "my record" | `journal` — send as is (in their session it gives counts only, by design) |
 | "how did the 10:15 alert do?" | `journal alert --alert 10:15` — answered in R, at any hour |
-| their answer to "which account was that trade on?" | `journal account demo` (or `live`) |
+| their answer to "which account was that trade on?" (after `take`, `plan took` or `journal result`) | `journal account demo` (or `live`): it applies every mark waiting on that answer |
 | "I'm on my live account now" / "back to demo" | `config account=live` (or `demo`), then commit and push the config. The first time, the reply asks whether a live record may sit in the public repository: send it, wait, then `config livejournal=yes` (or `no`) as they answer |
 | "what did the history test find?", "is the learner done?" | `learn report` (or `learn status`) |
-| "what happened in setups like this before?" | `learn similar --at <the bar close, UTC>` (add `--side buy` or `--side sell` if they name one) |
+| "what happened in setups like this before?" | `learn similar --at <the bar close, UTC>`, adding `--side buy` or `--side sell` **only if the user named that side** — never pick one for them, and never from an alert's or the engine's direction. Without a side the reply asks them which side they are thinking of (`need-input`): send it as it is, and run it again with the side they answer. It never shows both sides at once |
 
-Once a day after their session, or when `journal` lists days not yet checked: `git pull --rebase`,
-then `journal update`.
+Once a day after their session, or when `journal` lists days not yet checked: commit any change
+already in `06-scalping-copilot/desk/journal.jsonl` (the silent update writes without a NOTE), then
+`git pull --rebase`, then `journal update`, then commit and push again.
 
-- **When a NOTE says the journal changed**: `git pull --rebase`, then commit and push
-  `06-scalping-copilot/desk/journal.jsonl`.
+- **When a NOTE says the journal changed**: commit `06-scalping-copilot/desk/journal.jsonl`, then
+  `git pull --rebase`, then push. (git refuses a pull with rebase over changes not committed.)
+  Never `git checkout --` or `git restore` the journal: that throws records away.
 - **The learner never goes on an alert.** No learner number and no "similar setups" on or beside an
   alert or a push, in any words. `learn report` and `learn similar` only when the user asks.
 - **In their session the record gives counts only.** Offer no results, averages or "how it's going"
@@ -143,13 +159,16 @@ then `journal update`.
   ("counts as half of each", "has not finished yet"). Never "won", "lost" or "you made", never
   pounds, never a feed price.
 - **Live account**: the desk asks before the first live entry. Never answer for them, and never
-  set `livejournal` without their words.
+  set `livejournal` without their words. Until they say yes, alerts on the live account are not
+  kept, so a trade on one cannot be noted: the desk says so (or asks the question again) instead
+  of asking which alert.
 - **Never run `desk/learn.mjs fit` or `final`** unless HANDOFF.md's "Where we stopped" says to.
 - **The sample question**, only when HANDOFF says to ask it: run `journal sample` and ask in the
-  words it prints — about 190 alerts, every alert scored on the price feed whether they take it
-  or not, no verdict before then; their own trades stay in "Is it working yet?", separately. If
-  they ask what is judged: the average result per alert, in R, after costs. Only on their yes:
-  `journal sample --alerts 190`, then pull, commit and push the journal.
+  words it prints: "Shall I judge the alerts on the next 240 of them, every alert scored on the
+  price feed whether you take it or not, and give no verdict before then? Your own trades stay in
+  'Is it working yet?', separately." If they ask what is judged: the average result per alert, in
+  R, after costs. Only on their yes: `journal sample --alerts 240`, then commit the journal,
+  `git pull --rebase`, and push.
 
 ## Never — whatever the user asks
 

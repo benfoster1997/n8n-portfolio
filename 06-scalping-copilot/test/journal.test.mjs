@@ -23,7 +23,7 @@ import {
   MIN_VERDICT_DAYS, REFERENCE_FEEDS, HOLDOUT, GAP_SETTLE_MS, TICKET_BAND, LiveConsentError, KNOWN_FEEDS, alertChecksum, accountMismatch, sensitiveText, foldDays,
   sanitize, setFeatureNames, journalPath, readEvents, appendEvents, fold, foldSample, foldSamples, foldCanonical, foldConsent,
   canonicalAlerts, shownEvent, resolveOpen, markTicketed, markTaken, markActual, needsLiveConsent, consentEvent,
-  setSample, sampleStatus, outcomeSentence, summary, fmtR, noVerdictLine, sampleQuestion, idOf, methodOf, methodKey, keyFor, forPair, takenWithinMs,
+  setSample, sampleEndEvent, samplePause, sampleStatus, outcomeSentence, summary, fmtR, noVerdictLine, sampleQuestion, idOf, methodOf, methodKey, keyFor, forPair, takenWithinMs,
 } from '../desk/journal.mjs';
 import { liveRead, ideaRecord } from '../desk/live.mjs';
 import { outcome } from '../desk/outcome.mjs';
@@ -475,10 +475,10 @@ test('the window and the costs are part of the method: a settings change is a ne
   assert.throws(() => canon({ cfg: shorter }), /different method/);
   assert.throws(() => shownEvent(recAt(C1315), { source: 'watch', method: METHOD, cfg: pricier }), /different method/);
   assert.throws(() => sanitize({ ...base(), method: { ...METHOD, window: null } }), /its method, with a version, window/);
-  // A shown alert under the new settings ends the sample in progress.
+  // A shown alert under the new settings ends nothing (only an `ended` event does), and is not counted.
   const evs = sampleOf(byDay(100, 1.4, 0.2), { extra: [mkShown({ closeMs: Date.UTC(2026, 10, 3, 13), method: mCost })] });
   const st = sampleStatus(evs);
-  assert.deepEqual([st.ended, st.endedReason, st.verdict], [true, 'method-changed', null]);
+  assert.deepEqual([st.ended, st.endedReason, st.count, st.verdict], [false, null, 100, 'edge']);
 });
 
 console.log('\nwhat the user was shown: scoring (silent)');
@@ -493,6 +493,9 @@ test('a shown alert is scored on the feed it names, with its own spread, once it
   assert.throws(() => resolveOpen(entries, BARS, cfg, { feed: FEED }), /needs opts.pair/);
   assert.deepEqual(resolveOpen(entries, { XAUUSD: BARS }, cfg, { feed: FEED, nowMs: NOW }), []);   // gold's bars do not score bitcoin
   assert.equal(resolveOpen(entries, { BTCUSD: BARS }, cfg, { feed: { BTCUSD: FEED }, nowMs: NOW }).length, 1);
+  // Five-minute bars for a fifteen-minute alert (the setting switched since): not scored, rather than scored wrongly for good.
+  const m5 = BARS.flatMap((b) => [0, 1, 2].map((i) => ({ ...b, t: b.t + i * 5 * 60000 })));
+  assert.deepEqual(resolveOpen(entries, m5, cfg, { pair: 'BTCUSD', feed: FEED, nowMs: NOW }), []);
 });
 // Invented bars on Wed 9 Jan 2030 (GMT): the window closes at 16:00 UTC.
 const T0 = Date.UTC(2030, 0, 9, 15, 0);
@@ -665,15 +668,18 @@ test('only the method\'s record counts: not what the watcher sent, not scans, no
 });
 test('committing: at least 100 alerts, after the held-back years, and no restart of a sample in progress', () => {
   const evs = sampleOf(wave(60, 1.4, 0.9), { N: 100 });
-  assert.equal(DEFAULT_PLANNED_ALERTS, 190);
+  assert.equal(DEFAULT_PLANNED_ALERTS, 240, 'sized for the verdict\'s two-sided 95% range: ((1.96 + 0.842) × 1.10 / 0.2)² ≈ 238');
+  assert.ok(Math.abs(((1.96 + 0.842) * 1.10 / 0.2) ** 2 - 238) < 1);
   assert.equal(MIN_PLANNED_ALERTS, 100);
   assert.throws(() => setSample({ cfg, plannedAlerts: 99, method: METHOD, events: [] }), /at least 100/);
   assert.throws(() => setSample({ cfg, method: METHOD }), /journal's events/);
   assert.throws(() => setSample({ cfg, method: METHOD, events: [], committedAt: HOLDOUT.toMs }), /held-back/);
-  assert.throws(() => setSample({ cfg, method: METHOD, events: evs, committedAt: NOW + 60 * DAY }), /no verdict yet; it ends only when the method changes/);
-  assert.throws(() => setSample({ cfg, method: METHOD, events: evs, committedAt: NOW + 60 * DAY, replaces: 'method-changed' }), /method is unchanged/);
+  assert.throws(() => setSample({ cfg, method: METHOD, events: evs, committedAt: NOW + 60 * DAY }), /has no verdict yet, and it ends only if you agree to end it/);
+  // Not even under a changed method: a sample still running or paused ends only at an `ended` event.
   const m2 = methodOf({ version: 'm2', tf: 'M15', cfg });
-  const s2 = setSample({ cfg, method: m2, events: evs, committedAt: Date.UTC(2027, 0, 4), replaces: 'method-changed' });
+  assert.throws(() => setSample({ cfg, method: m2, events: evs, committedAt: Date.UTC(2027, 0, 4), replaces: 'method-changed' }), /no verdict yet/);
+  // A second commitment that got in anyway (two machines' journals merged) ends the first ('new-sample').
+  const s2 = setSample({ cfg, method: m2, events: [], committedAt: Date.UTC(2027, 0, 4) });
   const after = [...evs, s2];
   assert.deepEqual(foldSamples(after).map((s) => s.id), [`sample-${COMMIT}`, `sample-${Date.UTC(2027, 0, 4)}`]);
   const old = sampleStatus(after, foldSamples(after)[0]);
@@ -682,15 +688,42 @@ test('committing: at least 100 alerts, after the held-back years, and no restart
   const done = sampleOf(byDay(100, 1.4, 0.2));
   const next = setSample({ cfg, method: METHOD, events: done, committedAt: Date.UTC(2027, 3, 5) });
   assert.equal(sampleStatus([...done, next], foldSamples([...done, next])[0]).verdict, 'edge');
-  assert.match(sampleQuestion(), /^Shall I judge the alerts on the next 190 of them, every alert scored on the price feed whether you take it or not, and give no verdict before then\?/);
+  assert.equal(sampleQuestion(), 'Shall I judge the alerts on the next 240 of them, every alert scored on the price feed whether you take it or not, and give no verdict before then? Your own trades stay in \'Is it working yet?\', separately.');
+  assert.match(sampleQuestion(190), /^Shall I judge the alerts on the next 190 of them, every alert scored on the price feed whether you take it or not, and give no verdict before then\?/);
 });
-test('the live method changing under a sample ends it, with no verdict', () => {
+test('the live method changing under a sample pauses it — never ends it; an alert shown under the new one is not counted', () => {
   const m2 = methodOf({ version: 'm2', tf: 'M15', cfg });
-  const evs = sampleOf(byDay(100, 1.4, 0.2), { extra: [mkShown({ closeMs: Date.UTC(2026, 10, 3, 13), method: m2 })] });
+  const evs = sampleOf(byDay(40, 1.4, 0.2), { N: 100, extra: [mkShown({ closeMs: Date.UTC(2026, 10, 3, 13), method: m2 })] });
   const st = sampleStatus(evs);
-  // Only the four alerts before the first one sent under the new method are this sample's.
-  assert.deepEqual([st.ended, st.endedReason, st.count, st.complete, st.verdict], [true, 'method-changed', 4, false, null]);
-  assert.match(summary(evs, { nowMs: Date.UTC(2027, 0, 20, 18), cfg }), /\*\*The alert sample\*\*: stopped at 4 of 100 because the method changed, so it gives no verdict\./);
+  assert.deepEqual([st.ended, st.endedReason, st.count, st.complete, st.verdict], [false, null, 40, false, null]);
+  const pause = samplePause(evs, { cfg, methodNow: m2 });
+  assert.deepEqual([pause.pairs, pause.parts, pause.settingsOnly], [['BTCUSD'], ['version'], false]);
+  assert.equal(samplePause(evs, { cfg, methodNow: METHOD }), null, 'the method matches again: running');
+  const text = summary(evs, { nowMs: Date.UTC(2027, 0, 20, 18), cfg, methodNow: m2 });
+  assert.match(text, /\*\*The alert sample\*\*: paused at 40 of 100\. The desk's method no longer matches the one it is judged under: the rules that decide alerts changed since you committed to it, so nothing is counted while they differ\. That is not a setting you can change back, so it stays paused until you end it, with no verdict;/);
+  assert.doesNotMatch(text, /stopped at/);
+});
+
+test('an end the user agreed to (sampleEndEvent) stops the sample at its time; a new sample may follow an ended one under the same method', () => {
+  const evs = sampleOf(byDay(100, 1.4, 0.2));
+  const sample = foldSamples(evs)[0];
+  const endAt = Date.UTC(2026, 10, 3, 12);
+  const end = sampleEndEvent({ sample, at: endAt });
+  assert.deepEqual(end, { type: 'ended', id: sample.id, at: endAt, reason: 'method-changed' });
+  assert.throws(() => sampleEndEvent({ sample, at: sample.committedAt - 1 }), /before it was committed/);
+  assert.throws(() => sanitize({ type: 'ended', id: 'BTCUSD-M15-1792588500000', at: endAt, reason: 'method-changed' }), /id of the sample/);
+  const st = sampleStatus([...evs, end]);
+  assert.deepEqual([st.ended, st.endedReason, st.complete, st.verdict], [true, 'method-changed', false, null]);
+  assert.ok(st.count < 100 && st.count === foldCanonical(evs, METHOD).filter((a) => a.barCloseMs >= COMMIT && a.barCloseMs < endAt).length, 'only the alerts before the end');
+  assert.match(summary([...evs, end], { nowMs: Date.UTC(2027, 0, 20, 18), cfg }), /\*\*The alert sample\*\*: stopped at \d+ of 100, with no verdict: you agreed to end it for a change that makes the desk a different method\./);
+  assert.equal(samplePause([...evs, end], { cfg: pricier }), null, 'an ended sample is not paused, whatever the settings');
+  // The method is the same as the ended sample's (a change made and undone): committed all the same.
+  const next = setSample({ cfg, method: METHOD, events: [...evs, end], committedAt: Date.UTC(2027, 1, 1) });
+  assert.equal(next.replaces, 'method-changed');
+  // A sample still running is never replaced, however the call is made.
+  const running = sampleOf(byDay(60, 1.4, 0.2), { N: 100 });
+  assert.throws(() => setSample({ cfg, method: METHOD, events: running, committedAt: Date.UTC(2027, 1, 1) }), /no verdict yet/);
+  assert.throws(() => setSample({ cfg, method: METHOD, events: running, committedAt: Date.UTC(2027, 1, 1), replaces: 'method-changed' }), /no verdict yet/);
 });
 
 console.log('\nwhat it says');
@@ -866,42 +899,48 @@ test('a day with any bar missing is held, not frozen; after 48 h it is recorded,
 
 const pricier = withDefaults({ account: { commissionPerSideGBP: 3 } });
 const M_COST = methodOf({ version: 'm1', tf: 'M15', cfg: pricier });
-test('a settings change ends the sample at the first day recorded under the new method, with no alert shown', () => {
-  // 50 weekdays from Mon 2 Nov, two alerts a day; the commission changes and Mon 9 Nov is recorded under it.
+test('a day or alert recorded under another method ends nothing: it is not counted, and only an ended event ends a sample', () => {
+  // 50 weekdays from Mon 2 Nov, two alerts a day; Mon 9 Nov is also recorded under the pricier commission.
   const evs = sampleOf(byDay(100, 1.4, 0.2), { extra: [mkDay('BTCUSD', '2026-11-09', [], M_COST)] });
   assert.ok(!evs.some((e) => e.type === 'shown'));
   const st = sampleStatus(evs);
-  assert.deepEqual([st.ended, st.endedReason, st.count, st.complete, st.verdict], [true, 'method-changed', 12, false, null]);
-  // An alert recorded under another method ends it too (at its day record's time).
+  assert.deepEqual([st.ended, st.endedReason, st.count, st.complete, st.verdict], [false, null, 100, true, 'edge']);
+  // An alert recorded under another method: not counted, ends nothing.
   const m2R = methodOf({ version: 'm1', targetRule: '2R', tf: 'M15', cfg });
   const viaAlert = sampleStatus(sampleOf(byDay(100, 1.4, 0.2), { extra: [mkAlert({ closeMs: COMMIT + 6 * 3600e3, method: m2R })] }));
-  assert.deepEqual([viaAlert.ended, viaAlert.endedReason, viaAlert.count], [true, 'method-changed', 2]);
-  // A replay under the new settings that records an EARLIER day, later, does not cut what the
-  // old method recorded while it was in force, nor take away a verdict already reached.
-  const backfill = sampleStatus(sampleOf(byDay(100, 1.4, 0.2), { extra: [mkDay('BTCUSD', '2026-11-02', [], M_COST, Date.UTC(2027, 0, 20))] }));
-  assert.deepEqual([backfill.complete, backfill.verdict, backfill.count], [true, 'edge', 100]);
-  // A day recorded under another method before the commitment ends nothing.
-  const before = sampleStatus(sampleOf(byDay(100, 1.4, 0.2), { extra: [mkDay('BTCUSD', '2026-10-30', [], M_COST)] }));
-  assert.equal(before.ended, false);
+  assert.deepEqual([viaAlert.ended, viaAlert.endedReason, viaAlert.count], [false, null, 100]);
+  // Short of N: still running, with the same count as without the other method's lines.
+  const short = sampleOf(byDay(40, 1.4, 0.2), { N: 100, extra: [mkDay('BTCUSD', '2026-11-09', [], M_COST), mkAlert({ closeMs: COMMIT + 6 * 3600e3, method: m2R })] });
+  assert.deepEqual([sampleStatus(short).ended, sampleStatus(short).count], [false, 40]);
+  // Only the `ended` event ends it.
+  const endAt = Date.UTC(2026, 10, 9, 23);
+  const cut = sampleStatus([...short, sampleEndEvent({ sample: foldSamples(short)[0], at: endAt })]);
+  assert.deepEqual([cut.ended, cut.endedReason], [true, 'method-changed']);
 });
-test('the summary builds the method from the settings, and says plainly the sample stopped because they changed', () => {
+test('the summary builds the method from the settings, and says plainly the sample is paused while they differ — not ended', () => {
   // The reviewer's case: ten days under METHOD, then five under the pricier commission, no shown alerts.
   const days = weekdays(15);
   const old = days.slice(0, 10).flatMap((d) => [mkAlert({ closeMs: d + 10 * 3600e3, r: 1.4 }), mkAlert({ closeMs: d + 11 * 3600e3, r: -1 })]);
   const neu = days.slice(10).map((d) => mkAlert({ closeMs: d + 10 * 3600e3, r: 1.4, method: M_COST }));
   const evs = [...old, ...neu, ...withDays(old), ...withDays(neu), setSample({ cfg, plannedAlerts: 100, method: METHOD, pairs: ['BTCUSD'], committedAt: COMMIT, events: [] })];
   const st = sampleStatus(evs);
-  assert.deepEqual([st.ended, st.endedReason, st.count], [true, 'method-changed', 20]);
+  assert.deepEqual([st.ended, st.endedReason, st.count], [false, null, 20], 'the other method\'s alerts are not counted, and end nothing');
   const text = summary(evs, { nowMs: Date.UTC(2026, 10, 25, 18), cfg: pricier, fromMs: days[10], toMs: days[14] + DAY });
   assert.doesNotMatch(text, /No alerts in this period|Not yet checked on the price feed/);
   assert.equal((text.match(/^ {2}- On .* bitcoin sell alert reached its target/gm) || []).length, 5);
-  assert.match(text, /- The method's alerts you were not sent, found afterwards on the price feed:\n/);   // not "they count in the sample": it has stopped
-  assert.match(text, /\*\*The alert sample\*\*: stopped at 20 of 100 because your settings changed after you committed to it \(the session window or the costs\), and that makes it a different method; it gives no verdict\./);
-  // Even before anything is recorded under the new settings, the summary says so.
+  assert.match(text, /- The method's alerts you were not sent, found afterwards on the price feed:\n/);   // not "they count in the sample": it is paused
+  const PAUSED = /\*\*The alert sample\*\*: paused at 20 of 100\. Your settings no longer match the ones it is judged under: the costs \(commission or GBP\/USD\) changed since you committed to it, so nothing is counted while they differ\. You can change them back, and it carries on where it left off \(the days in between are then checked on the price feed like any other\); or you can end it, with no verdict, and commit a new one under the new settings\./;
+  assert.match(text, PAUSED);
+  assert.doesNotMatch(text, /stopped at/);
+  // Even before anything is recorded under the new settings, the summary says so; settings back, it runs again.
   const early = [...old, ...withDays(old), setSample({ cfg, plannedAlerts: 100, method: METHOD, pairs: ['BTCUSD'], committedAt: COMMIT, events: [] })];
   assert.equal(sampleStatus(early).ended, false);
-  assert.match(summary(early, { nowMs: Date.UTC(2026, 10, 25, 18), cfg: pricier }), /stopped at 20 of 100 because your settings changed/);
+  assert.match(summary(early, { nowMs: Date.UTC(2026, 10, 25, 18), cfg: pricier }), PAUSED);
+  assert.deepEqual(samplePause(early, { cfg: pricier }).parts, ['costs']);
   assert.match(summary(early, { nowMs: Date.UTC(2026, 10, 25, 18), cfg }), /20 of the 100 alerts you committed to/);
+  assert.equal(samplePause(early, { cfg }), null);
+  // In the session: a count, and that it is paused.
+  assert.match(summary(early, { nowMs: Date.UTC(2026, 10, 25, 11), cfg: pricier }), /^- Alert sample: paused at 20 of 100, because your settings no longer match it; nothing is counted while it differs$/m);
 });
 test('setSample takes the settings and refuses a method that is not theirs', () => {
   assert.throws(() => setSample({ method: METHOD, events: [] }), /needs the settings/);
@@ -936,7 +975,7 @@ test('the broker\'s server offset is not part of the method: a realistic one cha
   // An old line that still carries serverOffset reads as the same method.
   assert.equal(methodKey(sanitize({ ...base(), method: { ...METHOD, serverOffset: 2 } }).method), keyFor(METHOD, 'BTCUSD'));
 });
-test('only settings that can change the record end a sample: the server offset and the other instrument\'s costs do not; the commission does', () => {
+test('only settings that can change the record pause a sample: the server offset and the other instrument\'s costs do not; the commission does', () => {
   const two = withDefaults({ broker: { serverOffset: 2 } });
   const gbp = withDefaults({ account: { gbpusd: 1.34 } });           // gold's commission is in pounds; bitcoin has none
   const M_TWO = methodOf({ version: 'm1', tf: 'M15', cfg: two });
@@ -952,46 +991,52 @@ test('only settings that can change the record end a sample: the server offset a
   for (const [m, c] of [[M_TWO, two], [M_GBP, gbp]]) {
     const { st, text } = run(m, c);
     assert.deepEqual([st.ended, st.endedReason, st.count], [false, null, 40]);
-    assert.doesNotMatch(text, /settings changed|stopped at/);
+    assert.doesNotMatch(text, /paused|stopped at/);
     assert.match(text, /40 of the 100 alerts you committed to/);
   }
   // The day the bitcoin record writes under either is the very line it writes under 'auto'.
   assert.deepEqual(mkDay('BTCUSD', later, [], M_GBP), mkDay('BTCUSD', later, [], METHOD));
-  // The commission (here for both instruments) does end it.
+  // The commission (here for both instruments) does pause it — and ends nothing.
   const { st, text } = run(M_COST, pricier);
-  assert.deepEqual([st.ended, st.endedReason], [true, 'method-changed']);
-  assert.match(text, /stopped at 40 of 100 because your settings changed/);
+  assert.deepEqual([st.ended, st.endedReason, st.count], [false, null, 40]);
+  assert.match(text, /paused at 40 of 100\. Your settings no longer match/);
   // setSample checks only the sample's instruments; a gold sample does see gold's costs change.
   assert.equal(setSample({ cfg: gbp, method: METHOD, pairs: ['BTCUSD'], events: [] }).pairs[0], 'BTCUSD');
   assert.throws(() => setSample({ cfg: gbp, method: METHOD, pairs: ['XAUUSD', 'BTCUSD'], events: [] }), /different method/);
   assert.throws(() => canonicalAlerts({ pair: 'XAUUSD', bars: [], feedId: 'twelvedata', cfg: gbp, method: METHOD, fromMs: Date.UTC(2026, 9, 21), toMs: Date.UTC(2026, 9, 22) }), /different method/);
   assert.equal(canon({ cfg: gbp, method: METHOD }).events.length, canon().events.length);
 });
-test('a bitcoin-only sample in progress cannot be restarted as "method changed" when only GBP/USD changed', () => {
+test('a bitcoin-only sample is not even paused when only GBP/USD changed; a real change pauses it; neither restarts it', () => {
   // GBP/USD moves gold's commission only: bitcoin's record, and so this sample, cannot change.
   const gbp = withDefaults({ account: { gbpusd: 1.34 } });
   const M_GBP = methodOf({ version: 'm1', tf: 'M15', cfg: gbp });
   assert.notEqual(methodKey(M_GBP), methodKey(METHOD), 'the whole method differs (gold\'s costs)');
   const evs = sampleOf(wave(60, 1.4, 0.9), { N: 100 });
   assert.equal(sampleStatus(evs).complete, false);
-  assert.throws(() => setSample({ cfg: gbp, method: M_GBP, pairs: ['BTCUSD'], events: evs, committedAt: NOW + 60 * DAY, replaces: 'method-changed' }), /the method is unchanged/);
-  // A real change to bitcoin's method may restart it.
+  assert.equal(samplePause(evs, { cfg: gbp, methodNow: M_GBP }), null);
+  assert.throws(() => setSample({ cfg: gbp, method: M_GBP, pairs: ['BTCUSD'], events: evs, committedAt: NOW + 60 * DAY }), /no verdict yet/);
+  // A real change to bitcoin's method pauses it, and still does not let a new sample in: only an ended event ends it.
   const m2 = methodOf({ version: 'm2', tf: 'M15', cfg: gbp });
-  assert.equal(setSample({ cfg: gbp, method: m2, pairs: ['BTCUSD'], events: evs, committedAt: NOW + 60 * DAY, replaces: 'method-changed' }).method.version, 'm2');
+  assert.deepEqual(samplePause(evs, { cfg: gbp, methodNow: m2 }).parts, ['version']);
+  assert.throws(() => setSample({ cfg: gbp, method: m2, pairs: ['BTCUSD'], events: evs, committedAt: NOW + 60 * DAY }), /no verdict yet, and it ends only if you agree to end it/);
+  const ended = [...evs, sampleEndEvent({ sample: foldSamples(evs)[0], at: NOW + 59 * DAY })];
+  assert.equal(setSample({ cfg: gbp, method: m2, pairs: ['BTCUSD'], events: ended, committedAt: NOW + 60 * DAY }).method.version, 'm2');
 });
-test('the desk\'s method changing (a new version or timeframe) stops the sample at once, before anything is recorded under it', () => {
+test('the desk\'s method changing (a new version or timeframe) pauses the sample at once, before anything is recorded under it', () => {
   const evs = sampleOf(byDay(40, 1.4, 0.2), { N: 100 });
   const after = Date.UTC(2027, 0, 20, 18);
   assert.match(summary(evs, { nowMs: after, cfg, methodNow: METHOD }), /40 of the 100 alerts you committed to/);
-  for (const m of [methodOf({ version: 'm2', tf: 'M15', cfg }), methodOf({ version: 'm1', tf: 'M5', cfg })]) {
-    const text = summary(evs, { nowMs: after, cfg, methodNow: m });
-    assert.match(text, /\*\*The alert sample\*\*: stopped at 40 of 100 because the desk's method changed after you committed to it/);
-    assert.doesNotMatch(text, /40 of the 100 alerts you committed to/);
-  }
-  // In session, the running count is no longer offered.
+  const v2 = methodOf({ version: 'm2', tf: 'M15', cfg }), m5 = methodOf({ version: 'm1', tf: 'M5', cfg });
+  assert.match(summary(evs, { nowMs: after, cfg, methodNow: v2 }), /\*\*The alert sample\*\*: paused at 40 of 100\. The desk's method no longer matches the one it is judged under: the rules that decide alerts changed/);
+  // The timeframe is a setting: they can change it back.
+  assert.match(summary(evs, { nowMs: after, cfg, methodNow: m5 }), /\*\*The alert sample\*\*: paused at 40 of 100\. Your settings no longer match the ones it is judged under: the chart timeframe changed since you committed to it, so nothing is counted while they differ\. You can change them back/);
+  for (const m of [v2, m5]) assert.doesNotMatch(summary(evs, { nowMs: after, cfg, methodNow: m }), /40 of the 100 alerts you committed to|stopped at/);
+  // In session: the running count gives way to the paused one.
   const during = Date.UTC(2027, 0, 20, 11);
   assert.match(summary(evs, { nowMs: during, cfg, methodNow: METHOD }), /- Alert sample: 40 of 100/);
-  assert.doesNotMatch(summary(evs, { nowMs: during, cfg, methodNow: methodOf({ version: 'm2', tf: 'M15', cfg }) }), /- Alert sample:/);
+  const paused = summary(evs, { nowMs: during, cfg, methodNow: v2 });
+  assert.match(paused, /^- Alert sample: paused at 40 of 100, because the desk's method no longer matches it; nothing is counted while it differs$/m);
+  assert.doesNotMatch(paused, /- Alert sample: 40 of 100/);
 });
 test('a shown alert may carry the features of its read, under the injected names only', () => {
   const rec = recAt(C1315);
@@ -1084,7 +1129,7 @@ test('the header lists the DECLARED RULES that decide the verdict', () => {
   const head = readFileSync(JOURNAL, 'utf8').split('*/')[0].replace(/\s+\*\s*/g, ' ');
   assert.match(head, /DECLARED RULES/);
   for (const re of [/MIN_VERDICT_DAYS = 30/, /MIN_PLANNED_ALERTS = 100/, /DECLARED ADDITIONS/, /held up to 48 h/, /more than 4 bars/,
-    /first day recorded \(by its `at`, not its date\)/, /Contested days/, /withhold the verdict/, /setSample needs cfg/, /feedId is a SOURCE id/, /pull before `journal update`/]) assert.match(head, re);
+    /ends \('method-changed'\) only at an `ended` event/, /the sample is PAUSED/, /nothing is counted while they differ/, /Contested days/, /withhold the verdict/, /setSample needs cfg/, /feedId is a SOURCE id/, /pull before `journal update`/]) assert.match(head, re);
 });
 test('the header says what a merge can still do, and does not claim it cannot swap an alert', () => {
   const head = readFileSync(JOURNAL, 'utf8').split('*/')[0];
