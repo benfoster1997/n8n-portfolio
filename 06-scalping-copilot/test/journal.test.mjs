@@ -23,7 +23,7 @@ import {
   MIN_VERDICT_DAYS, REFERENCE_FEEDS, HOLDOUT, GAP_SETTLE_MS, TICKET_BAND, LiveConsentError, KNOWN_FEEDS, alertChecksum, accountMismatch, sensitiveText, foldDays,
   sanitize, setFeatureNames, journalPath, readEvents, appendEvents, fold, foldSample, foldSamples, foldCanonical, foldConsent,
   canonicalAlerts, shownEvent, resolveOpen, markTicketed, markTaken, markActual, needsLiveConsent, consentEvent,
-  setSample, sampleStatus, outcomeSentence, summary, fmtR, noVerdictLine, sampleQuestion, idOf, methodOf, methodKey, takenWithinMs,
+  setSample, sampleStatus, outcomeSentence, summary, fmtR, noVerdictLine, sampleQuestion, idOf, methodOf, methodKey, keyFor, forPair, takenWithinMs,
 } from '../desk/journal.mjs';
 import { liveRead, ideaRecord } from '../desk/live.mjs';
 import { outcome } from '../desk/outcome.mjs';
@@ -440,7 +440,7 @@ test('a late replay adds nothing to a frozen day, and a completed sample keeps i
     assert.deepEqual([x.judged, x.mean, x.range, x.count], [st.judged, st.mean, st.range, st.count]);
     assert.deepEqual([x.contested, x.complete, x.verdict], [[`${dayStr(d)} BTCUSD`], false, null]);
   }
-  assert.match(summary(merged, { nowMs: Date.UTC(2027, 0, 20, 18), cfg }), /all 100 alerts are in, but no verdict yet: 1 day recorded twice with different alerts \(two machines' journals merged\), to be settled by hand first\./);
+  assert.match(summary(merged, { nowMs: Date.UTC(2027, 0, 20, 18), cfg }), /all 100 alerts are in, but no verdict yet: 1 day recorded twice, with different alerts or a different hole flag \(two machines' journals merged\), to be settled by hand first\./);
   // The same record twice (another machine, the same alerts, recorded later) is not contested.
   const same = [...done, mkDay('BTCUSD', dayStr(d), foldCanonical(done, METHOD).filter((a) => dayStr(a.barCloseMs) === dayStr(d)), METHOD, Date.parse(`${dayStr(d)}T23:00:00Z`) + 7200e3)];
   assert.deepEqual(sampleStatus(same), st);
@@ -474,7 +474,7 @@ test('the window and the costs are part of the method: a settings change is a ne
   assert.throws(() => canon({ cfg: pricier }), /different method/);
   assert.throws(() => canon({ cfg: shorter }), /different method/);
   assert.throws(() => shownEvent(recAt(C1315), { source: 'watch', method: METHOD, cfg: pricier }), /different method/);
-  assert.throws(() => sanitize({ ...base(), method: { ...METHOD, window: null } }), /window, costs/);
+  assert.throws(() => sanitize({ ...base(), method: { ...METHOD, window: null } }), /its method, with a version, window/);
   // A shown alert under the new settings ends the sample in progress.
   const evs = sampleOf(byDay(100, 1.4, 0.2), { extra: [mkShown({ closeMs: Date.UTC(2026, 10, 3, 13), method: mCost })] });
   const st = sampleStatus(evs);
@@ -580,7 +580,7 @@ const COMMIT = Date.UTC(2026, 10, 2, 9, 0);
 // Day records for alert events, grouped by method, pair and London day; `days` adds empty ones.
 const withDays = (alerts, { days = [], method = METHOD, dropDays = [] } = {}) => {
   const groups = new Map();
-  const slot = (m, pair, day) => { const k = `${methodKey(m)}|${pair}|${day}`; if (!groups.has(k)) groups.set(k, { m, pair, day, xs: [] }); return groups.get(k); };
+  const slot = (m, pair, day) => { const k = `${keyFor(m, pair)}|${pair}|${day}`; if (!groups.has(k)) groups.set(k, { m, pair, day, xs: [] }); return groups.get(k); };
   for (const d of days) slot(method, 'BTCUSD', dayStr(d));
   for (const a of alerts) slot(a.method, a.pair, dayStr(a.barCloseMs)).xs.push(a);
   return [...groups.values()].filter((g) => !dropDays.includes(g.day)).map((g) => mkDay(g.pair, g.day, g.xs, g.m));
@@ -825,7 +825,7 @@ test('never "won", "lost", "you made", "missed", pounds, or a feed price, in any
 console.log('\nre-check, 17 Oct: holes, settings changes, contested days, held-back lines, number fields');
 const without = (from, to) => BARS.filter((b) => b.t < from || b.t >= to);
 const WITHIN_SETTLE = Date.UTC(2026, 9, 22, 16, 0);       // a day after the 21st's close: inside 48 h
-test('a day whose bars have a hole (more than 4 missing) is held, not frozen; after 48 h it is recorded flagged, out of the sample', () => {
+test('a day with any bar missing is held, not frozen; after 48 h it is recorded, flagged and out of the sample only for a hole of more than 4', () => {
   assert.equal(GAP_SETTLE_MS, 48 * 3600e3);
   // 10:00–12:00 UTC on the 21st missing: 8 bars, inside the window and inside the 22nd's lookback.
   const holed = without(Date.UTC(2026, 9, 21, 10), Date.UTC(2026, 9, 21, 12));
@@ -838,9 +838,18 @@ test('a day whose bars have a hole (more than 4 missing) is held, not frozen; af
   // A hole only in the lookback (the 19th) holds the days that read it.
   const back = canon({ bars: without(Date.UTC(2026, 9, 19, 10), Date.UTC(2026, 9, 19, 12)), nowMs: WITHIN_SETTLE });
   assert.deepEqual(back.pending.map((x) => x.why), ['gap', 'gap']);
-  // Four missing bars is not a hole (the plan's "more than 4").
-  const four = canon({ bars: without(Date.UTC(2026, 9, 21, 10), Date.UTC(2026, 9, 21, 11)), nowMs: WITHIN_SETTLE });
+  // Four missing bars, or one, also hold the day while the feed may fill them (re-check, 17 Oct:
+  // 12:30–13:30 missing moved the 21st's alert from 13:15 to 13:45, and one missing 13:00 bar to 13:30).
+  for (const [from, to] of [[Date.UTC(2026, 9, 21, 10), Date.UTC(2026, 9, 21, 11)], [Date.UTC(2026, 9, 21, 12, 30), Date.UTC(2026, 9, 21, 13, 30)], [Date.UTC(2026, 9, 21, 13), Date.UTC(2026, 9, 21, 13, 15)]]) {
+    const short = canon({ bars: without(from, to), nowMs: WITHIN_SETTLE });
+    assert.deepEqual([short.events, short.pending.map((x) => [x.day, x.why])], [[], [['2026-10-21', 'gap'], ['2026-10-22', 'gap']]]);
+  }
+  // Once the 48 h have passed, a short hole is recorded as it stands, and NOT flagged (the plan's "more than 4").
+  const four = canon({ bars: without(Date.UTC(2026, 9, 21, 10), Date.UTC(2026, 9, 21, 11)) });
   assert.deepEqual([four.pending, four.days.map((d) => d.gap ?? false)], [[], [false, false]]);
+  // A missing bar after the window's close and outside every read's slice holds nothing.
+  const after = canon({ bars: without(Date.UTC(2026, 9, 22, 18), Date.UTC(2026, 9, 22, 18, 15)), nowMs: WITHIN_SETTLE + DAY });
+  assert.deepEqual(after.pending, []);
   // 48 h after the close, still holed: recorded with gap: true, and its alerts are left out.
   const late = canon({ bars: holed });
   assert.deepEqual([late.pending, late.days.map((d) => d.gap)], [[], [true, true]]);
@@ -887,7 +896,7 @@ test('the summary builds the method from the settings, and says plainly the samp
   assert.doesNotMatch(text, /No alerts in this period|Not yet checked on the price feed/);
   assert.equal((text.match(/^ {2}- On .* bitcoin sell alert reached its target/gm) || []).length, 5);
   assert.match(text, /- The method's alerts you were not sent, found afterwards on the price feed:\n/);   // not "they count in the sample": it has stopped
-  assert.match(text, /\*\*The alert sample\*\*: stopped at 20 of 100 because your settings changed after you committed to it \(the session window, the costs or the broker's server offset\), and that makes it a different method; it gives no verdict\./);
+  assert.match(text, /\*\*The alert sample\*\*: stopped at 20 of 100 because your settings changed after you committed to it \(the session window or the costs\), and that makes it a different method; it gives no verdict\./);
   // Even before anything is recorded under the new settings, the summary says so.
   const early = [...old, ...withDays(old), setSample({ cfg, plannedAlerts: 100, method: METHOD, pairs: ['BTCUSD'], committedAt: COMMIT, events: [] })];
   assert.equal(sampleStatus(early).ended, false);
@@ -897,20 +906,75 @@ test('the summary builds the method from the settings, and says plainly the samp
 test('setSample takes the settings and refuses a method that is not theirs', () => {
   assert.throws(() => setSample({ method: METHOD, events: [] }), /needs the settings/);
   assert.throws(() => setSample({ cfg: pricier, method: METHOD, events: [] }), /different method/);
-  assert.throws(() => setSample({ cfg: withDefaults({ broker: { serverOffset: 2 } }), method: METHOD, events: [] }), /different method/);
+  assert.equal(setSample({ cfg: withDefaults({ broker: { serverOffset: 2 } }), method: METHOD, events: [] }).method.window.open, '08:00');
   assert.equal(setSample({ cfg: pricier, method: M_COST, events: [] }).method.costs.BTCUSD.comm, M_COST.costs.BTCUSD.comm);
 });
-test('the broker\'s server offset is part of the method', () => {
+const OFFSET_MEMO = new Map();
+const readAt = (args) => {      // memoised with the server offset in the key, so no offset reuses another's read
+  const b = args.bars;
+  const key = `${args.cfg.broker.serverOffset}|${args.pair}|${args.nowMs}|${b.length}|${b[0].t}|${b[b.length - 1].t}`;
+  if (!OFFSET_MEMO.has(key)) { readsMade++; OFFSET_MEMO.set(key, liveRead(args)); }
+  return OFFSET_MEMO.get(key);
+};
+test('the broker\'s server offset is not part of the method: a realistic one changes no read, and a read outside the session holds the day', () => {
+  assert.equal('serverOffset' in METHOD, false);
+  assert.ok(!ALLOWED.method.includes('serverOffset'));
+  const A = canon();
+  // −5 to +8 keep every read of the 08:00–16:00 London window inside both instruments' sessions:
+  // each gives the same method and exactly the same record as 'auto' (read afresh, not from the memo).
+  for (const off of [-5, 2, 4, 8]) {
+    const c = withDefaults({ broker: { serverOffset: off } });
+    assert.equal(methodKey(methodOf({ version: 'm1', tf: 'M15', cfg: c })), methodKey(METHOD), String(off));
+    const B = canon({ cfg: c, read: readAt });
+    assert.deepEqual(B.events, A.events, String(off));
+  }
+  // Under an offset that puts a read in the broker's daily break, the offset would change that read: the day is held, never recorded.
+  for (const off of [-8, 10]) {
+    const held = canon({ cfg: withDefaults({ broker: { serverOffset: off } }), read: readAt });
+    assert.deepEqual([held.events, held.pending.map((x) => x.why)], [[], ['outside-session', 'outside-session']], String(off));
+  }
+  // An old line that still carries serverOffset reads as the same method.
+  assert.equal(methodKey(sanitize({ ...base(), method: { ...METHOD, serverOffset: 2 } }).method), keyFor(METHOD, 'BTCUSD'));
+});
+test('only settings that can change the record end a sample: the server offset and the other instrument\'s costs do not; the commission does', () => {
   const two = withDefaults({ broker: { serverOffset: 2 } });
-  assert.equal(METHOD.serverOffset, 'auto');
-  const m2 = methodOf({ version: 'm1', tf: 'M15', cfg: two });
-  assert.deepEqual([m2.serverOffset, methodKey(m2) === methodKey(METHOD)], [2, false]);
-  assert.throws(() => canon({ cfg: two }), /server offset differ/);
-  assert.throws(() => shownEvent(recAt(C1315), { source: 'watch', method: METHOD, cfg: two }), /different method/);
-  assert.throws(() => sanitize({ ...base(), method: { ...METHOD, serverOffset: 'x' } }), /serverOffset/);
-  assert.throws(() => sanitize({ ...base(), method: { ...METHOD, serverOffset: 51234567 } }), /serverOffset/);
-  const { serverOffset: _o, ...noOffset } = METHOD;
-  assert.throws(() => sanitize({ ...base(), method: noOffset }), /server offset/);
+  const gbp = withDefaults({ account: { gbpusd: 1.34 } });           // gold's commission is in pounds; bitcoin has none
+  const M_TWO = methodOf({ version: 'm1', tf: 'M15', cfg: two });
+  const M_GBP = methodOf({ version: 'm1', tf: 'M15', cfg: gbp });
+  assert.notEqual(M_GBP.costs.XAUUSD.comm, METHOD.costs.XAUUSD.comm);
+  assert.deepEqual([keyFor(M_GBP, 'BTCUSD') === keyFor(METHOD, 'BTCUSD'), keyFor(M_GBP, 'XAUUSD') === keyFor(METHOD, 'XAUUSD')], [true, false]);
+  // 40 of 100 bitcoin alerts in; a later day is recorded under the changed settings.
+  const later = '2026-12-28';
+  const run = (m, c) => {
+    const evs = sampleOf(byDay(40, 1.4, 0.2), { N: 100, extra: [mkDay('BTCUSD', later, [], m)] });
+    return { st: sampleStatus(evs), text: summary(evs, { nowMs: Date.UTC(2027, 0, 20, 18), cfg: c }) };
+  };
+  for (const [m, c] of [[M_TWO, two], [M_GBP, gbp]]) {
+    const { st, text } = run(m, c);
+    assert.deepEqual([st.ended, st.endedReason, st.count], [false, null, 40]);
+    assert.doesNotMatch(text, /settings changed|stopped at/);
+    assert.match(text, /40 of the 100 alerts you committed to/);
+  }
+  // The day the bitcoin record writes under either is the very line it writes under 'auto'.
+  assert.deepEqual(mkDay('BTCUSD', later, [], M_GBP), mkDay('BTCUSD', later, [], METHOD));
+  // The commission (here for both instruments) does end it.
+  const { st, text } = run(M_COST, pricier);
+  assert.deepEqual([st.ended, st.endedReason], [true, 'method-changed']);
+  assert.match(text, /stopped at 40 of 100 because your settings changed/);
+  // setSample checks only the sample's instruments; a gold sample does see gold's costs change.
+  assert.equal(setSample({ cfg: gbp, method: METHOD, pairs: ['BTCUSD'], events: [] }).pairs[0], 'BTCUSD');
+  assert.throws(() => setSample({ cfg: gbp, method: METHOD, pairs: ['XAUUSD', 'BTCUSD'], events: [] }), /different method/);
+  assert.throws(() => canonicalAlerts({ pair: 'XAUUSD', bars: [], feedId: 'twelvedata', cfg: gbp, method: METHOD, fromMs: Date.UTC(2026, 9, 21), toMs: Date.UTC(2026, 9, 22) }), /different method/);
+  assert.equal(canon({ cfg: gbp, method: METHOD }).events.length, canon().events.length);
+});
+test('two records of a day that differ only in the gap flag are contested, and withhold the verdict', () => {
+  const evs = sampleOf(byDay(100, 1.4, 0.2));
+  const d = evs.find((e) => e.type === 'day' && e.day === '2026-11-03');
+  // Machine 1 recorded it earlier with gap: true; machine 2 later without. The flagged one stands.
+  const flagged = sanitize({ ...d, gap: true, at: d.at - 3600e3 });
+  const st = sampleStatus([...evs, flagged]);
+  assert.deepEqual([st.contested, st.complete, st.verdict], [['2026-11-03 BTCUSD'], false, null]);
+  assert.match(summary([...evs, flagged], { nowMs: Date.UTC(2027, 0, 20, 18), cfg }), /recorded twice, with different alerts or a different hole flag/);
 });
 test('a day record dated before its window closed is refused; so are alerts, shown alerts and days in the held-back years', () => {
   // 21 Oct (BST): the window closes 16:00 London, 15:00 UTC.
@@ -940,13 +1004,19 @@ test('the text filter catches the ways round it the re-check found; prices still
   const bad = ['call 07700/900123', 'call 07700–900123', 'call 07700—900123', 'call 077 00  900 123', 'call 07700_900123',
     'ben at example.com', 'ben [at] example [dot] com', 'ben (at) example (dot) co (dot) uk', 'ben＠example.com',
     'made 400$ today', '400 pounds', '50 quid', '20 bucks', '300 dollars', 'balance is 9816', 'balance of 9,816', 'equity now 12000',
-    'account 51234567.89', 'sold at 9816107.46', 'call 077 4375.20', 'ring 0770.09 00123'];
+    'account 51234567.89', 'sold at 9816107.46', 'call 077 4375.20', 'ring 0770.09 00123',
+    // second re-check: other separators, fullwidth digits, a letter O for zero, a login written as a price
+    'call (07700) 900123', 'call 07700:900:123', '07700;900123', '07700|900123', 'call ０７７００９００１２３', '07700 9OO123',
+    '0770O 900123', 'login: 123456.78', 'my account no. 12345.67', 'phone 0770 0900',
+    // fullwidth letters and signs read as their plain forms (NFKC)
+    'ｌｏｇｉｎ １２３４５６.７８', '４００ ｐｏｕｎｄｓ', 'ｂａｌａｎｃｅ ９８１６', '＄４００'];
   for (const x of bad) {
     assert.equal(sensitiveText(x), true, x);
     assert.throws(() => sanitize({ ...base(), reasons: [x] }), /money amount, an email address or a long number/, x);
   }
   for (const ok of ['lows swept at 84,399.55 then reclaimed, 3 bars ago', '0.8 ATR below a 3-touch level at 4375.20', 'unfilled up gap 84250.00-84300.00 overhead',
-    'held at M15. RSI 55', 'the dollar index firmed', 'swept at 84,399.55, rejected at 84250.00', 'price 999999.99']) assert.equal(sensitiveText(ok), false, ok);
+    'held at M15. RSI 55', 'the dollar index firmed', 'swept at 84,399.55, rejected at 84250.00', 'price 999999.99',
+    'EMAs stacked 9 < 21 < 50', 'DMI reads down (6 vs 31)', 'levels 4375.20, 4380.10', 'CHoCH down 12 bars ago', 'ADX 56 with efficiency 0.45']) assert.equal(sensitiveText(ok), false, ok);
   // Every engine read the suite has made writes text the filter lets through.
   for (const r of memo.values()) for (const t of [...(r.reasons || []), ...(r.against || [])].filter((x) => typeof x === 'string')) assert.equal(sensitiveText(t), false, t);
 });
@@ -969,6 +1039,12 @@ test('number fields are held to plausible ranges: bar times and commitments 13 d
   assert.throws(() => sanitize({ ...base(), at: 1.5 }), /at must be a whole number/);
   assert.throws(() => sanitize({ ...base(), at: 1 }), /time \(at\) in milliseconds/);
   assert.throws(() => sanitize({ ...base(), refPrice: 51234567 }), /refPrice/);
+});
+test('the header lists the DECLARED RULES that decide the verdict', () => {
+  const head = readFileSync(JOURNAL, 'utf8').split('*/')[0].replace(/\s+\*\s*/g, ' ');
+  assert.match(head, /DECLARED RULES/);
+  for (const re of [/MIN_VERDICT_DAYS = 30/, /MIN_PLANNED_ALERTS = 100/, /DECLARED ADDITIONS/, /held up to 48 h/, /more than 4 bars/,
+    /first day recorded \(by its `at`, not its date\)/, /Contested days/, /withhold the verdict/, /setSample needs cfg/, /feedId is a SOURCE id/, /pull before `journal update`/]) assert.match(head, re);
 });
 test('the header says what a merge can still do, and does not claim it cannot swap an alert', () => {
   const head = readFileSync(JOURNAL, 'utf8').split('*/')[0];

@@ -34,18 +34,25 @@
  *    so a merge can never quietly change a verdict; it has to be settled by
  *    hand. A day record dated before that day's window closed is refused, so
  *    a wrong clock or a hand edit cannot win by an early `at` (re-check, 17 Oct).
- *    A day whose bars have a hole (more than 4 missing bars in any read's
- *    slice, or in the window) is held until the feed fills it; 48 hours after
- *    the close it is recorded as it is, flagged `gap`, and its alerts are left
- *    out of the sample.
+ *    A day with any bar missing (in any read's slice, or in the window,
+ *    outside gold's scheduled closures) is held until the feed fills it; 48
+ *    hours after the close it is recorded as it is, and flagged `gap` — its
+ *    alerts left out of the sample — only if a hole is of more than 4 bars.
  *  - THE METHOD is more than the engine: its version, target rule, filter,
  *    timeframe and reference feeds, and also the settings that shape what it
- *    reads and how it scores — the window (open, close, time zone), the
+ *    reads and how it scores — the window (open, close, time zone) and the
  *    costs (the spread it reads with and the commission as a price distance,
- *    per instrument) and the broker's server offset (it decides when the gate
- *    counts the market open). Changing any of them in the settings is a new
- *    method and ends a sample in progress (rule 1), whether or not an alert
- *    was shown under the new one: the first day recorded under it is enough.
+ *    per instrument). Changing any of them in the settings is a new method
+ *    and ends a sample in progress (rule 1), whether or not an alert was
+ *    shown under the new one: the first day recorded under it is enough. An
+ *    instrument's record is keyed by the shared parts and ITS OWN feed and
+ *    costs (keyFor), so gold's commission or GBP/USD changing does not end a
+ *    sample of bitcoin alone. The broker's server offset is not part of the
+ *    method: it can only make a read "market closed", and a day is recorded
+ *    only when every read of it falls inside the broker's session under the
+ *    configured offset (canonicalAlerts), so on a recorded day no offset can
+ *    change a read — correcting it in the clocks-change week (SKILL.md)
+ *    does not end a sample (re-check, 17 Oct).
  *  - WHAT THE USER WAS SHOWN (`shown`, and their `ticketed`, `taken`, `actual`).
  *    The watcher's and a scan's alerts, as sent, linked to the method's record
  *    by the same natural id. They are never the sample. A method alert with no
@@ -93,6 +100,38 @@
  * A result across a gap in the feed adds a clause to one of the forms rather
  * than a new form.
  *
+ * DECLARED RULES (the rules that decide the verdict, fixed before the first
+ * alert is recorded; to be written into LEARNING-PLAN.md Part 3 and a HANDOFF
+ * decision at integration, with the API notes at the end):
+ *  - MIN_PLANNED_ALERTS = 100: no sample is committed below 100 alerts
+ *    (DEFAULT_PLANNED_ALERTS = 190, the plan's size).
+ *  - MIN_VERDICT_DAYS = 30: no verdict until the judged alerts span 30
+ *    London days; if the first N span fewer, the judged set runs on to the
+ *    END of the 30th distinct day, every alert of it — a rule on dates alone.
+ *  - Outcomes are said in rule 5's three forms plus the two DECLARED
+ *    ADDITIONS above ("counts as half of each", "has not finished yet").
+ *  - Holed days: a day with any bar missing is held up to 48 h after its
+ *    window closes (GAP_SETTLE_MS), then recorded as it stands; if a hole
+ *    is of more than 4 bars it is flagged `gap` and its alerts are left out
+ *    of the sample (so is any alert whose own trade spans a gap).
+ *  - The sample ends ('method-changed') at the first day recorded (by its
+ *    `at`, not its date), alert recorded or alert shown, after the
+ *    commitment, under a different method key for one of its instruments:
+ *    version, target rule, filter, timeframe, window, or that instrument's
+ *    reference feed or costs. The server offset is not in the key; a day
+ *    with a read outside the broker's session is never recorded instead.
+ *    A verdict reached before the end is kept.
+ *  - Contested days (two records of one day that differ in their alert ids,
+ *    checksums or gap flag — a merge) withhold the verdict while any falls on
+ *    or before the last judged alert; they are settled by hand.
+ *  - Every weekday from the commitment to the last judged alert must be
+ *    recorded for every instrument in the sample before a verdict.
+ *  - API: setSample needs cfg (a method out of date with the settings is
+ *    refused); canonicalAlerts' feedId is a SOURCE id (e.g.
+ *    'binance-vision'), one of REFERENCE_FEEDS[pair].sources, never a
+ *    fallback feed; run a pull before `journal update`, so that contested
+ *    days stay rare.
+ *
  * What it is not. Not the user's MT5 history: an alert is scored on Binance's
  * or Twelve Data's bars whether or not it was taken. Not a verdict before the
  * committed number of alerts (decision 8). Not wired into the commands here —
@@ -109,12 +148,13 @@ import { fileURLToPath } from 'node:url';
 import { liveRead, shouldAlert, alertState, ideaRecord, inWatchHours, TARGET_RULE, FETCH_BARS } from './live.mjs';
 import { outcome } from './outcome.mjs';
 import { clusteredByDay } from './stats.mjs';
-import { costFor, label } from './lib.mjs';
+import { costFor, label, serverOffsetFor } from './lib.mjs';
 import { windowState, localDate } from '../src/sessions.js';
 import { tfInfo } from '../src/timeframes.js';
 import { formatHM, zonedTimeToUtc } from '../src/timezone.js';
 import { INSTRUMENTS } from '../src/instruments.js';
 import { BTC_SOURCES, XAU_SOURCES } from '../src/data-feeds.js';
+import { marketOpenNow } from '../src/shot.js';
 import { gapsIn, gapInWindow } from './history.mjs';
 
 /* ---------------------------------------------------------------- vocabulary */
@@ -249,7 +289,7 @@ export const ALLOWED = Object.freeze({
   consent: Object.freeze(['answer']),
   outcome: Object.freeze(['r', 'how', 'bars', 'mfe', 'mae', 'bothTouched', 'scoring', 'gap']),
   kinds: Object.freeze(['idea', 'rejected', 'none', 'blocked', 'stale', 'no-data']),
-  method: Object.freeze(['version', 'targetRule', 'filter', 'tf', 'feeds', 'window', 'costs', 'serverOffset']),
+  method: Object.freeze(['version', 'targetRule', 'filter', 'tf', 'feeds', 'window', 'costs']),
   window: Object.freeze(['open', 'close', 'tz']),
   costs: Object.freeze(['spread', 'comm']),
   filter: Object.freeze(['id', 'keep', 'predicted']),
@@ -290,18 +330,27 @@ const MAX_TEXT = 300;
  * Engine text never holds a pound or euro sign, a currency sign or an ISO
  * currency code next to a number (before or after it: "$400", "400$"), a
  * money word after a number ("400 pounds", "50 quid", "20 bucks"), the word
- * balance or equity within about 15 characters of a number, an email address
- * (an @ of any width, or spelt out: "ben at example.com", "ben [at] example
- * [dot] com"), or seven or more digits in a run — spaces (any number of
- * them), '-', '–', '—', '.', ',', '/' and '_' between them do not break the
- * run (a phone, an account or login number: "07700/900123", "077 00  900 123",
- * "5123-4567-89").
+ * balance or equity within about 15 characters of a number, a word that names
+ * an account or a phone (login, account, password, phone, mobile, call, ...)
+ * within about 15 characters of a number ("login: 123456.78" — even one
+ * written like a price), an email address (an @ of any width, or spelt out:
+ * "ben at example.com", "ben [at] example [dot] com"), or seven or more
+ * digits in a run.
+ *
+ * The text is NFKC-normalised first, so fullwidth digits and signs count as
+ * their plain forms ("０７７００"); a digit is any \p{Nd}. Up to three
+ * characters that are not letters between two digits do not break a run
+ * ("07700/900123", "077 00  900 123", "(07700) 900123", "07700:900:123",
+ * "07700;900123", "07700|900123"), and a letter O between digits is read as
+ * a zero ("07700 9OO123").
  *
  * Prices are the one exemption: the engine writes them with two decimals
  * ("84250.00", "84,399.55", "4375.20", a gap "84250.00-84300.00"), never more
  * than six digits before the point. Such a price is set aside before the
  * digit run is looked for — but only when it stands alone, so "5123.4567.89",
- * "5123-4567.89", "077 4375.20" or "51234567.89" is still a run.
+ * "5123-4567.89", "077 4375.20" or "51234567.89" is still a run. (The engine's
+ * own text — EMA stacks such as "9 < 21 < 50", RSI and ADX readings, bar
+ * counts — passes; the suite checks every read it makes.)
  */
 const JOIN = '[.,\\-/_\\u2013\\u2014]';
 const AT_WORD = '(?:\\s*[(\\[{]\\s*at\\s*[)\\]}]\\s*|\\s+at\\s+)';
@@ -311,11 +360,18 @@ const MONEY_TEXT = /£|€|[@＠﹫]|[$¥]\s?\d|\d\s?[$¥]|\d\s*(?:pounds?|quid|
 const CODES = '(?:USDT|USD|GBP|EUR|JPY|CHF|AUD|CAD|NZD|GBX)';
 const CURRENCY_NUMBER = new RegExp(`(?<![A-Za-z/])${CODES}\\s?[\\d.,]*\\d|\\d\\s?${CODES}(?![A-Za-z])`, 'i');
 const BALANCE_NUMBER = /\b(?:balance|equity)\b[^\d\n]{0,15}\d|\d[^\d\n]{0,15}\b(?:balance|equity)\b/i;
+const ID_WORDS = '(?:login|log-?in|account|acct|a/c|password|passcode|passwd|phone|mobile|tel|telephone|whatsapp|sms|call|ring|text me)';
+const ID_NUMBER = new RegExp(`(?<![A-Za-z])${ID_WORDS}(?![A-Za-z])[^\\d\\n]{0,15}\\d`, 'i');
+const NOT_LETTER = '[^\\p{L}\\p{Nd}]';
 const PRICE_P = '(?:\\d{1,3},\\d{3}|\\d{1,6})\\.\\d{1,2}';
 const PRICE = new RegExp(`(?<![\\d.,/_\\u2013\\u2014]|\\d[-\\s])${PRICE_P}(?:-${PRICE_P})?(?!\\d|${JOIN}\\d|\\s+\\d)`, 'g');
-const DIGIT_RUN = new RegExp(`\\d(?:(?:${JOIN}|\\s+)?\\d){6,}`);
-export function sensitiveText(s) {
-  return MONEY_TEXT.test(s) || SPELT_EMAIL.test(s) || CURRENCY_NUMBER.test(s) || BALANCE_NUMBER.test(s) || DIGIT_RUN.test(s.replace(PRICE, ' '));
+const O_DIGIT = new RegExp(`(?<=\\p{Nd}${NOT_LETTER}{0,3})[Oo]+(?=${NOT_LETTER}{0,3}\\p{Nd})`, 'gu');
+const DIGIT_RUN = new RegExp(`\\p{Nd}(?:${NOT_LETTER}{0,3}\\p{Nd}){6,}`, 'u');
+export function sensitiveText(raw) {
+  const s = String(raw).normalize('NFKC');
+  if (MONEY_TEXT.test(s) || SPELT_EMAIL.test(s) || CURRENCY_NUMBER.test(s) || BALANCE_NUMBER.test(s) || ID_NUMBER.test(s)) return true;
+  const digits = s.replace(O_DIGIT, (o) => '0'.repeat(o.length));
+  return DIGIT_RUN.test(digits.replace(PRICE, ' '));
 }
 const TOKEN = /^[A-Za-z0-9._-]{1,40}$/;
 
@@ -413,24 +469,24 @@ function cleanWindow(w) {
   if (typeof w.tz !== 'string' || !TZ.test(w.tz)) fail('method.window needs a time zone name');
   return { open: w.open, close: w.close, tz: w.tz };
 }
+/*
+ * Costs per instrument. A method from the settings (methodOf) holds both; a
+ * line of the method's record holds only its own instrument's (forPair), so a
+ * change to the other instrument's costs is not a change to its record.
+ */
 function cleanCosts(c) {
   if (c === null || c === undefined) return null;
   if (typeof c !== 'object' || Array.isArray(c)) fail('method.costs must be an object');
   const out = {};
   for (const p of PAIRS) {
     const x = c[p];
-    if (!x || typeof x !== 'object') fail(`method.costs needs ${p}`);
+    if (x === null || x === undefined) continue;
+    if (typeof x !== 'object') fail(`method.costs.${p} must be an object`);
     out[p] = { spread: within(x.spread, `method.costs.${p}.spread`, 0, 1e4), comm: within(x.comm, `method.costs.${p}.comm`, 0, 1e4) };
     if (out[p].spread === null || out[p].comm === null) fail(`method.costs.${p} must be two distances of zero or more`);
   }
+  if (!Object.keys(out).length) fail(`method.costs needs at least one of ${PAIRS.join(', ')}`);
   return out;
-}
-
-/** The broker's server offset, as the settings hold it: 'auto' (New York + 7) or whole hours from UTC. */
-function cleanOffset(o) {
-  if (o === null || o === undefined) return null;
-  if (o === 'auto') return 'auto';
-  return within(o, 'method.serverOffset', -14, 14, { int: true });
 }
 
 function cleanMethod(m) {
@@ -446,7 +502,6 @@ function cleanMethod(m) {
     feeds,
     window: cleanWindow(m.window),
     costs: cleanCosts(m.costs),
-    serverOffset: cleanOffset(m.serverOffset),
   };
 }
 
@@ -583,13 +638,13 @@ function required(e) {
   const need = (cond, what) => { if (!cond) fail(`a ${e.type} event needs ${what}`); };
   const refuse = (cond, what) => { if (cond) fail(`a ${e.type} event ${what}`); };
   need(Number.isFinite(e.at), 'its time (at)');
-  const fullMethod = (m) => m && m.version && m.window && m.costs && m.serverOffset !== null && m.serverOffset !== undefined;
+  const fullMethod = (m, pairs) => m && m.version && m.window && m.costs && Array.isArray(pairs) && pairs.every((p) => m.costs[p]);
   // The method's record, and what the user was shown, start after the held-back years (rule 2).
   const heldBack = (ms) => refuse(!(ms > HOLDOUT.toMs), `is dated inside the held-back years (rule 2); the journal starts after ${new Date(HOLDOUT.toMs).toISOString()}`);
   const levels = () => {
     need(e.pair && e.tf && e.side && Number.isFinite(e.barCloseMs), 'pair, tf, side and barCloseMs');
     need(e.stopDist > 0 && e.tp1Dist > 0, 'a stop and a target distance');
-    need(fullMethod(e.method) && e.method.tf === e.tf, 'its method, with a version, window, costs, server offset and the same timeframe');
+    need(fullMethod(e.method, [e.pair]) && e.method.tf === e.tf, 'its method, with a version, window, its instrument\'s costs and the same timeframe');
     need(e.barCloseMs % (tfInfo(e.tf).minutes * 60000) === 0, 'a bar close on its timeframe\'s grid');
     need(e.id === idOf(e.pair, e.tf, e.barCloseMs), `the id ${idOf(e.pair, e.tf, e.barCloseMs)}`);
     need(Number.isFinite(e.at) && e.at >= 1e12, 'its time (at) in milliseconds');
@@ -599,7 +654,7 @@ function required(e) {
   if (e.type === 'shown') { levels(); need(e.source && e.account && e.feedId, 'its source, account mode and feed'); }
   if (e.type === 'day') {
     need(e.pair && e.tf && e.day && Number.isFinite(e.alerts), 'pair, tf, day and alerts');
-    need(fullMethod(e.method) && e.method.tf === e.tf, 'its method');
+    need(fullMethod(e.method, [e.pair]) && e.method.tf === e.tf, 'its method');
     need(e.id === dayIdOf(e.pair, e.tf, e.day), 'the day id');
     // A day lists the alerts it found, so the record can be frozen (foldCanonical).
     need(Array.isArray(e.ids) && Array.isArray(e.sums) && e.ids.length === e.alerts && e.sums.length === e.alerts, 'the ids and checksums of its alerts');
@@ -618,7 +673,7 @@ function required(e) {
   if (e.type === 'taken') need(e.how, 'how it was linked');
   if (e.type === 'ticketed') need(Number.isFinite(e.userPrice), 'the user\'s price');
   if (e.type === 'sample') {
-    need(Number.isInteger(e.plannedAlerts) && fullMethod(e.method) && e.method.tf && e.pairs && Number.isFinite(e.committedAt), 'plannedAlerts, method, pairs and committedAt');
+    need(Number.isInteger(e.plannedAlerts) && fullMethod(e.method, e.pairs) && e.method.tf && e.pairs && Number.isFinite(e.committedAt), 'plannedAlerts, method, pairs and committedAt');
     need(e.id === sampleIdOf(e.committedAt), 'the sample id');
   }
   if (e.type === 'consent') need(e.answer && e.id === CONSENT_ID, `an answer and the id "${CONSENT_ID}"`);
@@ -646,6 +701,10 @@ export function sanitize(event, { read = false } = {}) {
     else out[k] = FIELD[k](event[k]);
   }
   required(out);
+  // A line of one instrument carries only that instrument's feed and costs
+  // (forPair), so two writers whose settings differ only for the other
+  // instrument write the same line.
+  if (['alert', 'day', 'shown'].includes(out.type)) out.method = forPair(out.method, out.pair);
   return out;
 }
 
@@ -723,7 +782,7 @@ export class LiveConsentError extends Error {
 }
 
 const json = (e) => JSON.stringify(e);
-const sameKey = (e) => (e.type === 'alert' || e.type === 'day' ? `${e.type}|${e.id}|${methodKey(e.method)}` : null);
+const sameKey = (e) => (e.type === 'alert' || e.type === 'day' ? `${e.type}|${e.id}|${keyFor(e.method, e.pair)}` : null);
 
 /**
  * Add events to the journal. Each is sanitised first (nothing is written if
@@ -750,8 +809,8 @@ export function appendEvents(path, events, { liveWithoutConsent = 'throw', ...lo
     const lines = new Set(existing.map(json));
     const keys = new Set(existing.map(sameKey).filter(Boolean));
     const shownBy = new Map(existing.filter((e) => e.type === 'shown').map((e) => [e.id, e]));
-    const frozen = new Set(existing.filter((e) => e.type === 'day').map((e) => `${methodKey(e.method)}|${e.id}`));
-    const frozenDay = (e) => e.type === 'alert' && frozen.has(`${methodKey(e.method)}|${dayIdOf(e.pair, e.tf, dayOf(e.barCloseMs))}`);
+    const frozen = new Set(existing.filter((e) => e.type === 'day').map((e) => `${keyFor(e.method, e.pair)}|${e.id}`));
+    const frozenDay = (e) => e.type === 'alert' && frozen.has(`${keyFor(e.method, e.pair)}|${dayIdOf(e.pair, e.tf, dayOf(e.barCloseMs))}`);
     const consent = foldConsent([...existing, ...clean.filter((e) => e.type === 'consent')]);
     const added = [], held = [];
     const live = clean.filter((e) => e.account === 'live');
@@ -805,24 +864,46 @@ const valid = (e) => e && typeof e === 'object' && typeof e.id === 'string' && T
 
 /**
  * A canonical string for a method: version, target rule, filter, timeframe,
- * reference feeds, window, costs and server offset. Two methods are the same
- * only if every one of these is.
+ * reference feeds, window and costs — the settings that can change what the
+ * record holds. Two methods are the same only if every one of these is.
+ *
+ * The broker's server offset is NOT part of it. It reaches a read only
+ * through gateFor's marketOpenNow, which can only stop a read as "closed";
+ * canonicalAlerts records a day only when every read of it falls inside the
+ * broker's session under the configured offset, so on any day it records the
+ * offset cannot change a read (re-check, 17 Oct: offsets from −5 to +4 gave
+ * the same alerts, R and kinds as 'auto'). Correcting it in the clocks-change
+ * week therefore does not end a sample.
  */
 export const methodKey = (m) => {
-  const c = cleanMethod(m) || { version: null, targetRule: null, filter: 'none', tf: null, feeds: {}, window: null, costs: null, serverOffset: null };
+  const c = cleanMethod(m) || { version: null, targetRule: null, filter: 'none', tf: null, feeds: {}, window: null, costs: null };
   return JSON.stringify([c.version, c.targetRule, c.filter, c.tf,
     PAIRS.map((p) => `${p}:${c.feeds[p] ?? REFERENCE_FEEDS[p].id}`).join('|'),
     c.window ? `${c.window.open}-${c.window.close}@${c.window.tz}` : null,
-    c.costs ? PAIRS.map((p) => `${p}:${c.costs[p].spread}/${c.costs[p].comm}`).join('|') : null,
-    c.serverOffset ?? null]);
+    c.costs ? PAIRS.filter((p) => c.costs[p]).map((p) => `${p}:${c.costs[p].spread}/${c.costs[p].comm}`).join('|') : null]);
 };
+
+/**
+ * The method as one instrument's record sees it: the shared parts, and only
+ * that instrument's feed and costs. Alert and day lines carry this, and every
+ * comparison of a line with a sample's method goes through keyFor, so a
+ * change to gold's costs (its commission, or GBP/USD) does not end a sample
+ * of bitcoin alone, whose record it cannot change (re-check, 17 Oct).
+ */
+export function forPair(m, pair) {
+  const c = cleanMethod(m);
+  if (!c) return null;
+  // A method with no costs for this instrument matches no line of its record.
+  return cleanMethod({ ...c, feeds: { [pair]: c.feeds[pair] }, costs: c.costs && c.costs[pair] ? { [pair]: c.costs[pair] } : null });
+}
+/** The key of a method for one instrument's record. */
+export const keyFor = (m, pair) => methodKey(forPair(m, pair));
 
 const hm = (t) => `${pad(t.h)}:${pad(t.m)}`;
 /**
- * The settings a method is read and scored with: the window; per instrument
- * the spread read with and the commission as a price distance; and the
- * broker's server offset, which gateFor uses (marketOpenNow) to decide when
- * the market counts as open, as reads.mjs's storeKey records.
+ * The settings a method is read and scored with: the window; and per
+ * instrument the spread read with and the commission as a price distance.
+ * (Not the broker's server offset: see methodKey.)
  */
 function settingsOf(cfg) {
   if (!cfg || !cfg.window || !cfg.account) fail('a method needs the settings (cfg), for its window and costs');
@@ -831,9 +912,7 @@ function settingsOf(cfg) {
   // liveRead reads with the instrument's observed spread; costFor turns the
   // commission per side in pounds into a round-turn price distance.
   for (const p of PAIRS) costs[p] = { spread: INSTRUMENTS[p].typicalSpread.observed, comm: +costFor(p, 0, cfg).comm.toFixed(10) };
-  const o = cfg.broker ? cfg.broker.serverOffset : 'auto';
-  const serverOffset = o === 'auto' || o === null || o === undefined || o === '' ? 'auto' : Number(o);
-  return { window: { open: hm(w.start), close: hm(w.end), tz: w.tz }, costs, serverOffset };
+  return { window: { open: hm(w.start), close: hm(w.end), tz: w.tz }, costs };
 }
 
 /**
@@ -849,19 +928,22 @@ export function methodOf({ version, targetRule = TARGET_RULE, filter = 'none', t
   return m;
 }
 
-/** The method `m` would be under the settings `cfg`: its own version, rule, filter, timeframe and feeds, the settings' window, costs and offset. */
+/** The method `m` would be under the settings `cfg`: its own version, rule, filter, timeframe and feeds, the settings' window and costs. */
 const methodUnder = (m, cfg) => cleanMethod({ ...m, ...settingsOf(cfg) });
 
-/** Refuse a method whose window, costs or server offset are not the settings' own (they changed: a new method). */
-function sameSettings(m, cfg, what) {
-  if (methodKey(methodUnder(m, cfg)) !== methodKey(m)) fail(`${what}: the settings' window, costs or server offset differ from the method's, so this is a different method (rule 1)`);
+/** Whether the settings make a different method of `m` for any of `pairs` (only those instruments' records count). */
+const settingsDiffer = (m, cfg, pairs) => { const u = methodUnder(m, cfg); return pairs.some((p) => keyFor(u, p) !== keyFor(m, p)); };
+
+/** Refuse a method whose window or costs (for `pairs`) are not the settings' own (they changed: a new method). */
+function sameSettings(m, cfg, what, pairs = PAIRS) {
+  if (settingsDiffer(m, cfg, pairs)) fail(`${what}: the settings' window or costs differ from the method's, so this is a different method (rule 1)`);
 }
 
-/** A method handed in whole (with its window, costs and server offset), checked. */
-function checkedMethod(method) {
+/** A method handed in whole (with its window, and costs for each of `pairs`), checked. */
+function checkedMethod(method, pairs = PAIRS) {
   const m = cleanMethod(method || {});
   if (!m.version || !m.tf || !m.targetRule) fail('a method needs a version, a target rule and a timeframe');
-  if (!m.window || !m.costs || m.serverOffset === null) fail('a method needs its window, costs and server offset (methodOf with the settings)');
+  if (!m.window || !m.costs || !pairs.every((p) => m.costs[p])) fail('a method needs its window and costs (methodOf with the settings)');
   return m;
 }
 
@@ -874,13 +956,17 @@ const sumOf = (e) => [...createHash('sha256').update(json(e)).digest().subarray(
 /** The checksum a day record lists for one alert event (as sanitize() returns it). */
 export const alertChecksum = (alertEvent) => sumOf(sanitize(alertEvent, { read: true }));
 
-/** The standing day record per method and day: the earliest recorded, ties by the line's text. Map `${methodKey}|${dayId}` → record. */
-function standingDays(events, key) {
+/**
+ * The standing day record per method and day: the earliest recorded, ties by
+ * the line's text. Map `${keyFor}|${dayId}` → record. With `method`, only
+ * day records under that method for their own instrument.
+ */
+function standingDays(events, method = null) {
   const by = new Map();
   for (const e of events || []) {
     if (!valid(e) || e.type !== 'day') continue;
-    const mk = methodKey(e.method);
-    if (key && mk !== key) continue;
+    const mk = keyFor(e.method, e.pair);
+    if (method && mk !== keyFor(method, e.pair)) continue;
     by.set(`${mk}|${e.id}`, firstOf(by.get(`${mk}|${e.id}`), e));
   }
   return by;
@@ -893,17 +979,16 @@ function standingDays(events, key) {
  * day, or a union merge of two machines' replays, folds the same way.
  */
 export function foldCanonical(events, method) {
-  const key = method ? methodKey(method) : null;
   const named = new Map();
-  for (const [k, d] of standingDays(events, key)) {
+  for (const [k, d] of standingDays(events, method)) {
     const mk = k.slice(0, k.lastIndexOf('|'));
     d.ids.forEach((id, i) => named.set(`${mk}|${id}`, d.sums[i]));
   }
   const by = new Map();
   for (const e of events || []) {
     if (!valid(e) || e.type !== 'alert') continue;
-    const mk = methodKey(e.method);
-    if (key && mk !== key) continue;
+    const mk = keyFor(e.method, e.pair);
+    if (method && mk !== keyFor(method, e.pair)) continue;
     const want = named.get(`${mk}|${e.id}`);
     if (want === undefined || sumOf(e) !== want) continue;
     by.set(e.id, firstOf(by.get(e.id), e));
@@ -914,7 +999,7 @@ export function foldCanonical(events, method) {
 /** The method's standing day records for one method: Map dayId → record. */
 export function foldDays(events, method) {
   const by = new Map();
-  for (const d of standingDays(events, method ? methodKey(method) : null).values()) by.set(d.id, firstOf(by.get(d.id), d));
+  for (const d of standingDays(events, method).values()) by.set(d.id, firstOf(by.get(d.id), d));
   return by;
 }
 
@@ -1073,13 +1158,27 @@ function* calendar(fromDay, toDay) {
  * that starts before fromMs is processed from its own start (a commitment at
  * 11:00 does not change what the 11:15 alert sees).
  *
- * Holes. A day is held (pending, why 'gap') while any of its closes' slices,
- * or the window's own bars, holds a hole of more than 4 missing bars
- * (history.mjs gapsIn, which leaves out gold's scheduled closures) — the
- * feed may still fill it, and a recorded day cannot be recomputed. Once
+ * Holes. A day is held (pending, why 'gap') while ANY bar is missing from
+ * any of its closes' slices or from the window's own bars, outside gold's
+ * scheduled closures (history.mjs gapsIn with minMissing 1) — the feed may
+ * still fill it, and a recorded day cannot be recomputed; even one missing
+ * bar moves which close an alert comes on (re-check, 17 Oct). Once
  * GAP_SETTLE_MS (48 h) has passed since the window closed it is recorded as
- * it stands, with `gap: true`; sampleStatus leaves its alerts out of the
+ * it stands, and flagged `gap: true` only if a hole is of more than 4 bars
+ * (the plan's rule); sampleStatus leaves a flagged day's alerts out of the
  * sample. The rule looks only at the bars and the clock, never at results.
+ *
+ * The broker's session. The server offset is not part of the method
+ * (methodKey): it reaches a read only through gateFor's marketOpenNow, which
+ * turns a read "closed" when the broker's market is shut. So a day is
+ * recorded only when every one of its reads falls inside the broker's
+ * session under the configured offset (serverOffsetFor at T + 20 s); then no
+ * offset can change any of them. Otherwise the day is held (pending, why
+ * 'outside-session') and never recorded under these settings: a window that
+ * reached into gold's daily break would make the record depend on the
+ * offset. With the 08:00–16:00 London window every offset from −5 to +8
+ * hours keeps every read inside both instruments' sessions, in summer time
+ * and in winter (the broker's own is +2 or +3).
  *
  * A day that already has a day record for this method in `events` is FROZEN:
  * it is never recomputed (it comes back in `frozen`), so a replay over
@@ -1091,7 +1190,8 @@ function* calendar(fromDay, toDay) {
  *                REFERENCE_FEEDS[pair].sources — a fallback feed's bars are
  *                refused, not mislabelled as the reference
  *   method       methodOf(...): its tf and targetRule are what is read; its
- *                window and costs must be the settings' (cfg) own
+ *                window and this instrument's costs must be the settings'
+ *                (cfg) own. The lines carry forPair(method, pair).
  *   events       the journal's events, to seed the state from earlier alerts
  *   featuresFor, filterFor   (r, seen) → features / filter output, stored on the alert
  *   keep         (r, seen) → false drops an idea before shouldAlert (a live filter;
@@ -1100,7 +1200,7 @@ function* calendar(fromDay, toDay) {
  *   read         the read function (liveRead; a test may memoise it)
  *
  * Returns { events: [...alert events, ...day events], alerts, days, pending: [{day, pair, why}],
- * frozen: [{day, pair}] } where why is 'window-open' | 'short-history' | 'not-yet' | 'gap'.
+ * frozen: [{day, pair}] } where why is 'window-open' | 'outside-session' | 'short-history' | 'not-yet' | 'gap'.
  */
 export function canonicalAlerts({
   pair, bars, feedId, cfg, fromMs, toMs, method, events = [], nowMs = Date.now(),
@@ -1109,16 +1209,23 @@ export function canonicalAlerts({
   if (!PAIRS.includes(pair)) fail(`unknown instrument ${pair}`);
   const ref = REFERENCE_FEEDS[pair];
   if (!ref.sources.includes(feedId)) fail(`the method's record is read only on ${ref.label} (a source among ${ref.sources.join(', ')}), not on ${feedId ?? 'an unnamed feed'}`);
-  const m = checkedMethod(method);
+  const m = checkedMethod(method, [pair]);
   if (m.feeds[pair] !== ref.id) fail(`the method names ${m.feeds[pair]} for ${pair}, but its record is read only on the reference feed ${ref.id}`);
   if (!(Number.isFinite(fromMs) && Number.isFinite(toMs))) fail('canonicalAlerts needs fromMs and toMs');
-  sameSettings(m, cfg, 'canonicalAlerts');
+  sameSettings(m, cfg, 'canonicalAlerts', [pair]);
+  const mp = forPair(m, pair);                           // what each line carries
+  const inst = INSTRUMENTS[pair];
+  const offsetCfg = cfg.broker ? cfg : { ...cfg, broker: { serverOffset: 'auto' } };
+  const inSession = (T) => marketOpenNow(inst, T + 20000, serverOffsetFor(T + 20000, offsetCfg)) !== false;
   const tfMs = tfInfo(m.tf).minutes * 60000;
   const cfgM = { ...cfg, timeframe: m.tf };
   const feed = { id: REFERENCE_FEEDS[pair].id, label: REFERENCE_FEEDS[pair].label };
   const closed = (bars || []).filter((b) => b.t + tfMs <= nowMs).sort((a, b) => a.t - b.t);
   const lastClose = closed.length ? closed[closed.length - 1].t + tfMs : -Infinity;
   const comm = m.costs[pair].comm;
+  // Any missing bar holds a day; only a hole of more than 4 (GAP_MIN_MISSING) flags it.
+  const missing = gapsIn(closed, m.tf, { pair, minMissing: 1 });
+  const missingIn = gapInWindow(closed, missing, lookback);
   const holes = gapsIn(closed, m.tf, { pair });
   const holeIn = gapInWindow(closed, holes, lookback);
 
@@ -1148,13 +1255,17 @@ export function canonicalAlerts({
     if (w.closesAtMs > Math.min(toMs, nowMs)) { if (w.opensAtMs < toMs) pending.push({ day, pair, why: 'window-open' }); continue; }
     const closes = [];
     for (let T = Math.floor(w.opensAtMs / tfMs) * tfMs; T <= w.closesAtMs; T += tfMs) if (inWatchHours(T + 20000, cfgM)) closes.push(T);
+    if (!closes.every(inSession)) { pending.push({ day, pair, why: 'outside-session' }); continue; }
     if (lastClose < w.closesAtMs) { pending.push({ day, pair, why: 'not-yet' }); continue; }
     const at = (T) => { while (idx + 1 < closed.length && closed[idx + 1].t + tfMs <= T) idx++; while (idx >= 0 && closed[idx].t + tfMs > T) idx--; return idx; };
     if (closes.some((T) => at(T) + 1 < lookback)) { pending.push({ day, pair, why: 'short-history' }); continue; }
-    // A hole in any read's slice, or among the window's own bars (the missing
-    // stretch overlapping [open, close)), holds the day until it settles.
-    const gap = closes.some((T) => holeIn(at(T))) || holes.some((g) => g.afterT + tfMs < w.closesAtMs && g.nextT > w.opensAtMs);
-    if (gap && nowMs < w.closesAtMs + GAP_SETTLE_MS) { pending.push({ day, pair, why: 'gap' }); continue; }
+    // A missing bar in any read's slice, or among the window's own bars (the
+    // missing stretch overlapping [open, close)), holds the day until it
+    // settles; a hole of more than 4 bars then flags it.
+    const inWin = (g) => g.afterT + tfMs < w.closesAtMs && g.nextT > w.opensAtMs;
+    const short = closes.some((T) => missingIn(at(T))) || missing.some(inWin);
+    const gap = closes.some((T) => holeIn(at(T))) || holes.some(inWin);
+    if (short && nowMs < w.closesAtMs + GAP_SETTLE_MS) { pending.push({ day, pair, why: 'gap' }); continue; }
 
     prev = latestBefore(w.opensAtMs);
     const kinds = {};
@@ -1174,7 +1285,7 @@ export function canonicalAlerts({
         // `at` is when the method could have known it, not when this ran, so two
         // runs over the same bars write the same line.
         type: 'alert', id: idOf(pair, m.tf, rec.barCloseMs), at: rec.barCloseMs + 20000,
-        pair, tf: m.tf, method: m, barCloseMs: rec.barCloseMs, validUntilMs: rec.validUntilMs, side: rec.side,
+        pair, tf: m.tf, method: mp, barCloseMs: rec.barCloseMs, validUntilMs: rec.validUntilMs, side: rec.side,
         feed: feed.label, feedId: feed.id, refPrice: rec.refPrice, stopDist: rec.stopDist, tp1Dist: rec.tp1Dist,
         tp2Dist: rec.tp2Dist ?? null, spreadNum: rec.spreadNum, commNum: comm, netR: rec.netR ?? null,
         confidence: rec.confidence ?? null, reasons: rec.reasons || [], against: rec.against || [],
@@ -1186,7 +1297,7 @@ export function canonicalAlerts({
     alerts.push(...dayAlerts);
     // `at` is when the day was recorded: the earliest recorded day record stands.
     days.push(sanitize({
-      type: 'day', id: dayIdOf(pair, m.tf, day), at: Math.max(nowMs, w.closesAtMs), pair, tf: m.tf, method: m, day,
+      type: 'day', id: dayIdOf(pair, m.tf, day), at: Math.max(nowMs, w.closesAtMs), pair, tf: m.tf, method: mp, day,
       alerts: dayAlerts.length, ids: dayAlerts.map((a) => a.id), sums: dayAlerts.map(sumOf), kinds,
       ...(gap ? { gap: true } : {}),
     }));
@@ -1208,12 +1319,13 @@ const modeOf = (cfg) => oneOf((cfg && cfg.account && cfg.account.mode) || 'demo'
 export function shownEvent(rec, { source, method, cfg, at = Date.now() } = {}) {
   if (!rec || !rec.pair || !(rec.barCloseMs > 0)) fail('a shown alert needs its pair and bar close');
   if (!rec.sourceId) fail('a shown alert must come from a live feed read (it names no feed)');
-  const m = checkedMethod(method);
-  sameSettings(m, cfg, 'shownEvent');
+  if (!PAIRS.includes(rec.pair)) fail(`unknown instrument ${rec.pair}`);
+  const m = checkedMethod(method, [rec.pair]);
+  sameSettings(m, cfg, 'shownEvent', [rec.pair]);
   if (rec.tf !== m.tf) fail(`the alert is on ${rec.tf} but the method is on ${m.tf}`);
   return sanitize({
     type: 'shown', id: idOf(rec.pair, rec.tf, rec.barCloseMs), at, account: modeOf(cfg),
-    source: oneOf(source, SOURCES, 'source'), pair: rec.pair, tf: rec.tf, method: m,
+    source: oneOf(source, SOURCES, 'source'), pair: rec.pair, tf: rec.tf, method: forPair(m, rec.pair),
     barCloseMs: rec.barCloseMs, validUntilMs: rec.validUntilMs ?? null, side: rec.side,
     feed: rec.source ?? null, feedId: rec.sourceId, refPrice: rec.refPrice,
     stopDist: rec.stopDist, tp1Dist: rec.tp1Dist, tp2Dist: rec.tp2Dist ?? null, spreadNum: rec.spreadNum ?? null,
@@ -1373,15 +1485,16 @@ export function consentEvent({ answer, at = Date.now() } = {}) {
  * run after a bad start is the optional stopping decision 8 forbids — and
  * refused below MIN_PLANNED_ALERTS, or with a commitment inside the held-back
  * years. `events` are the journal's events (pass [] for an empty one). `cfg`
- * is the settings: a method whose window, costs or server offset are not the
- * settings' own is out of date and is refused, so a sample is never
- * committed to a method the record will not be read with.
+ * is the settings: a method whose window or costs (for the sample's
+ * instruments) are not the settings' own is out of date and is refused, so a
+ * sample is never committed to a method the record will not be read with.
  */
 export function setSample({ plannedAlerts = DEFAULT_PLANNED_ALERTS, method, cfg, pairs = [...PAIRS], committedAt = Date.now(), at = committedAt, events, replaces = null } = {}) {
   if (!Number.isInteger(plannedAlerts) || plannedAlerts < MIN_PLANNED_ALERTS) fail(`the sample needs a whole number of at least ${MIN_PLANNED_ALERTS} alerts`);
-  const m = checkedMethod(method);
   if (!cfg) fail('setSample needs the settings (cfg), to check the method is the current one');
-  sameSettings(m, cfg, 'setSample');
+  pairs = FIELD.pairs(pairs);
+  const m = checkedMethod(method, pairs);
+  sameSettings(m, cfg, 'setSample', pairs);
   if (!Array.isArray(events)) fail('setSample needs the journal\'s events, to check for a sample in progress');
   if (!(committedAt > HOLDOUT.toMs)) fail('a sample cannot start inside the held-back years');
   const current = foldSample(events);
@@ -1390,7 +1503,7 @@ export function setSample({ plannedAlerts = DEFAULT_PLANNED_ALERTS, method, cfg,
     const st = sampleStatus(events, current);
     if (!st.complete) {
       if (replaces !== 'method-changed') fail(`the sample in progress (${st.count} of ${st.planned}) has no verdict yet; it ends only when the method changes`);
-      if (methodKey(m) === methodKey(current.method)) fail('the method is unchanged, so the sample in progress cannot be restarted');
+      if (current.pairs.every((p) => keyFor(m, p) === keyFor(current.method, p))) fail('the method is unchanged, so the sample in progress cannot be restarted');
     }
   }
   return sanitize({ type: 'sample', id: sampleIdOf(committedAt), at, plannedAlerts, method: m, pairs, committedAt, replaces });
@@ -1400,16 +1513,17 @@ const iso16 = (day) => `${day}T00:00`;
 
 /**
  * Day records of the same method, pair, timeframe and day that disagree on
- * which alerts the day had (their ids or checksums differ): a union merge of
- * two machines' different computations. Only one can stand, and which one is
+ * which alerts the day had (their ids or checksums differ) or on whether the
+ * day had a hole (its `gap` flag, which decides whether its alerts count): a
+ * union merge of two machines' different computations. Only one can stand, and which one is
  * decided by when each was recorded, not by the bars — so the verdict waits
  * until it is settled by hand. ['YYYY-MM-DD PAIR'], sorted.
  */
-function contestedDays(events, key, pairs) {
+function contestedDays(events, method, pairs) {
   const by = new Map();
   for (const e of events || []) {
-    if (!valid(e) || e.type !== 'day' || !pairs.includes(e.pair) || methodKey(e.method) !== key) continue;
-    const what = JSON.stringify([e.ids, e.sums]);
+    if (!valid(e) || e.type !== 'day' || !pairs.includes(e.pair) || keyFor(e.method, e.pair) !== keyFor(method, e.pair)) continue;
+    const what = JSON.stringify([e.ids, e.sums, !!e.gap]);
     if (!by.has(e.id)) by.set(e.id, { e, what: new Set() });
     by.get(e.id).what.add(what);
   }
@@ -1442,8 +1556,11 @@ const dayStartMs = (day) => { const [y, mo, d] = day.split('-').map(Number); ret
  *  - the sample has not ended. A later commitment ends it ('new-sample'); so
  *    does the method changing under it ('method-changed'): the first alert
  *    shown, alert recorded, or day recorded, for the sample's instruments
- *    after the commitment, under a different method — a settings change
- *    ends it even with the watcher off.
+ *    after the commitment, under a different method for that instrument
+ *    (keyFor: version, target rule, filter, timeframe, window, and that
+ *    instrument's feed and costs) — a settings change ends it even with the
+ *    watcher off. The server offset and the other instrument's costs cannot
+ *    change the record, so they never end it.
  *
  * Returns null without a sample, else {
  *   planned, pairs, committedAt, count, judged, gapped, days, mean, se,
@@ -1455,7 +1572,7 @@ const dayStartMs = (day) => { const [y, mo, d] = day.split('-').map(Number); ret
  */
 export function sampleStatus(events, sample = foldSample(events)) {
   if (!sample) return null;
-  const key = methodKey(sample.method);
+  const same = (e) => keyFor(e.method, e.pair) === keyFor(sample.method, e.pair);
   const N = sample.plannedAlerts;
   const next = foldSamples(events).find((s) => s.committedAt > sample.committedAt);
   const nextMs = next ? next.committedAt : Infinity;
@@ -1472,12 +1589,12 @@ export function sampleStatus(events, sample = foldSample(events)) {
   //    day record names (not part of the record — a hand edit) at its own `at`.
   const commitDay = dayOf(sample.committedAt);
   const otherDays = new Map();
-  for (const d of standingDays(events).values()) if (methodKey(d.method) !== key) d.ids.forEach((id) => otherDays.set(`${methodKey(d.method)}|${id}`, d.at));
+  for (const d of standingDays(events).values()) if (sample.pairs.includes(d.pair) && !same(d)) d.ids.forEach((id) => otherDays.set(`${keyFor(d.method, d.pair)}|${id}`, d.at));
   const changeAt = (e) => {
-    if (!valid(e) || !sample.pairs.includes(e.pair) || methodKey(e.method) === key) return Infinity;
+    if (!valid(e) || !sample.pairs.includes(e.pair) || same(e)) return Infinity;
     if (e.type === 'shown') return ours(e) ? e.barCloseMs : Infinity;
     if (e.type === 'day') return e.at >= sample.committedAt ? e.at : Infinity;
-    if (e.type === 'alert') { const t = otherDays.get(`${methodKey(e.method)}|${e.id}`) ?? e.at; return t >= sample.committedAt ? t : Infinity; }
+    if (e.type === 'alert') { const t = otherDays.get(`${keyFor(e.method, e.pair)}|${e.id}`) ?? e.at; return t >= sample.committedAt ? t : Infinity; }
     return Infinity;
   };
   const changedMs = Math.min(Infinity, ...(events || []).map(changeAt));
@@ -1517,7 +1634,7 @@ export function sampleStatus(events, sample = foldSample(events)) {
       for (const p of sample.pairs) if (!dayRecs.has(dayIdOf(p, sample.method.tf, day))) uncovered.push(`${day} ${p}`);
     }
   }
-  const contested = contestedDays(events, key, sample.pairs).filter((x) => x.slice(0, 10) >= commitDay && dayStartMs(x.slice(0, 10)) < endMs);
+  const contested = contestedDays(events, sample.method, sample.pairs).filter((x) => x.slice(0, 10) >= commitDay && dayStartMs(x.slice(0, 10)) < endMs);
   // Once N are in, a contested day after the last judged one cannot change the verdict.
   const blocking = reachedN && lastDay ? contested.filter((x) => x.slice(0, 10) <= lastDay) : contested;
   const gapDays = inSample.filter((d) => d.gap).map((d) => `${d.day} ${d.pair}`).sort();
@@ -1600,19 +1717,19 @@ function feedWords(labels) {
 
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
-const CONTESTED_WHY = (n) => `${plural(n, 'day')} recorded twice with different alerts (two machines' journals merged), to be settled by hand first`;
+const CONTESTED_WHY = (n) => `${plural(n, 'day')} recorded twice, with different alerts or a different hole flag (two machines' journals merged), to be settled by hand first`;
 const GAP_LINE = (n) => `${plural(n, 'day')} had a hole in the price feed's bars, so ${n === 1 ? 'its' : 'their'} alerts are left out of the sample.`;
 
 /*
- * `settingsChanged`: the settings' window, costs or server offset are no
- * longer the sample's method's (summary works it out from cfg). The record is
+ * `settingsChanged`: the settings' window or costs (for the sample's
+ * instruments) are no longer the sample's method's (summary works it out from cfg). The record is
  * then read under a different method, so the sample has stopped, whether or
  * not a day has been recorded under the new settings yet.
  */
 function sampleLines(st, { settingsChanged = false } = {}) {
   if (!st) return ['**The alert sample**: none committed yet, so there is no verdict to give.'];
   if (!st.complete && settingsChanged) {
-    return [`**The alert sample**: stopped at ${Math.min(st.count, st.planned)} of ${st.planned} because your settings changed after you committed to it (the session window, the costs or the broker's server offset), and that makes it a different method; it gives no verdict. A new sample can be committed under the new settings.`];
+    return [`**The alert sample**: stopped at ${Math.min(st.count, st.planned)} of ${st.planned} because your settings changed after you committed to it (the session window or the costs), and that makes it a different method; it gives no verdict. A new sample can be committed under the new settings.`];
   }
   if (st.ended) {
     return [`**The alert sample**: stopped at ${Math.min(st.count, st.planned)} of ${st.planned} because the method changed, so it gives no verdict.`];
@@ -1673,11 +1790,11 @@ export function summary(events, { nowMs = Date.now(), cfg, method = null, fromMs
   const [defFrom, defTo] = defaultPeriod(nowMs, cfg);
   const from = fromMs ?? defFrom, to = toMs ?? defTo;
   const sample = foldSample(events);
-  // The method the settings make of the sample's: if the window, costs or
-  // server offset changed since the commitment, the record is now read under
-  // that one, and the sample has stopped.
+  // The method the settings make of the sample's: if the window or costs (of
+  // the sample's instruments) changed since the commitment, the record is now
+  // read under that one, and the sample has stopped.
   const current = sample && cfg.account ? methodUnder(sample.method, cfg) : sample ? sample.method : null;
-  const settingsChanged = !!sample && methodKey(current) !== methodKey(sample.method);
+  const settingsChanged = !!sample && cfg.account ? settingsDiffer(sample.method, cfg, sample.pairs) : false;
   const m = method || current || null;
   const st = sampleStatus(events, sample);
   const running = st && !st.ended && !(settingsChanged && !st.complete);
