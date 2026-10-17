@@ -3,9 +3,10 @@
 **Status (17 Oct 2026, 06:30 London): built, reviewed, and the bitcoin holdout test has RUN ONCE.**
 Recipe committed `8bbbe16` (hash `e7976712…`) before anything held back was computed; armed
 `7c7192b`; ran 05:21 UTC, recorded `33136bc`. T1 (filter) did not pass — 200 kept alerts at
-−0.070R against 258 unfiltered at −0.022R; status info-only. T2 (ranking) passed its bar only
-just (+0.041, lower bound +0.000), driven by the already-seen 2026 (+0.095) not the clean 2025
-(−0.003). The held-back years are used; HANDOFF.md "Where we stopped" has the full table.
+−0.070R against 258 unfiltered at −0.022R; status info-only. T2 (ranking) passed by the letter of its rule only
+(+0.041, lower bound +0.0000068, inside the bound's seed noise of ~0.0014), driven by the already-seen
+2026 (+0.095) not the clean 2025 (−0.003). A 2025 label measurement in Facts (the ~0.09R short tilt, 16 Oct)
+was seen before the recipe; nothing fitted uses it. The held-back years are used; HANDOFF.md "Where we stopped" has the full table.
 
 This is the pre-registration document. Everything below that decides a result was written before
 that result was seen. Where the build departed from the 16 Oct text, the change is marked

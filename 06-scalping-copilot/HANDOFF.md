@@ -86,9 +86,22 @@ corrected February 2026 dates; `sample` kept).
   - **T1 (filter): did not pass** — kept lower bound −0.207; kept minus all −0.048R (bootstrap
     lower −0.157); 200 kept (≥ 140). The filter made things slightly *worse* on unseen years.
     **Status: info-only.** Nothing changes for the user's alerts.
-  - **T2 (ranking): passed its pre-declared bar only just** — correlation +0.041, bootstrap
-    lower bound +0.000 (rounded) over 466 days; it switches nothing on. It came from the
-    already-seen 2026 (+0.095), not from the clean 2025 (−0.003): say so whenever it is mentioned.
+  - **T2 (ranking): passed by the letter of its rule only** — correlation +0.041 over 29,824
+    pairs on 466 days; bootstrap lower bound **+0.0000068** (6.8e-6). That margin is about 0.005
+    of the bound's own seed-to-seed noise (sd ≈ 0.0014, measured on development rows), and the
+    25th-smallest reading of "the 1.25% quantile" would very likely have failed it. It switches
+    nothing on, and it came from the already-seen 2026 (+0.095), not the clean 2025 (−0.003).
+    **Never describe it to the user as the learner having learned something about the charts.**
+  - Coin-flip by year: 2025 alerts −0.086R vs coin-flip −0.013R; 2026 +0.049R vs −0.021R. The
+    filter's picks were worse than all alerts in both years (2025 −0.161 vs −0.086; 2026 +0.030
+    vs +0.049); the 195 unfiltered alerts it kept averaged −0.054R against +0.075R for the 63 it
+    removed. An independent review (17 Oct) checked every figure, the rules as declared, and that
+    decision 26's 2026 (+0.029R) vs this block's (+0.049R) is fully explained by the declared
+    settings (one both-touched bar scored half, +2.19R; one alert on 12–14 Oct, +0.30R).
+  - Footnote on "clean": the plan's Facts (16 Oct, `fc19d2b`) record that a standard short beat a
+    long by ~0.09R in 2025 and 2026 — a measurement on held-back labels made while reviewing the
+    plan. No fitted parameter uses it and the ranking model has no side term, so the result
+    stands; it is recorded here so 2025 is not overstated as untouched.
   - Watcher minus coin-flip over the window: −0.005R (−0.121 to +0.111). P2 (exploratory): 33
     picks at −0.023R. 2 both-touched bars; 0 checks left out for holes.
 - The held-back years are now **used**: any later look at 2025 – 14 Oct 2026 is not a test on
