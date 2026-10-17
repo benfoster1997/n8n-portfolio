@@ -20,6 +20,20 @@
  *    design counted the watcher's alerts plus a backfill of bars "nobody
  *    watched"; which alerts made the sample then depended on which writer ran
  *    first and on watcher state that lived in one container (review, 16 Oct).
+ *    A DAY ONCE RECORDED IS FROZEN. Each day's `day` record lists the ids of
+ *    the alerts it found, with a checksum of each line. The record keeps only
+ *    the alerts the STANDING day record names: the earliest-recorded day
+ *    record for that pair, timeframe, method and day, ties broken by the text
+ *    of the line. canonicalAlerts() never recomputes a day that already has
+ *    one. So a later replay over revised bars, or a git union merge of two
+ *    machines' replays of the same day, cannot add or swap an alert after a
+ *    verdict has been given (re-check, 17 Oct).
+ *  - THE METHOD is more than the engine: its version, target rule, filter,
+ *    timeframe and reference feeds, and also the settings that shape what it
+ *    reads and how it scores — the window (open, close, time zone) and the
+ *    costs (the spread it reads with and the commission as a price distance,
+ *    per instrument). Changing any of them in the settings is a new method
+ *    and ends a sample in progress (rule 1).
  *  - WHAT THE USER WAS SHOWN (`shown`, and their `ticketed`, `taken`, `actual`).
  *    The watcher's and a scan's alerts, as sent, linked to the method's record
  *    by the same natural id. They are never the sample. A method alert with no
@@ -57,6 +71,16 @@
  * end of the session"), in R, never as won or lost, never in pounds, never with
  * a feed price.
  *
+ * DECLARED ADDITIONS TO RULE 5 (two cases its three forms do not cover; to be
+ * recorded as a HANDOFF decision at integration):
+ *  - "…touched its stop and its target in the same bar, so it counts as half
+ *    of each (+0.14)": the plan scores such a bar as half of each (Part 3),
+ *    and calling it a stop or a target would misstate the score;
+ *  - "…has not finished yet": an alert whose window is still open, or whose
+ *    bars are not in, has no outcome to say.
+ * A result across a gap in the feed adds a clause to one of the forms rather
+ * than a new form.
+ *
  * What it is not. Not the user's MT5 history: an alert is scored on Binance's
  * or Twelve Data's bars whether or not it was taken. Not a verdict before the
  * committed number of alerts (decision 8). Not wired into the commands here —
@@ -67,6 +91,7 @@
  * bars are handed in, so it is tested without a network.
  */
 import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync, unlinkSync, statSync, linkSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { liveRead, shouldAlert, alertState, ideaRecord, inWatchHours, TARGET_RULE, FETCH_BARS } from './live.mjs';
@@ -77,6 +102,7 @@ import { windowState, localDate } from '../src/sessions.js';
 import { tfInfo } from '../src/timeframes.js';
 import { formatHM, zonedTimeToUtc } from '../src/timezone.js';
 import { INSTRUMENTS } from '../src/instruments.js';
+import { BTC_SOURCES, XAU_SOURCES } from '../src/data-feeds.js';
 
 /* ---------------------------------------------------------------- vocabulary */
 
@@ -100,6 +126,16 @@ export const REFERENCE_FEEDS = Object.freeze({
   BTCUSD: Object.freeze({ id: 'binance-btcusdt', label: 'Binance (BTCUSDT)' }),
   XAUUSD: Object.freeze({ id: 'twelvedata-xauusd', label: 'Twelve Data (XAU/USD)' }),
 });
+
+/**
+ * Every feed an event may name: the reference feeds and the live desk's
+ * sources (src/data-feeds.js). A feed is a name from this list, never free
+ * text, so nothing else can ride in on it.
+ */
+export const KNOWN_FEEDS = Object.freeze([...Object.values(REFERENCE_FEEDS), ...BTC_SOURCES, ...XAU_SOURCES]
+  .map(({ id, label: name }) => Object.freeze({ id, label: name })));
+const FEED_IDS = new Set(KNOWN_FEEDS.map((f) => f.id));
+const FEED_LABELS = new Set(KNOWN_FEEDS.map((f) => f.label));
 
 /**
  * The held-back window (rule 2), fixed. 2025 is clean; 2026 to the end was
@@ -142,6 +178,11 @@ export const MIN_PLANNED_ALERTS = 100;
  * With few days the clustered error is far too small (with one day it is
  * exactly zero, and any positive mean would read as an edge). So no verdict
  * until the judged alerts span this many days.
+ *
+ * Declared before any alert: if the first N alerts span fewer than 30 London
+ * days, the judged set runs on to the END of the 30th distinct London day —
+ * every alert of that day, so the last day's cluster is whole. It is a rule
+ * on dates alone, never on results (sampleStatus).
  */
 export const MIN_VERDICT_DAYS = 30;
 
@@ -177,7 +218,7 @@ const LEVELS = ['pair', 'tf', 'method', 'barCloseMs', 'validUntilMs', 'side', 'f
 export const ALLOWED = Object.freeze({
   common: Object.freeze(['type', 'id', 'at']),
   alert: Object.freeze([...LEVELS, 'features', 'filter', 'outcome']),
-  day: Object.freeze(['pair', 'tf', 'method', 'day', 'alerts', 'kinds']),
+  day: Object.freeze(['pair', 'tf', 'method', 'day', 'alerts', 'ids', 'sums', 'kinds']),
   shown: Object.freeze(['account', 'source', ...LEVELS]),
   resolved: Object.freeze(['account', 'r', 'how', 'bars', 'mfe', 'mae', 'bothTouched', 'scoring', 'gap', 'feed', 'spreadNum']),
   ticketed: Object.freeze(['account', 'userPrice', 'stopLoss', 'takeProfit']),
@@ -187,7 +228,9 @@ export const ALLOWED = Object.freeze({
   consent: Object.freeze(['answer']),
   outcome: Object.freeze(['r', 'how', 'bars', 'mfe', 'mae', 'bothTouched', 'scoring', 'gap']),
   kinds: Object.freeze(['idea', 'rejected', 'none', 'blocked', 'stale', 'no-data']),
-  method: Object.freeze(['version', 'targetRule', 'filter', 'tf', 'feeds']),
+  method: Object.freeze(['version', 'targetRule', 'filter', 'tf', 'feeds', 'window', 'costs']),
+  window: Object.freeze(['open', 'close', 'tz']),
+  costs: Object.freeze(['spread', 'comm']),
   filter: Object.freeze(['id', 'keep', 'predicted']),
 });
 
@@ -223,19 +266,37 @@ const norm = (k) => String(k).toLowerCase().replace(/[^a-z0-9]/g, '');
 const FORBIDDEN_SET = new Set(FORBIDDEN);
 const MAX_TEXT = 300;
 /*
- * Engine text never holds a pound or euro sign, a currency sign before a
- * number, an email address, or seven or more digits in a row (a phone, an
- * account or login number). Prices in engine text have decimals ("84250.00"),
- * which break the run.
+ * Engine text never holds a pound or euro sign, a currency sign or an ISO
+ * currency code next to a number, the word balance or equity next to a
+ * number, an email address (spelt out or not), or seven or more digits in a
+ * run — spaces, '-', '.' and ',' between them do not break the run (a phone,
+ * an account or login number: "07700-900123", "5123-4567-89").
+ *
+ * Prices are the one exemption: the engine writes them with two decimals
+ * ("84250.00", "84,399.55", "4375.20", a gap "84250.00-84300.00"). Such a
+ * price is set aside before the digit run is looked for — but only when it
+ * stands alone, so "5123.4567.89" or "5123-4567.89" is still a run.
  */
-const SENSITIVE_TEXT = /£|€|[$¥]\s?\d|[^\s@]+@[^\s@]+\.[a-z]{2,}|\d(?:\s?\d){6,}/i;
+const MONEY_TEXT = /£|€|[$¥]\s?\d|[^\s@]+@[^\s@]+\.[a-z]{2,}|\b[a-z0-9._-]+\s+at\s+[a-z0-9-]+\s+dot\s+[a-z]{2,}\b/i;
+const CODES = '(?:USDT|USD|GBP|EUR|JPY|CHF|AUD|CAD|NZD|GBX)';
+const CURRENCY_NUMBER = new RegExp(`(?<![A-Za-z/])${CODES}\\s?[\\d.,]*\\d|\\d\\s?${CODES}(?![A-Za-z])`, 'i');
+const BALANCE_NUMBER = /\b(?:balance|equity)\b[^\d\n]{0,3}\d|\d[^\d\n]{0,3}\b(?:balance|equity)\b/i;
+const PRICE_P = '(?:\\d{1,3}(?:,\\d{3})+|\\d+)\\.\\d{1,2}';
+const PRICE = new RegExp(`(?<![\\d.,]|\\d-)${PRICE_P}(?:-${PRICE_P})?(?!\\d|[.,\\-]\\d)`, 'g');
+const DIGIT_RUN = /\d(?:[\s.,-]?\d){6,}/;
+export function sensitiveText(s) {
+  return MONEY_TEXT.test(s) || CURRENCY_NUMBER.test(s) || BALANCE_NUMBER.test(s) || DIGIT_RUN.test(s.replace(PRICE, ' '));
+}
 const TOKEN = /^[A-Za-z0-9._-]{1,40}$/;
+
+// Fields checked by their exact shape instead of as text: ids hold a bar time
+// (a 13-digit number) and a day is YYYY-MM-DD.
+const SHAPED = /^(?:id|day|ids\[\d+\])$/;
 
 function forbiddenWalk(value, path, inFeatures = false) {
   if (Array.isArray(value)) { value.forEach((v, i) => forbiddenWalk(v, `${path}[${i}]`, inFeatures)); return; }
   if (typeof value === 'string') {
-    // The id is checked by its exact shape instead (its bar time is a long number).
-    if (path !== 'id' && SENSITIVE_TEXT.test(value)) throw new Error(`journal: ${path} holds a money amount, an email address or a long number, which may not be stored`);
+    if (!SHAPED.test(path) && sensitiveText(value)) throw new Error(`journal: ${path} holds a money amount, an email address or a long number, which may not be stored`);
     return;
   }
   if (!value || typeof value !== 'object') return;
@@ -297,6 +358,28 @@ const tfField = (x) => {
   return x;
 };
 
+const HM = /^([01]\d|2[0-3]):[0-5]\d$/;
+const TZ = /^[A-Za-z_]+(?:\/[A-Za-z_+-]+){0,2}$/;
+function cleanWindow(w) {
+  if (w === null || w === undefined) return null;
+  if (typeof w !== 'object' || Array.isArray(w)) fail('method.window must be an object');
+  if (!HM.test(w.open) || !HM.test(w.close)) fail('method.window needs open and close as HH:MM');
+  if (typeof w.tz !== 'string' || !TZ.test(w.tz)) fail('method.window needs a time zone name');
+  return { open: w.open, close: w.close, tz: w.tz };
+}
+function cleanCosts(c) {
+  if (c === null || c === undefined) return null;
+  if (typeof c !== 'object' || Array.isArray(c)) fail('method.costs must be an object');
+  const out = {};
+  for (const p of PAIRS) {
+    const x = c[p];
+    if (!x || typeof x !== 'object') fail(`method.costs needs ${p}`);
+    out[p] = { spread: num(x.spread, `method.costs.${p}.spread`), comm: num(x.comm, `method.costs.${p}.comm`) };
+    if (!(out[p].spread >= 0) || !(out[p].comm >= 0)) fail(`method.costs.${p} must be two distances of zero or more`);
+  }
+  return out;
+}
+
 function cleanMethod(m) {
   if (m === null || m === undefined) return null;
   if (typeof m !== 'object' || Array.isArray(m)) fail('method must be an object');
@@ -308,6 +391,8 @@ function cleanMethod(m) {
     filter: token(m.filter ?? 'none', 'method.filter'),
     tf: tfField(m.tf ?? null),
     feeds,
+    window: cleanWindow(m.window),
+    costs: cleanCosts(m.costs),
   };
 }
 
@@ -372,8 +457,8 @@ const FIELD = {
   barCloseMs: (x) => num(x, 'barCloseMs'),
   validUntilMs: (x) => num(x, 'validUntilMs'),
   side: (x) => oneOf(x, ['buy', 'sell'], 'side'),
-  feed: (x) => shortText(x, 60, 'feed'),
-  feedId: (x) => token(x, 'feedId'),
+  feed: (x) => { if (x === null || x === undefined) return null; if (!FEED_LABELS.has(x)) fail('feed must be the name of a known price feed'); return x; },
+  feedId: (x) => { if (x === null || x === undefined) return null; if (!FEED_IDS.has(x)) fail('feedId must be a known price feed'); return x; },
   refPrice: (x) => num(x, 'refPrice'),
   stopDist: (x) => num(x, 'stopDist'),
   tp1Dist: (x) => num(x, 'tp1Dist'),
@@ -388,6 +473,14 @@ const FIELD = {
   outcome: cleanOutcome,
   day: (x) => { if (typeof x !== 'string' || !/^\d{4}-\d\d-\d\d$/.test(x)) fail('day must be YYYY-MM-DD'); return x; },
   alerts: (x) => num(x, 'alerts'),
+  ids: (xs) => {
+    if (!Array.isArray(xs) || xs.length > 200) fail('ids must be a list of alert ids');
+    return xs.map((x) => { if (typeof x !== 'string' || !ALERT_ID.test(x)) fail('ids must be alert ids'); return x; });
+  },
+  sums: (xs) => {
+    if (!Array.isArray(xs) || xs.length > 200) fail('sums must be a list of checksums');
+    return xs.map((x) => { if (typeof x !== 'string' || !/^[a-p]{24}$/.test(x)) fail('a checksum is 24 letters a to p'); return x; });
+  },
   kinds: cleanKinds,
   userPrice: (x) => num(x, 'userPrice'),
   stopLoss: (x) => num(x, 'stopLoss'),
@@ -409,6 +502,8 @@ const HOW = { taken: TAKEN_HOW, actual: ACTUAL_HOW, resolved: OUTCOME_HOW };
 
 /** The natural id of one bar's alert. */
 export const idOf = (pair, tf, barCloseMs) => `${pair}-${tf}-${barCloseMs}`;
+/* An alert id's bar time is milliseconds since 1970: thirteen digits from 2001 to 2286. */
+const ALERT_ID = /^(XAUUSD|BTCUSD)-[MH]\d{1,3}-\d{13}$/;
 const dayIdOf = (pair, tf, day) => `${pair}-${tf}-${day}`;
 export const sampleIdOf = (committedAt) => `sample-${committedAt}`;
 export const CONSENT_ID = 'live-record';
@@ -420,28 +515,32 @@ export const CONSENT_ID = 'live-record';
 function required(e) {
   const need = (cond, what) => { if (!cond) fail(`a ${e.type} event needs ${what}`); };
   need(Number.isFinite(e.at), 'its time (at)');
+  const fullMethod = (m) => m && m.version && m.window && m.costs;
   const levels = () => {
     need(e.pair && e.tf && e.side && Number.isFinite(e.barCloseMs), 'pair, tf, side and barCloseMs');
     need(e.stopDist > 0 && e.tp1Dist > 0, 'a stop and a target distance');
-    need(e.method && e.method.version && e.method.tf === e.tf, 'its method, with a version and the same timeframe');
+    need(fullMethod(e.method) && e.method.tf === e.tf, 'its method, with a version, window, costs and the same timeframe');
     need(e.id === idOf(e.pair, e.tf, e.barCloseMs), `the id ${idOf(e.pair, e.tf, e.barCloseMs)}`);
   };
   if (e.type === 'alert') { levels(); need(e.outcome && Number.isFinite(e.outcome.r) && e.outcome.how, 'its outcome'); }
   if (e.type === 'shown') { levels(); need(e.source && e.account && e.feedId, 'its source, account mode and feed'); }
   if (e.type === 'day') {
     need(e.pair && e.tf && e.day && Number.isFinite(e.alerts), 'pair, tf, day and alerts');
-    need(e.method && e.method.version && e.method.tf === e.tf, 'its method');
+    need(fullMethod(e.method) && e.method.tf === e.tf, 'its method');
     need(e.id === dayIdOf(e.pair, e.tf, e.day), 'the day id');
+    // A day lists the alerts it found, so the record can be frozen (foldCanonical).
+    need(Array.isArray(e.ids) && Array.isArray(e.sums) && e.ids.length === e.alerts && e.sums.length === e.alerts, 'the ids and checksums of its alerts');
+    need(e.ids.every((id) => id.startsWith(`${e.pair}-${e.tf}-`) && dayOf(Number(id.slice(id.lastIndexOf('-') + 1))) === e.day), 'ids of its own pair, timeframe and day');
   }
   if (['resolved', 'ticketed', 'taken', 'actual'].includes(e.type)) {
     need(e.account, 'the account mode of the alert it belongs to');
-    need(/^(XAUUSD|BTCUSD)-[MH]\d{1,3}-\d+$/.test(e.id), 'an alert id');
+    need(ALERT_ID.test(e.id), 'an alert id (pair, timeframe and a 13-digit bar close)');
   }
   if (e.type === 'resolved' || e.type === 'actual') need(Number.isFinite(e.r) && e.how, 'r and how');
   if (e.type === 'taken') need(e.how, 'how it was linked');
   if (e.type === 'ticketed') need(Number.isFinite(e.userPrice), 'the user\'s price');
   if (e.type === 'sample') {
-    need(Number.isInteger(e.plannedAlerts) && e.method && e.method.version && e.method.tf && e.pairs && Number.isFinite(e.committedAt), 'plannedAlerts, method, pairs and committedAt');
+    need(Number.isInteger(e.plannedAlerts) && fullMethod(e.method) && e.method.tf && e.pairs && Number.isFinite(e.committedAt), 'plannedAlerts, method, pairs and committedAt');
     need(e.id === sampleIdOf(e.committedAt), 'the sample id');
   }
   if (e.type === 'consent') need(e.answer && e.id === CONSENT_ID, `an answer and the id "${CONSENT_ID}"`);
@@ -556,7 +655,9 @@ const sameKey = (e) => (e.type === 'alert' || e.type === 'day' ? `${e.type}|${e.
  *    are left out and returned as `held` — for the silent writers);
  *  - a line already in the file is not written again;
  *  - the method's record is written once per id and method (a second
- *    computation of the same bar adds nothing);
+ *    computation of the same bar adds nothing), and a day already recorded
+ *    is frozen: a second day record for it, or an alert on it that is not
+ *    already in the file, is not written (foldCanonical would ignore them);
  *  - a shown alert is written once per id, except that the watcher's record
  *    replaces a scan's (the watcher's is "as sent").
  * Returns { added: [events written], skipped: number, held: [events] }.
@@ -571,6 +672,8 @@ export function appendEvents(path, events, { liveWithoutConsent = 'throw', ...lo
     const lines = new Set(existing.map(json));
     const keys = new Set(existing.map(sameKey).filter(Boolean));
     const shownBy = new Map(existing.filter((e) => e.type === 'shown').map((e) => [e.id, e]));
+    const frozen = new Set(existing.filter((e) => e.type === 'day').map((e) => `${methodKey(e.method)}|${e.id}`));
+    const frozenDay = (e) => e.type === 'alert' && frozen.has(`${methodKey(e.method)}|${dayIdOf(e.pair, e.tf, dayOf(e.barCloseMs))}`);
     const consent = foldConsent([...existing, ...clean.filter((e) => e.type === 'consent')]);
     const added = [], held = [];
     const live = clean.filter((e) => e.account === 'live');
@@ -578,7 +681,7 @@ export function appendEvents(path, events, { liveWithoutConsent = 'throw', ...lo
     for (const e of clean) {
       if (e.account === 'live' && consent !== 'yes') { held.push(e); continue; }
       const line = json(e), key = sameKey(e);
-      if (lines.has(line) || (key && keys.has(key))) continue;
+      if (lines.has(line) || (key && keys.has(key)) || frozenDay(e)) continue;
       if (e.type === 'shown') {
         const prev = shownBy.get(e.id);
         if (prev && SHOWN_RANK[prev.source] <= SHOWN_RANK[e.source]) continue;
@@ -622,42 +725,108 @@ const shownOf = (a, b) => {
 const byClose = (a, b) => a.barCloseMs - b.barCloseMs || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 const valid = (e) => e && typeof e === 'object' && typeof e.id === 'string' && TYPES.includes(e.type) && Number.isFinite(e.at);
 
-/** A canonical string for a method: version, target rule, filter, timeframe and reference feeds. */
+/**
+ * A canonical string for a method: version, target rule, filter, timeframe,
+ * reference feeds, window and costs. Two methods are the same only if every
+ * one of these is.
+ */
 export const methodKey = (m) => {
-  const c = cleanMethod(m) || { version: null, targetRule: null, filter: 'none', tf: null, feeds: {} };
-  return JSON.stringify([c.version, c.targetRule, c.filter, c.tf, PAIRS.map((p) => `${p}:${c.feeds[p] ?? REFERENCE_FEEDS[p].id}`).join('|')]);
+  const c = cleanMethod(m) || { version: null, targetRule: null, filter: 'none', tf: null, feeds: {}, window: null, costs: null };
+  return JSON.stringify([c.version, c.targetRule, c.filter, c.tf,
+    PAIRS.map((p) => `${p}:${c.feeds[p] ?? REFERENCE_FEEDS[p].id}`).join('|'),
+    c.window ? `${c.window.open}-${c.window.close}@${c.window.tz}` : null,
+    c.costs ? PAIRS.map((p) => `${p}:${c.costs[p].spread}/${c.costs[p].comm}`).join('|') : null]);
 };
 
+const hm = (t) => `${pad(t.h)}:${pad(t.m)}`;
+/** The settings a method is read and scored with: the window, and per instrument the spread read with and the commission as a price distance. */
+function settingsOf(cfg) {
+  if (!cfg || !cfg.window || !cfg.account) fail('a method needs the settings (cfg), for its window and costs');
+  const w = cfg.window;
+  const costs = {};
+  // liveRead reads with the instrument's observed spread; costFor turns the
+  // commission per side in pounds into a round-turn price distance.
+  for (const p of PAIRS) costs[p] = { spread: INSTRUMENTS[p].typicalSpread.observed, comm: +costFor(p, 0, cfg).comm.toFixed(10) };
+  return { window: { open: hm(w.start), close: hm(w.end), tz: w.tz }, costs };
+}
+
 /**
- * A full method description from its parts; the reference feeds are filled in.
+ * A full method description from its parts and the settings; the reference
+ * feeds are filled in, and the window and costs are taken from `cfg`, so a
+ * change to either in the settings is a different method (rule 1).
  * `version` is live.mjs METHOD_VERSION once it exists; it is required, so an
  * alert cannot silently carry a method that matches no sample.
  */
-export function methodOf({ version, targetRule = TARGET_RULE, filter = 'none', tf } = {}) {
-  const m = cleanMethod({ version, targetRule, filter, tf });
+export function methodOf({ version, targetRule = TARGET_RULE, filter = 'none', tf, cfg } = {}) {
+  const m = cleanMethod({ version, targetRule, filter, tf, ...settingsOf(cfg) });
   if (!m.version || !m.tf || !m.targetRule) fail('a method needs a version, a target rule and a timeframe');
   return m;
 }
 
-/** The method's record for one method: one alert per id, in bar-close order. */
-export function foldCanonical(events, method) {
-  const key = method ? methodKey(method) : null;
+/** Refuse a method whose window or costs are not the settings' own (they changed: a new method). */
+function sameSettings(m, cfg, what) {
+  const now = cleanMethod({ ...m, ...settingsOf(cfg) });
+  if (methodKey(now) !== methodKey(m)) fail(`${what}: the settings' window or costs differ from the method's, so this is a different method (rule 1)`);
+}
+
+/** A method handed in whole (with its window and costs), checked. */
+function checkedMethod(method) {
+  const m = cleanMethod(method || {});
+  if (!m.version || !m.tf || !m.targetRule) fail('a method needs a version, a target rule and a timeframe');
+  if (!m.window || !m.costs) fail('a method needs its window and costs (methodOf with the settings)');
+  return m;
+}
+
+/*
+ * The checksum a day record keeps of each alert line: sha-256 of the line,
+ * written as 24 letters a–p (no digits, so it can never look like a number).
+ */
+const sumOf = (e) => [...createHash('sha256').update(json(e)).digest().subarray(0, 12)]
+  .map((b) => String.fromCharCode(97 + (b >> 4), 97 + (b & 15))).join('');
+/** The checksum a day record lists for one alert event (as sanitize() returns it). */
+export const alertChecksum = (alertEvent) => sumOf(sanitize(alertEvent, { read: true }));
+
+/** The standing day record per method and day: the earliest recorded, ties by the line's text. Map `${methodKey}|${dayId}` → record. */
+function standingDays(events, key) {
   const by = new Map();
   for (const e of events || []) {
-    if (!valid(e) || e.type !== 'alert' || (key && methodKey(e.method) !== key)) continue;
+    if (!valid(e) || e.type !== 'day') continue;
+    const mk = methodKey(e.method);
+    if (key && mk !== key) continue;
+    by.set(`${mk}|${e.id}`, firstOf(by.get(`${mk}|${e.id}`), e));
+  }
+  return by;
+}
+
+/**
+ * The method's record for one method: one alert per id, in bar-close order.
+ * Only alerts named by their day's standing record (id and checksum) count,
+ * so the record of a day is frozen once it is written: a later replay of the
+ * day, or a union merge of two machines' replays, folds the same way.
+ */
+export function foldCanonical(events, method) {
+  const key = method ? methodKey(method) : null;
+  const named = new Map();
+  for (const [k, d] of standingDays(events, key)) {
+    const mk = k.slice(0, k.lastIndexOf('|'));
+    d.ids.forEach((id, i) => named.set(`${mk}|${id}`, d.sums[i]));
+  }
+  const by = new Map();
+  for (const e of events || []) {
+    if (!valid(e) || e.type !== 'alert') continue;
+    const mk = methodKey(e.method);
+    if (key && mk !== key) continue;
+    const want = named.get(`${mk}|${e.id}`);
+    if (want === undefined || sumOf(e) !== want) continue;
     by.set(e.id, firstOf(by.get(e.id), e));
   }
   return [...by.values()].sort(byClose);
 }
 
-/** The method's day records for one method: Map dayId → record. */
+/** The method's standing day records for one method: Map dayId → record. */
 export function foldDays(events, method) {
-  const key = method ? methodKey(method) : null;
   const by = new Map();
-  for (const e of events || []) {
-    if (!valid(e) || e.type !== 'day' || (key && methodKey(e.method) !== key)) continue;
-    by.set(e.id, firstOf(by.get(e.id), e));
-  }
+  for (const d of standingDays(events, method ? methodKey(method) : null).values()) by.set(d.id, firstOf(by.get(d.id), d));
   return by;
 }
 
@@ -812,8 +981,16 @@ function* calendar(fromDay, toDay) {
  * that starts before fromMs is processed from its own start (a commitment at
  * 11:00 does not change what the 11:15 alert sees).
  *
+ * A day that already has a day record for this method in `events` is FROZEN:
+ * it is never recomputed (it comes back in `frozen`), so a replay over
+ * revised bars, other settings or another machine cannot change it.
+ *
  *   pair, bars   the reference feed's bars for this pair (forming ones are dropped)
- *   method       methodOf(...): its tf and targetRule are what is read
+ *   feedId       the id of the feed the bars came from; it must be
+ *                REFERENCE_FEEDS[pair].id — a fallback feed's bars are refused,
+ *                not mislabelled as the reference
+ *   method       methodOf(...): its tf and targetRule are what is read; its
+ *                window and costs must be the settings' (cfg) own
  *   events       the journal's events, to seed the state from earlier alerts
  *   featuresFor, filterFor   (r, seen) → features / filter output, stored on the alert
  *   keep         (r, seen) → false drops an idea before shouldAlert (a live filter;
@@ -821,30 +998,40 @@ function* calendar(fromDay, toDay) {
  *   lookback     bars per read; the watcher fetches FETCH_BARS (1,000)
  *   read         the read function (liveRead; a test may memoise it)
  *
- * Returns { events: [...alert events, ...day events], alerts, days, pending: [{day, pair, why}] }
- * where why is 'window-open' | 'short-history' | 'not-yet'.
+ * Returns { events: [...alert events, ...day events], alerts, days, pending: [{day, pair, why}],
+ * frozen: [{day, pair}] } where why is 'window-open' | 'short-history' | 'not-yet'.
  */
 export function canonicalAlerts({
-  pair, bars, cfg, fromMs, toMs, method, events = [], nowMs = Date.now(),
+  pair, bars, feedId, cfg, fromMs, toMs, method, events = [], nowMs = Date.now(),
   featuresFor = null, filterFor = null, keep = null, lookback = FETCH_BARS, read = liveRead,
 }) {
   if (!PAIRS.includes(pair)) fail(`unknown instrument ${pair}`);
-  const m = methodOf(method || {});
+  if (feedId !== REFERENCE_FEEDS[pair].id) fail(`the method's record is read only on ${REFERENCE_FEEDS[pair].label} (feedId ${REFERENCE_FEEDS[pair].id}), not on ${feedId ?? 'an unnamed feed'}`);
+  const m = checkedMethod(method);
   if (!(Number.isFinite(fromMs) && Number.isFinite(toMs))) fail('canonicalAlerts needs fromMs and toMs');
+  sameSettings(m, cfg, 'canonicalAlerts');
   const tfMs = tfInfo(m.tf).minutes * 60000;
   const cfgM = { ...cfg, timeframe: m.tf };
   const feed = { id: REFERENCE_FEEDS[pair].id, label: REFERENCE_FEEDS[pair].label };
   const closed = (bars || []).filter((b) => b.t + tfMs <= nowMs).sort((a, b) => a.t - b.t);
   const lastClose = closed.length ? closed[closed.length - 1].t + tfMs : -Infinity;
-  const { comm } = costFor(pair, 0, cfgM);
+  const comm = m.costs[pair].comm;
 
-  // The state is seeded from this record's latest alert before the first day
-  // processed — before that day's own start, not before fromMs, since the day
-  // is replayed whole — and then carried from day to day.
+  // Days already recorded are frozen. The state at the start of each day
+  // processed is the latest alert before that day's own start — from this
+  // record (frozen days included) or from this run — not before fromMs, since
+  // the day is replayed whole.
+  const recorded = foldDays(events, m);
   const earlierAlerts = foldCanonical(events, m).filter((a) => a.pair === pair);
-  let prev = null, seeded = false;
+  const latestBefore = (ms) => {
+    let p = null;
+    for (const a of earlierAlerts) if (a.barCloseMs < ms) p = a;
+    const q = alerts.length ? alerts[alerts.length - 1] : null;
+    return !p ? q : !q ? p : q.barCloseMs > p.barCloseMs ? q : p;
+  };
+  let prev = null;
 
-  const alerts = [], days = [], pending = [];
+  const alerts = [], days = [], pending = [], frozen = [];
   let idx = -1;                                          // last bar closed by the current T
   for (const { day, dow } of calendar(dayOf(fromMs), dayOf(Math.max(fromMs, toMs - 1)))) {
     if (dow === 0 || dow === 6) continue;
@@ -852,6 +1039,7 @@ export function canonicalAlerts({
     const w = windowState(zonedTimeToUtc(y, mo, d, 12, 0, DAY_TZ), cfgM.window);
     if (w.weekend) continue;
     if (w.opensAtMs <= HOLDOUT.toMs) fail(`${day} is inside the held-back years (rule 2); the journal's record starts after ${new Date(HOLDOUT.toMs).toISOString()}`);
+    if (recorded.has(dayIdOf(pair, m.tf, day))) { frozen.push({ day, pair }); continue; }
     if (w.closesAtMs > Math.min(toMs, nowMs)) { if (w.opensAtMs < toMs) pending.push({ day, pair, why: 'window-open' }); continue; }
     const closes = [];
     for (let T = Math.floor(w.opensAtMs / tfMs) * tfMs; T <= w.closesAtMs; T += tfMs) if (inWatchHours(T + 20000, cfgM)) closes.push(T);
@@ -859,9 +1047,9 @@ export function canonicalAlerts({
     const at = (T) => { while (idx + 1 < closed.length && closed[idx + 1].t + tfMs <= T) idx++; while (idx >= 0 && closed[idx].t + tfMs > T) idx--; return idx; };
     if (closes.some((T) => at(T) + 1 < lookback)) { pending.push({ day, pair, why: 'short-history' }); continue; }
 
-    if (!seeded) { for (const a of earlierAlerts) if (a.barCloseMs < w.opensAtMs) prev = a; seeded = true; }
+    prev = latestBefore(w.opensAtMs);
     const kinds = {};
-    let n = 0;
+    const dayAlerts = [];
     for (const T of closes) {
       const k = at(T);
       const seen = closed.slice(k - lookback + 1, k + 1);
@@ -873,7 +1061,7 @@ export function canonicalAlerts({
       const rec = ideaRecord(r);
       const scored = scoreOn(closed, rec, { spread: rec.spreadNum, comm, closesAtMs: windowState(rec.barCloseMs, cfgM.window).closesAtMs, tfMs });
       if (!scored) fail(`could not score ${idOf(pair, m.tf, rec.barCloseMs)} although the window's bars are in`);
-      alerts.push(sanitize({
+      dayAlerts.push(sanitize({
         // `at` is when the method could have known it, not when this ran, so two
         // runs over the same bars write the same line.
         type: 'alert', id: idOf(pair, m.tf, rec.barCloseMs), at: rec.barCloseMs + 20000,
@@ -885,11 +1073,15 @@ export function canonicalAlerts({
         outcome: scored,
       }));
       prev = rec;
-      n++;
     }
-    days.push(sanitize({ type: 'day', id: dayIdOf(pair, m.tf, day), at: w.closesAtMs, pair, tf: m.tf, method: m, day, alerts: n, kinds }));
+    alerts.push(...dayAlerts);
+    // `at` is when the day was recorded: the earliest recorded day record stands.
+    days.push(sanitize({
+      type: 'day', id: dayIdOf(pair, m.tf, day), at: Math.max(nowMs, w.closesAtMs), pair, tf: m.tf, method: m, day,
+      alerts: dayAlerts.length, ids: dayAlerts.map((a) => a.id), sums: dayAlerts.map(sumOf), kinds,
+    }));
   }
-  return { events: [...alerts, ...days], alerts, days, pending };
+  return { events: [...alerts, ...days], alerts, days, pending, frozen };
 }
 
 /* ------------------------------------------------------- what the user saw */
@@ -906,7 +1098,8 @@ const modeOf = (cfg) => oneOf((cfg && cfg.account && cfg.account.mode) || 'demo'
 export function shownEvent(rec, { source, method, cfg, at = Date.now() } = {}) {
   if (!rec || !rec.pair || !(rec.barCloseMs > 0)) fail('a shown alert needs its pair and bar close');
   if (!rec.sourceId) fail('a shown alert must come from a live feed read (it names no feed)');
-  const m = methodOf(method || {});
+  const m = checkedMethod(method);
+  sameSettings(m, cfg, 'shownEvent');
   if (rec.tf !== m.tf) fail(`the alert is on ${rec.tf} but the method is on ${m.tf}`);
   return sanitize({
     type: 'shown', id: idOf(rec.pair, rec.tf, rec.barCloseMs), at, account: modeOf(cfg),
@@ -966,13 +1159,38 @@ const shownEntry = (entry, what) => {
   return entry.shown;
 };
 
+/*
+ * The account a trade of the user's goes down as: the alert's own mode, unless
+ * the user said which account it was on (after accountMismatch asked).
+ */
+const accountFor = (s, account) => (account === null || account === undefined ? s.account : oneOf(account, ACCOUNT_MODES, 'account'));
+
+/**
+ * Before marking the user's own trade on an alert: when the settings' account
+ * mode now differs from the mode the alert was shown under (say it was shown
+ * on demo and the user has since switched to live), ask which account the
+ * trade was on and pass the answer as `account` to markTicketed, markTaken
+ * and markActual. A live answer then goes through the live-record question
+ * like any other live event. Returns null when they agree (or the alert was
+ * never shown), else { shownAs, settingsSay, question }.
+ */
+export function accountMismatch(entry, cfg) {
+  if (!entry || !entry.shown) return null;
+  const now = modeOf(cfg);
+  if (now === entry.shown.account) return null;
+  return {
+    shownAs: entry.shown.account, settingsSay: now,
+    question: `That alert came while your settings said ${entry.shown.account}; they now say ${now}. Was this trade on your demo account or your live account?`,
+  };
+}
+
 /**
  * `take` returned a ticket for this alert. The prices are the user's MT5
  * price and the levels built from it — allowed (rule 6); the lot size is not.
  */
-export function markTicketed(entry, { userPrice, stopLoss = null, takeProfit = null, at = Date.now() } = {}) {
+export function markTicketed(entry, { userPrice, stopLoss = null, takeProfit = null, at = Date.now(), account = null } = {}) {
   const s = shownEntry(entry, 'markTicketed');
-  return sanitize({ type: 'ticketed', id: entry.id, at, account: s.account, userPrice, stopLoss, takeProfit });
+  return sanitize({ type: 'ticketed', id: entry.id, at, account: accountFor(s, account), userPrice, stopLoss, takeProfit });
 }
 
 /**
@@ -980,12 +1198,13 @@ export function markTicketed(entry, { userPrice, stopLoss = null, takeProfit = n
  *   { alertId }                    the conversation named the alert (it must have been sent)
  *   { tf | lastTicketedWithinMs, nowMs }  a ticket built within the ticket's freshness
  *                                  (takenWithinMs(tf)), not already taken, and exactly one
+ * `account`: the user's answer when accountMismatch asked; else the alert's mode.
  * Returns { ok: true, event } or { ok: false, reason: 'no-alert' | 'not-shown' |
  * 'no-ticket' | 'ambiguous', candidates? } — on false, ask the user which alert it was.
  */
-export function markTaken(entries, { alertId = null, tf = null, lastTicketedWithinMs = null, nowMs = Date.now(), at = nowMs } = {}) {
+export function markTaken(entries, { alertId = null, tf = null, lastTicketedWithinMs = null, nowMs = Date.now(), at = nowMs, account = null } = {}) {
   const all = entriesOf(entries);
-  const event = (e, how) => ({ ok: true, event: sanitize({ type: 'taken', id: e.id, at, account: e.shown.account, how }) });
+  const event = (e, how) => ({ ok: true, event: sanitize({ type: 'taken', id: e.id, at, account: accountFor(e.shown, account), how }) });
   if (alertId) {
     const e = all.find((x) => x.id === alertId);
     if (!e) return { ok: false, reason: 'no-alert' };
@@ -1004,10 +1223,10 @@ export function markTaken(entries, { alertId = null, tf = null, lastTicketedWith
  * into R with the risk amount before calling this; pounds never reach here.
  *   how  'target' | 'stop' | 'by-hand' | 'end-of-session'
  */
-export function markActual(entry, { r, how, at = Date.now() } = {}) {
+export function markActual(entry, { r, how, at = Date.now(), account = null } = {}) {
   const s = shownEntry(entry, 'markActual');
   if (typeof r !== 'number' || !Number.isFinite(r) || Math.abs(r) > 50) fail('the result must be a number of R');
-  return sanitize({ type: 'actual', id: entry.id, at, account: s.account, r: +r.toFixed(4), how });
+  return sanitize({ type: 'actual', id: entry.id, at, account: accountFor(s, account), r: +r.toFixed(4), how });
 }
 
 /**
@@ -1036,7 +1255,7 @@ export function consentEvent({ answer, at = Date.now() } = {}) {
  */
 export function setSample({ plannedAlerts = DEFAULT_PLANNED_ALERTS, method, pairs = [...PAIRS], committedAt = Date.now(), at = committedAt, events, replaces = null } = {}) {
   if (!Number.isInteger(plannedAlerts) || plannedAlerts < MIN_PLANNED_ALERTS) fail(`the sample needs a whole number of at least ${MIN_PLANNED_ALERTS} alerts`);
-  const m = methodOf(method || {});
+  const m = checkedMethod(method);
   if (!Array.isArray(events)) fail('setSample needs the journal\'s events, to check for a sample in progress');
   if (!(committedAt > HOLDOUT.toMs)) fail('a sample cannot start inside the held-back years');
   const current = foldSample(events);
@@ -1064,8 +1283,9 @@ const iso16 = (day) => `${day}T00:00`;
  * after costs with the by-day clustered 95% range (variance × G/(G−1), G =
  * days, the usual small-sample correction). Given only when
  *  - N alerts are in, and the judged alerts span at least MIN_VERDICT_DAYS
- *    days (if the first N span fewer, the judged set runs on, alert by alert,
- *    until they do — a rule on dates alone, never on results);
+ *    days (if the first N span fewer, the judged set runs on to the end of
+ *    the 30th London day, whole days — declared before any alert, a rule on
+ *    dates alone, never on results);
  *  - every weekday from the commitment to the last judged alert has been
  *    checked on the feed for every instrument in the sample (otherwise a late
  *    check could still add an earlier alert and change which N are judged);
@@ -1097,7 +1317,17 @@ export function sampleStatus(events, sample = foldSample(events)) {
 
   let M = Math.min(N, counted.length);
   const daysIn = (xs) => new Set(xs.map((a) => dayOf(a.barCloseMs))).size;
-  if (counted.length >= N) while (M < counted.length && daysIn(counted.slice(0, M)) < MIN_VERDICT_DAYS) M++;
+  // Declared before any alert (MIN_VERDICT_DAYS): if the first N span fewer
+  // than 30 London days, the judged set runs on to the END of the 30th
+  // distinct day — whole days, so the last day's cluster is not cut.
+  if (counted.length >= N && daysIn(counted.slice(0, N)) < MIN_VERDICT_DAYS) {
+    const seen = new Set();
+    for (M = 0; M < counted.length; M++) {
+      const d = dayOf(counted[M].barCloseMs);
+      if (!seen.has(d) && seen.size === MIN_VERDICT_DAYS) break;
+      seen.add(d);
+    }
+  }
   const judged = counted.slice(0, M);
   const G = daysIn(judged);
   const reachedN = counted.length >= N;
@@ -1175,9 +1405,14 @@ export function outcomeSentence(entry, cfg, { withDay = false } = {}) {
   return `${head} was closed at the end of the session (${fmtR(o.r)})${gap}`;
 }
 
-/** Decision 8, for the alerts: why there is no verdict yet. */
-export const noVerdictLine = (n) =>
-  `No verdict until all ${n} are in: checking after every alert and stopping on a good run turns a 5% test into a 20% one, which is how a method with no edge gets mistaken for one that has one.`;
+/**
+ * Decision 8, for the alerts: why there is no verdict yet. Said only while
+ * fewer than N are in; once N are in but they span too few days, the 'days'
+ * variant says why instead.
+ */
+export const noVerdictLine = (n, why = 'count') => (why === 'days'
+  ? `No verdict until the alerts span at least ${MIN_VERDICT_DAYS} days: alerts on the same day share one market, so a range from fewer days looks surer than it is. This was set before any alert was seen.`
+  : `No verdict until all ${n} are in: checking after every alert and stopping on a good run turns a 5% test into a 20% one, which is how a method with no edge gets mistaken for one that has one.`);
 
 /** "Binance's prices" from "Binance (BTCUSDT)"; several feeds joined; "the price feed" with none known. */
 function feedWords(labels) {
@@ -1199,7 +1434,7 @@ function sampleLines(st) {
   const out = [];
   if (st.count >= st.planned) {
     const why = [];
-    if (st.tooFewDays) why.push(`they come from only ${plural(st.days, 'day')}, and a verdict needs at least ${MIN_VERDICT_DAYS}, so it runs on until they do`);
+    if (st.tooFewDays) why.push(`they come from only ${plural(st.days, 'day')}, and a verdict needs at least ${MIN_VERDICT_DAYS}, so the judged alerts run on to the end of the ${MIN_VERDICT_DAYS}th day`);
     if (st.uncovered.length) why.push(`${plural(st.uncovered.length, 'day')} still to be checked on the price feed`);
     out.push(`**The alert sample**: all ${st.planned} alerts are in, but no verdict yet: ${why.join('; ')}.`);
   } else {
@@ -1211,8 +1446,9 @@ function sampleLines(st) {
     } else head += '.';
     out.push(head);
     if (st.uncovered.length) out.push(`${plural(st.uncovered.length, 'day')} not yet checked on the price feed; the count can still grow for them.`);
+    out.push(noVerdictLine(st.planned));
   }
-  out.push(noVerdictLine(st.planned));
+  if (st.count >= st.planned && st.tooFewDays) out.push(noVerdictLine(st.planned, 'days'));
   return out;
 }
 
