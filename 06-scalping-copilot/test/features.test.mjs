@@ -209,6 +209,26 @@ test('bars that repeat or go back, and a check long after the last bar, are refu
   assert.throws(() => analysisForFeatures({ closed, pair: 'BTCUSD', cfg, nowMs: closeMs + 6 * 3600e3 }), /stale/);
 });
 
+test('an analysis of a longer history, a shorter one or the other instrument is refused, though its last close matches', () => {
+  // Review, 17 Oct 2026: only the last close was compared, so a short `closed`
+  // with the full history's analysis was accepted and atr_pctile moved.
+  const k = BARS.length + IDEA_K;                       // Wed 7 Oct 14:15 London on the long series: the watcher reads it
+  const nowMs = LONG[k].t + M15 + 20000;
+  const full = historyTo(LONG, k);
+  const analysis = analysisForFeatures({ closed: full, pair: 'BTCUSD', cfg, nowMs });
+  assert.doesNotThrow(() => featuresAt({ closed: full, analysis, nowMs, cfg, pair: 'BTCUSD' }));
+  for (const n of [300, 120, 40]) {
+    assert.throws(() => featuresAt({ closed: full.slice(-n), analysis, nowMs, cfg, pair: 'BTCUSD' }), /not made on this window/, `closed = the last ${n} bars`);
+  }
+  // A live analysis carries no instrument; a features-only one does, and it must match.
+  const gold = analysisForFeatures({ closed: full, pair: 'XAUUSD', cfg, nowMs });
+  assert.throws(() => featuresAt({ closed: full, analysis: gold, nowMs, cfg, pair: 'BTCUSD' }), /it is of XAUUSD, not BTCUSD/);
+  // The 999 closed bars of the live fetch with their own analysis pass; the same analysis against 1,000 is checked, not assumed.
+  const live = liveRead({ pair: 'BTCUSD', bars: LONG.slice(k - (HISTORY_BARS - 2), k + 2), nowMs, cfg });
+  assert.ok(live.analysis);
+  assert.doesNotThrow(() => featuresAt({ closed: full.slice(-(HISTORY_BARS - 1)), analysis: live.analysis, nowMs, cfg, pair: 'BTCUSD' }));
+});
+
 console.log('\nhow much history');
 test('a whole history gives exactly the row the last 1,000 bars give, through both functions', () => {
   // A dataset may hand in every bar up to the check; analysisForFeatures used
@@ -372,11 +392,11 @@ test('engineScore marks confidence down for the final stretch and a short window
 test('the re-read for features carries no lean: no bias, stop, targets, verdict or wording', () => {
   for (const { k, analysis } of SAMPLE) {
     if (analysis.state === 'insufficient-data') continue;
-    assert.deepEqual(Object.keys(analysis).sort(), ['atr', 'buckets', 'featuresOnly', 'htf', 'indicators', 'price', 'regime', 'state'], `bar ${k}`);
+    assert.deepEqual(Object.keys(analysis).sort(), ['atr', 'buckets', 'featuresOnly', 'htf', 'indicators', 'pair', 'price', 'regime', 'state'], `bar ${k}`);
     assert.equal(analysis.state, 'features-only');
     assert.equal(analysis.featuresOnly, true);
   }
-  assert.deepEqual(rowAt(30).analysis, { state: 'insufficient-data', featuresOnly: true });
+  assert.deepEqual(rowAt(30).analysis, { state: 'insufficient-data', featuresOnly: true, pair: 'BTCUSD' });
   // The release-blackout moment the live desk sat out: the engine leaned, the re-read does not say how.
   const engine = engineReadAt(674), reread = rowAt(674).analysis;
   assert.ok(engine.bias !== undefined && engine.statement !== undefined, 'the full read would have named it');
@@ -523,7 +543,10 @@ test('FEATURES_VERSION is an integer, and this file\'s content is pinned to it',
   // FEATURES_VERSION and add its hash), or only words did (replace the hash
   // of the current version). Old entries stay, so the history reads.
   const PINNED = {
-    1: 'cf2ecb7784df1fc254320b15d569a588e4f217d48f209cc503fade882cfe9669',
+    // Re-pinned 17 Oct 2026 at integration: featuresAt's provenance check (a guard
+    // that refuses mismatched inputs), `pair` on the features-only analysis, and
+    // comments. No feature's value changed for any input it accepted before.
+    1: '26befcf5170efe01ba3c8ff1b3a915824f7e7d4870f2ed6010369d3de54646c2',
   };
   const src = readFileSync(join(here, '..', 'desk', 'features.mjs'), 'utf8').replace(/\r\n/g, '\n');
   const hash = createHash('sha256').update(src).digest('hex');

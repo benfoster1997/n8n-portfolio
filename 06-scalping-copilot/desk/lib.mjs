@@ -42,6 +42,12 @@ export const DEFAULT_CONFIG = {
     shadowBalance: null, sizeFrom: 'account',
     // Null means "use the specification" (gold 2.75 GBP a lot each side, bitcoin none); 0 means zero.
     commissionPerSideGBP: null,
+    // Which account the user trades on, for the journal: 'demo' or 'live'
+    // (`config account=live`). Not the top-level `mode`, which is how a
+    // screenshot is read (fast or thorough). The journal stamps it on what
+    // the user was shown and did, and asks before the first live entry
+    // whether a live record may sit in this public repository (plan rule 6).
+    mode: 'demo',
   },
   // 'auto': New York + 7, which is what the broker's gold break showed (its
   // 01:02 server reopen is 18:00 New York). UTC+3 now, UTC+2 from 1 November.

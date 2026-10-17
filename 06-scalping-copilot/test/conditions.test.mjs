@@ -183,7 +183,13 @@ test('identical results have no range, so they are never marked', () => {
   assert.equal(row.tooFew, true);
   assert.equal(row.why, 'spread');
   assert.equal(row.clearsZero, false);
-  assert.match(formatConditions(byCondition(same)), /^ {2}Trending +40 +28 +— +every result the same, no range$/m);
+  assert.match(formatConditions(byCondition(same)), /^ {2}Trending +40 +28 +— +no spread between days, no range$/m);
+  // Results that differ, but every day averages the same: no spread between days either, and the text says so.
+  const even = [];
+  for (let d = 0; d < 20; d++) for (const r of [2, 0]) even.push({ at: new Date(Date.UTC(2021, 2, 1 + d, 9 + r)).toISOString().slice(0, 16), r, cond: fixedCond() });
+  const res = byCondition(even);
+  assert.equal(res.rows.find((x) => x.cell === 'regime:trending').why, 'spread');
+  assert.match(formatConditions(res), /^ {2}Trending +40 +20 +— +no spread between days, no range$/m);
 });
 
 test('ranges clustered by day are wider than independent ones when same-day trades move together', () => {
@@ -209,7 +215,7 @@ test('the report opens with the chance warning, word for word, and no line reads
   assert.equal(headerWarning(res), lines[1]);
   for (const l of lines) assert.doesNotMatch(l, ADVICE, l);
   for (const c of CELLS) assert.doesNotMatch(c.label, ADVICE, c.label);
-  assert.match(text, /Cleared zero with all 30 cells counted: 1 of 30\. On a system with no edge at all, the chance of even one is at most about 1 in 20/);
+  assert.match(text, /Cleared zero with all 30 cells counted: 1 of 30\. On a system with no edge at all, the chance of even one is about 1 in 20 when every cell rests on many days; somewhat more when many cells sit near the 30-trade minimum/);
   assert.match(text, /against 1\.5 expected by chance alone/);
   assert.match(text, /^Higher timeframes \(H1 and H4\)$/m);
   // Every cell has its line, in order, under its group.
@@ -219,8 +225,15 @@ test('the report opens with the chance warning, word for word, and no line reads
 
 test('the family chance is computed, not fixed text: other alphas say so, independent ranges disown it', () => {
   const trades = makeTrades({ seed: 9, days: 200, r: (c, g) => g() });
-  assert.match(formatConditions(byCondition(trades, { alpha: 0.5 })), /chance of even one is at most about 1 in 2 /);
-  assert.match(formatConditions(byCondition(trades, { alpha: 0.01 })), /at most about 1 in 100 /);
+  assert.match(formatConditions(byCondition(trades, { alpha: 0.5 })), /chance of even one is about 1 in 2 when/);
+  assert.match(formatConditions(byCondition(trades, { alpha: 0.01 })), /chance of even one is about 1 in 100 when/);
+  // No "at most … close to certain" contradiction, and "about twice" only near a 30-trade minimum.
+  const certain = formatConditions(byCondition(trades, { alpha: 1 }));
+  assert.match(certain, /at least one is close to certain to clear by luck at this setting\./);
+  assert.doesNotMatch(certain, /at most/);
+  const big = formatConditions(byCondition(trades, { minN: 100 }));
+  assert.doesNotMatch(big, /about twice/);
+  assert.match(big, /a little more in cells near the 100-trade minimum/);
   const none = formatConditions(byCondition(trades, { cluster: 'none' }));
   assert.doesNotMatch(none, /1 in 20/);
   assert.match(none, /The chance of a false mark is not known here: these ranges ignore same-day overlap\./);
@@ -262,8 +275,13 @@ test('periods follow the fixed holdout to the minute', () => {
   assert.equal(periodOf('2026-10-14T20:46'), 'fresh');
   assert.equal(periodOf('2026-11-02T09:00'), 'fresh');
   const t = (at) => ({ at, r: 0.1, cond: fixedCond() });
-  const split = splitByPeriod([t('2023-05-01T09:00'), t('2025-05-01T09:00'), t('2026-05-01T09:00'), t('2026-10-20T09:00'), null]);
+  const split = splitByPeriod([t('2023-05-01T09:00'), t('2025-05-01T09:00'), t('2026-05-01T09:00'), t('2026-10-20T09:00')]);
   assert.deepEqual(Object.fromEntries(Object.entries(split).map(([k, v]) => [k, v.length])), { dev: 1, clean: 1, seen: 1, fresh: 1 });
+  // Not a trade: thrown, not dropped (byCondition would count it in `skipped`; a split must not hide it).
+  assert.throws(() => splitByPeriod([t('2023-05-01T09:00'), null]), /entry 1 is null, not a trade/);
+  // `at` is the bar CLOSE: the bar opening 20:45 on 14 Oct closes at 21:00 (fresh); the one opening 23:45 on 31 Dec 2024 closes in 2025.
+  assert.equal(periodOf('2026-10-14T21:00'), 'fresh');
+  assert.equal(periodOf('2025-01-01T00:00'), 'clean');
 });
 
 test('held-back rows need permission, are never pooled, and say which period they are', () => {
@@ -281,8 +299,9 @@ test('held-back rows need permission, are never pooled, and say which period the
   const seen = byCondition(y26, { allowHeldBack: true });
   assert.equal(seen.period, 'seen');
   assert.match(formatConditions(seen), /^2026 to 14 October: already used to choose the 1\.5R rule; this is not unseen data\.$/m);
-  // Rows after the window are not held back: no permission needed.
-  const fresh = byCondition([{ at: '2026-11-02T09:00', r: 0.4, cond: fixedCond() }]);
+  // Rows after the window are the live sample in progress: refused unless the caller says it is complete.
+  assert.throws(() => byCondition([{ at: '2026-11-02T09:00', r: 0.4, cond: fixedCond() }]), /committed sample in progress/);
+  const fresh = byCondition([{ at: '2026-11-02T09:00', r: 0.4, cond: fixedCond() }], { allowFresh: true });
   assert.equal(fresh.period, 'fresh');
   assert.match(formatConditions(fresh), new RegExp(PERIODS.fresh.replace(/[.]/g, '\\.')));
 });
@@ -368,14 +387,79 @@ test('labels follow the timeframe and the unit; the journal gets it only after i
   assert.match(m5, /^Higher timeframes \(M15 and H1\)$/m);
   assert.match(m5, /^\d+ checks on \d+ days/m);
   assert.doesNotMatch(m5, /H4/);
-  const fresh = byCondition(makeTrades({ seed: 14, days: 40, r: (c, g) => g(), start: Date.UTC(2026, 9, 19) }));
+  assert.throws(() => byCondition(makeTrades({ seed: 14, days: 40, r: (c, g) => g(), start: Date.UTC(2026, 9, 19) })), /committed sample in progress/);
+  const fresh = byCondition(makeTrades({ seed: 14, days: 40, r: (c, g) => g() + 0.6, start: Date.UTC(2026, 9, 19) }), { allowFresh: true });
   assert.equal(fresh.period, 'fresh');
   assert.throws(() => formatConditions(fresh, { audience: 'journal' }), /before its committed sample is complete/);
   assert.throws(() => formatConditions(res, { audience: 'journal', sampleComplete: true }), /fresh rows only/);
   const j = formatConditions(fresh, { audience: 'journal', sampleComplete: true });
   assert.doesNotMatch(j, /Developer report|ends the sample in progress/);
-  assert.match(j, /^Described, not tested — /m);
+  assert.match(j, /^Described, not tested — about 1 to 2 of these cells would clear zero by chance at 95%, so none is marked; each range is drawn with all 30 cells counted\. None of these is a rule to trade by\.$/m);
+  assert.ok(fresh.found > 0, 'cells that would be marked in the developer report');
+  assert.doesNotMatch(j, /clears zero|Cleared zero with all|All trades together/, 'the journal\'s description marks nothing');
   for (const l of j.split('\n')) assert.doesNotMatch(l, ADVICE, l);
+  // The higher timeframes are two names, or the table refuses.
+  assert.throws(() => formatConditions(res, { htfIds: ['H1'] }), /two higher timeframes/);
+  assert.throws(() => formatConditions(res, { htfIds: ['H1', 4] }), /two higher timeframes/);
+});
+
+test('a cell left out for too few days says so; a result of the wrong type is refused, not "still running"', () => {
+  const mk = (n, days) => Array.from({ length: n }, (_, i) => ({ at: new Date(Date.UTC(2021, 2, 1 + (i % days), 9, i % 50)).toISOString().slice(0, 16), r: (i % 3) - 0.9, cond: fixedCond() }));
+  assert.match(formatConditions(byCondition(mk(60, 5))), /^ {2}Trending +60 +5 +— +too few days to say$/m);
+  const good = mk(40, 20);
+  assert.throws(() => byCondition([...good, { at: '2021-03-02T09:00', r: '0.5', cond: fixedCond() }]), /has r '0\.5'/);
+  assert.throws(() => byCondition([...good, { at: '2021-03-02T09:00', r: Infinity, cond: fixedCond() }]), /has r Infinity/);
+  const open = byCondition([...good, { at: '2021-03-02T09:00', r: null, cond: fixedCond() }, { at: '2021-03-02T09:15', cond: fixedCond() }]);
+  assert.equal(open.skipped.noResult, 2, 'null and missing are still running');
+});
+test('a cond with an extra top-level key is outside the contract', () => {
+  assert.throws(() => validateCond({ ...fixedCond(), volatility: 1 }), /cond\.key is 'volatility'/);
+});
+
+console.log('\nthe contract with features.mjs, and the adapter the replay calls');
+test('the real conditionOf on the recorded bars passes validateCond and byCondition, and conditionReport prints its table', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { join, dirname } = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const { computeReads, checkIndices, alertPass, loadBarsFile } = await import('../desk/reads.mjs');
+  const { extra } = await import('../desk/features-extra.mjs');
+  const { conditionOf, REGIMES: FR, HOUR_BANDS: FH, WEEKDAYS: FW } = await import('../desk/features.mjs');
+  const { withDefaults } = await import('../desk/lib.mjs');
+  const { REGIMES, HOUR_BANDS, WEEKDAYS, conditionReport } = await import('../desk/conditions.mjs');
+  // The vocabulary is features.mjs's own, not a copy.
+  assert.deepEqual([...REGIMES], [...FR]);
+  assert.deepEqual([...HOUR_BANDS], FH.map((b) => b.label));
+  assert.deepEqual([...WEEKDAYS], FW.map((d) => d.label));
+  const here = dirname(fileURLToPath(import.meta.url));
+  const bars = loadBarsFile(join(here, 'fixtures', 'btc-m15.json'), 'BTCUSD');
+  const cfg = withDefaults({});
+  const ks = checkIndices(bars, { fromMs: Date.parse('2026-10-06T00:00Z'), toMs: Date.parse('2026-10-09T23:59Z'), cfg });
+  const reads = await computeReads(bars, ks, { pair: 'BTCUSD', cfg, rules: ['1.5R'], cost: 'fixed', calendar: 'full', extra });
+  const leans = reads.filter((r) => r.kind === 'lean' && r.extra.cond);
+  assert.ok(leans.length >= 20, `${leans.length} leaning checks`);
+  for (const r of leans) {
+    validateCond(r.extra.cond);
+    const side = r.rules['1.5R'].plan.side;
+    assert.deepEqual(r.extra.cond, conditionOf(r.extra.f, { side }), 'the cell is conditionOf of the read\'s own features and side');
+  }
+  // Every leaning check as a row (a stand-in result: the contract is the cond, not the R).
+  const rows = leans.map((r, i) => ({ at: new Date(r.closeMs).toISOString().slice(0, 16), r: (i % 5) - 2, cond: r.extra.cond }));
+  const res = byCondition(rows, { allowHeldBack: true, minN: 2, minDays: 2 });
+  assert.equal(res.trades, rows.length);
+  for (const g of EXCLUSIVE) assert.equal(res.rows.filter((x) => x.group === g).reduce((t, x) => t + x.n, 0) + res.outside[g], res.trades, g);
+  // The adapter: the replay's reads and alerts in, a table per period out (these bars are 2026's, already seen).
+  const trades = alertPass(reads, bars, { cfg, rule: '1.5R', pair: 'BTCUSD' }).trades;
+  assert.ok(trades.length >= 1);
+  const text = conditionReport({ reads, trades, rule: '1.5R', cfg, settings: { timeframe: 'M15' }, bars, block: '2026' });
+  assert.match(text, /^Alerts by condition \(rule 1\.5R\)$/m);
+  assert.match(text, /^2026 to 14 October: already used to choose the 1\.5R rule; this is not unseen data\.$/m);
+  assert.match(text, new RegExp(`^${trades.length} alerts on \\d+ days`, 'm'));
+  assert.match(text, /^Higher timeframes \(H1 and H4\)$/m);
+  // Reads made without the features module are refused, not read as "no condition".
+  assert.throws(() => conditionReport({ reads: reads.map(({ extra: _e, ...r }) => r), trades, rule: '1.5R', cfg }), /carry no features/);
+  // Alerts after the holdout are counted and left out.
+  const later = trades.map((t) => ({ ...t, at: '2026-11-04T10:00', closeMs: t.closeMs }));
+  assert.match(conditionReport({ reads, trades: later, rule: '1.5R', cfg }), /left out: that is the live journal's committed sample in progress/);
 });
 
 for (const run of pending) await run();

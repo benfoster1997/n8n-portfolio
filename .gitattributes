@@ -1,0 +1,4 @@
+# The journal is an append-only log of JSON lines whose fold does not depend on
+# line order (06-scalping-copilot/desk/journal.mjs), so two machines' additions
+# merge by keeping both sides' lines. Pull with rebase before pushing it.
+06-scalping-copilot/desk/journal.jsonl merge=union

@@ -36,18 +36,26 @@
  *
  * For the modules that store or learn from these numbers: a stored row is
  * only comparable with rows made by the same definitions. FEATURES_VERSION is
- * bumped whenever any definition here changes (a test hashes this file), so
- * reads.mjs must put it in the read store's key and learn.mjs in the recipe it
- * hashes into model.json. The heavy-tailed features (the ret_*, close_vs_* and
- * level_* distances in ATRs) are stored as measured: dataset.mjs must clip them
- * at each training fold's own 1st and 99th percentiles before standardising, so
- * a few release bars cannot own the ridge coefficients. The two ratios with the
- * longest tails are stored as logarithms here, which needs no fold to decide.
+ * bumped whenever any definition here changes (a test hashes this file). But
+ * the values also come from the engine (src/signal-engine.js: the buckets,
+ * WEIGHTS and the regime; src/indicators.js; src/sessions.js;
+ * src/timeframes.js), which can change a feature with no change here — the
+ * volumeBucket fix moved b_volume, net and confidence without touching this
+ * file. So whatever stores or fits these numbers must key them by BOTH
+ * FEATURES_VERSION and the engine's source: reads.mjs's read store hashes the
+ * source of every file a read imports (engineFiles) and of this module, and
+ * learn.mjs's recipe carries FEATURES_VERSION and the engine hash
+ * (methodFiles, engineHash). The heavy-tailed features (the ret_*, close_vs_*
+ * and level_* distances in ATRs) are stored as measured: learn.mjs clips them
+ * at each training fold's own 1st and 99th percentiles before standardising,
+ * so a few release bars cannot own the ridge coefficients. The two ratios with
+ * the longest tails are stored as logarithms here, which needs no fold to
+ * decide.
  *
  * Pure: bars, the engine's analysis, the clock and the config are handed in.
  */
 import { analyse, WEIGHTS, MIN_BARS } from '../src/signal-engine.js';
-import { valueAt } from '../src/indicators.js';
+import { valueAt, resample } from '../src/indicators.js';
 import { INSTRUMENTS } from '../src/instruments.js';
 import { tfInfo } from '../src/timeframes.js';
 import { closedBars } from '../src/data-feeds.js';
@@ -179,7 +187,7 @@ export const WHY_NULL = Object.freeze({
   log_atr_change_1h: 'needs a non-zero ATR now and an hour earlier, which the first bars of the window (or a frozen feed) do not have',
   bb_width_pctile: 'needs more than 20 Bollinger widths in the engine\'s lookback',
   adx: 'needs about 28 bars before ADX exists, and some movement: a frozen feed has none to measure',
-  atr_pctile: 'needs at least 115 bars of history, for 100 fourteen-bar ranges to rank against',
+  atr_pctile: 'needs at least 114 bars of history, for 100 fourteen-bar ranges to rank against',
   efficiency: 'needs 21 closes',
   h1_bias: 'needs 30 closed H1 bars behind the check',
   h4_bias: 'needs 30 closed H4 bars (480 M15 bars) behind the check',
@@ -250,9 +258,10 @@ export function analysisForFeatures(args) {
     spread: spreadNum ?? inst.typicalSpread.observed,
     blackout: null, session, nowMs, timeframe: t.id,
   });
-  if (a.state === 'insufficient-data') return { state: 'insufficient-data', featuresOnly: true };
+  if (a.state === 'insufficient-data') return { state: 'insufficient-data', featuresOnly: true, pair };
   const { price, atr: atrNow, regime, htf, buckets, indicators } = a;
-  return { state: 'features-only', featuresOnly: true, price, atr: atrNow, regime, htf, buckets, indicators };
+  // `pair` rides along so featuresAt can refuse it for the other instrument.
+  return { state: 'features-only', featuresOnly: true, pair, price, atr: atrNow, regime, htf, buckets, indicators };
 }
 
 /**
@@ -322,6 +331,38 @@ export function engineScore(analysis, { windowLength, lastStretch = false }) {
   return { net, confidence };
 }
 
+/* ------------------------------------------------------- provenance */
+
+/** Closed bars higherTimeframeBias (src/signal-engine.js) needs before it scores a higher timeframe. */
+const HTF_MIN_BARS = 30;
+
+/**
+ * Whether `analysis` was made on exactly this window and history, or a throw.
+ * The last close alone matched a short `closed` (the last 300 bars, say)
+ * paired with an analysis of the full history, which moved atr_pctile (0.930
+ * against 0.844) and, under 150 bars, confidence; and an analysis of the
+ * other instrument passed as well (review, 17 Oct 2026). So:
+ *  - the price is the window's last close;
+ *  - the engine's ATR series is as long as the window (it is computed over
+ *    the bars analyse() was handed);
+ *  - each higher timeframe has as many closed bars as resample() makes of
+ *    this history (or, where the engine had too few to score it, this history
+ *    makes fewer than it needs too);
+ *  - a features-only analysis names its instrument, and it must be `pair`.
+ */
+function checkProvenance(analysis, { hist, win, price, t, pair }) {
+  const not = (why) => new Error(`the analysis was not made on this window (${why})`);
+  if (analysis.price !== price) throw not('its price differs from the last close');
+  const atr = analysis.indicators && analysis.indicators.atr;
+  if (!Array.isArray(atr) || atr.length !== win.length) throw not(`its ATR covers ${Array.isArray(atr) ? atr.length : 'no'} bars, the window ${win.length}`);
+  for (const { id, minutes } of t.htf) {
+    const got = analysis.htf ? analysis.htf[id.toLowerCase()] : null;
+    const n = resample(hist, minutes, true, t.minutes).length;
+    if (got ? got.closedBars !== n : n >= HTF_MIN_BARS) throw not(`its ${id} history has ${got ? got.closedBars : 'too few'} closed bars, this one ${n}`);
+  }
+  if (pair && analysis.pair && analysis.pair !== pair) throw not(`it is of ${analysis.pair}, not ${pair}`);
+}
+
 /* ------------------------------------------------------------ features */
 
 const allNull = () => Object.fromEntries(FEATURE_NAMES.map((n) => [n, null]));
@@ -357,10 +398,13 @@ function rangeOverPrice(bars, period) {
  * moment of the check (bar close + 20 s on the watcher). `pair` is accepted
  * so a caller can hand both functions the same arguments; no feature depends
  * on it, which is the point of being price-free: one learner can read both.
+ * It is checked against a features-only analysis, which names its instrument.
  *
  * It refuses rather than guesses. No `closed`, no analysis (liveRead's
  * 'blocked' and 'no-data' results carry none: use analysisForFeatures), an
- * analysis without buckets, or one made on a different window, all throw. The
+ * analysis without buckets, or one made on a different window or history
+ * (checkProvenance: its price, its ATR's length, its higher timeframes' bar
+ * counts, its instrument), all throw. The
  * all-null row is kept for one case only, an analysis whose state is
  * 'insufficient-data' on a window that really is too short: a missing input
  * must never look like a genuine "the engine could not read" row, or the
@@ -386,10 +430,9 @@ export function featuresAt(args) {
 
   const last = win[win.length - 1];
   const price = last.c;
-  // The analysis must be of this window, or every feature below is of a different moment.
-  if (analysis.price !== price) {
-    throw new Error('the analysis was not made on this window (its price differs from the last close)');
-  }
+  // The analysis must be of this window and this history, or every feature
+  // below is of a different moment (review, 17 Oct 2026).
+  checkProvenance(analysis, { hist, win, price, t, pair: args.pair ?? null });
   const a = NUM(analysis.atr);
   const perAtr = (x) => (a !== null && a > 0 && NUM(x) !== null ? x / a : null);
 

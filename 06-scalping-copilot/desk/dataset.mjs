@@ -88,7 +88,8 @@
  * rowsKey today's code (rowsKeyFor(manifest.settings)) would not give. Unless
  * --replace is given, a build never replaces a rows file whose manifest covers
  * a range this one does not, or whose checks it would not all write again
- * (fewer rows, a later first check or an earlier last one), and never writes
+ * (fewer rows, a later first check, an earlier last one, or fewer checks
+ * between its first and last), and never writes
  * an empty one. The test is made before any read and again immediately before
  * the new file is renamed into place, and a lock file beside the rows file
  * (<rows file>.lock) keeps a second build of the same file out meanwhile.
@@ -246,8 +247,13 @@ export const lockPath = (rowsFile) => `${rowsFile}.lock`;
  * Why a build may not replace the rows file at `path` without --replace, or
  * null when it may: the file has no readable manifest; its manifest covers a
  * range this build does not; or this build, over a range containing it, writes
- * fewer rows than it records, or starts after its first check or ends before
- * its last one. `next` is { fromMs, toMs, rows, firstCloseMs, lastCloseMs }.
+ * fewer rows than it records, starts after its first check or ends before its
+ * last one, or writes fewer checks than it records BETWEEN its first and last
+ * check. `next` is { fromMs, toMs, rows, firstCloseMs, lastCloseMs, closes },
+ * `closes` the close time of every check the build writes (or would write).
+ * The count inside the old stretch is what catches a day lost in the middle:
+ * Tue–Thu rebuilt as Mon–Thu without Wednesday's bars has the same total and
+ * the same last check, and an earlier first one (review, 17 Oct 2026).
  */
 export function replaceRefusal(path, next) {
   if (!existsSync(path)) return null;
@@ -267,6 +273,13 @@ export function replaceRefusal(path, next) {
   }
   if (Number.isFinite(prior.lastCloseMs) && !(Number.isFinite(next.lastCloseMs) && next.lastCloseMs >= prior.lastCloseMs)) {
     return `${path} ends with the check at ${iso(prior.lastCloseMs)}; this build would not write it again. Add --replace to replace it all the same.`;
+  }
+  if (Number.isFinite(prior.rows) && Number.isFinite(prior.firstCloseMs) && Number.isFinite(prior.lastCloseMs)) {
+    if (!Array.isArray(next.closes)) throw new Error('replaceRefusal needs the close time of every check the build writes (next.closes).');
+    const inside = next.closes.filter((c) => c >= prior.firstCloseMs && c <= prior.lastCloseMs).length;
+    if (inside < prior.rows) {
+      return `${path} holds ${prior.rows} checks from ${iso(prior.firstCloseMs)} to ${iso(prior.lastCloseMs)}; this build would write only ${inside} of them again (bars missing in the middle?). Add --replace to replace it all the same.`;
+    }
   }
   return null;
 }
@@ -419,6 +432,7 @@ export async function buildRows({ pair, tf = null, bars, fromMs, toMs, cfg, cost
   const planned = {
     fromMs, toMs, rows: ks.length,
     firstCloseMs: ks.length ? bars[ks[0]].t + tfMs : null, lastCloseMs: ks.length ? bars[ks[ks.length - 1]].t + tfMs : null,
+    closes: ks.map((k) => bars[k].t + tfMs),
   };
   if (!replace) { const why = replaceRefusal(path, planned); if (why) throw new Error(why); }
 
@@ -455,6 +469,7 @@ export async function buildRows({ pair, tf = null, bars, fromMs, toMs, cfg, cost
     const hash = createHash('sha256');
     const counts = {}, gapAhead = {}, heldBack = { clean: 0, seen: 0, fresh: 0 };
     let n = 0, firstCloseMs = null, lastCloseMs = null;
+    const closes = [];
     try {
       for (const read of got.reads) {
         const row = rowFor(read, bars, { pair, cfg: opts.cfg, cost, calendar, comm, alerted: sent.has(read.closeMs) });
@@ -470,6 +485,7 @@ export async function buildRows({ pair, tf = null, bars, fromMs, toMs, cfg, cost
         if (!out.write(line)) await once(out, 'drain');
         if (firstCloseMs === null) firstCloseMs = row.closeMs;
         lastCloseMs = row.closeMs;
+        closes.push(row.closeMs);
         n++;
       }
       out.end();
@@ -492,7 +508,7 @@ export async function buildRows({ pair, tf = null, bars, fromMs, toMs, cfg, cost
     // The same test once more, on what was really written and on the file as
     // it is now: whatever else wrote it during the reads is not undone quietly.
     if (!replace) {
-      const why = replaceRefusal(path, { fromMs, toMs, rows: n, firstCloseMs, lastCloseMs });
+      const why = replaceRefusal(path, { fromMs, toMs, rows: n, firstCloseMs, lastCloseMs, closes });
       if (why) { rmSync(tmp, { force: true }); rmSync(mtmp, { force: true }); throw new Error(why); }
     }
     renameSync(tmp, path);

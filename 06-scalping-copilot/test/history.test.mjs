@@ -743,6 +743,87 @@ test('gapsIn needs the timeframe: without it every pair of bars would be a gap',
   assert.deepEqual(gapsIn(market(Date.UTC(2026, 0, 1), 5), 'M15'), []);
 });
 
+console.log('\nthe re-check of 17 Oct 2026');
+test('a deadline past a timer\'s limit, or Infinity, is refused rather than ending the run at once', async () => {
+  const h = home();
+  const t0 = Date.UTC(2026, 0, 1), nowMs = t0 + 10 * M15;
+  const s = binanceStub(market(t0, 10), nowMs);
+  for (const d of [Infinity, 2 ** 31, 30 * 86400e3, NaN]) {
+    const r = await loadHistory('BTCUSD', 'M15', { fromMs: t0, nowMs, deadlineMs: d, home: h, fetchImpl: s.fetchImpl });
+    assert.equal(r.ok, false, String(d));
+    assert.match(r.reason, /at most 2147483647 \(leave it out for no limit\)/);
+  }
+  assert.equal(s.calls.length, 0);
+  const ok = await loadHistory('BTCUSD', 'M15', { fromMs: t0, nowMs, deadlineMs: 2 ** 31 - 1, home: h, fetchImpl: s.fetchImpl });
+  assert.equal(ok.ok, true, ok.reason);
+});
+test('only a plain object is options: a Date, a Map or a signal that is not one throws, never "fetch everything"', async () => {
+  const t0 = Date.UTC(2026, 0, 1), nowMs = t0 + 10 * M15;
+  const s = binanceStub(market(t0, 10), nowMs);
+  for (const bad of [new Date(t0), new Map([['fromMs', t0]]), new URLSearchParams('fromMs=1')]) {
+    await assert.rejects(loadHistory('BTCUSD', 'M15', bad), TypeError, bad.constructor.name);
+  }
+  await assert.rejects(loadHistory('BTCUSD', 'M15', { fromMs: t0, nowMs, home: home(), fetchImpl: s.fetchImpl, signal: { aborted: false } }), /must be an AbortSignal/);
+  assert.equal(s.calls.length, 0);
+  const bare = await loadHistory('BTCUSD', 'M15', Object.assign(Object.create(null), { fromMs: t0, nowMs, home: home(), fetchImpl: s.fetchImpl }));
+  assert.equal(bare.ok, true, bare.reason);
+});
+test('gold: a Sunday evening lost after the reopen, and an early close to the next day\'s restart, are listed', () => {
+  const fri = Date.UTC(2026, 9, 9, 20, 45);                                      // closes 17:00 EDT
+  assert.equal(pairGap(fri, Date.UTC(2026, 9, 12, 3, 30)).length, 1, 'to Sunday 23:30 New York: Asia lost');
+  assert.deepEqual(pairGap(fri, Date.UTC(2026, 9, 11, 22, 0)), [], 'to the Sunday 18:00 reopen: the weekend');
+  assert.deepEqual(pairGap(fri, Date.UTC(2026, 9, 11, 21, 0)), [], 'to a 17:00 Sunday reopen: the weekend');
+  assert.equal(pairGap(Date.UTC(2026, 9, 13, 20, 15), Date.UTC(2026, 9, 14, 22, 0)).length, 1, 'Tuesday 16:30 to Wednesday 18:00: a Wednesday lost');
+  assert.deepEqual(pairGap(Date.UTC(2025, 11, 31, 18, 30), Date.UTC(2026, 0, 1, 23, 0)), [], 'New Year on a Thursday is the market shut');
+  // Declared limits, until there is a holiday table: a same-day early close on any weekday, and a whole
+  // Friday lost beside a weekend, read as the market shut.
+  assert.deepEqual(pairGap(Date.UTC(2026, 9, 13, 16, 45), Date.UTC(2026, 9, 13, 22, 0)), []);
+  assert.deepEqual(pairGap(Date.UTC(2026, 9, 8, 20, 45), Date.UTC(2026, 9, 11, 22, 0)), []);
+});
+test('a head asked for as of a moment before the first saved bar is refused, never fetched into a hole', async () => {
+  const h = home();
+  const t0 = Date.UTC(2026, 0, 1);
+  const bars = market(t0, 20000);
+  writeCacheFile(h, bars.slice(15000));
+  const s = binanceStub(bars, bars[19999].t + M15);
+  const r = await loadHistory('BTCUSD', 'M15', { fromMs: bars[2000].t, toMs: bars[4000].t, nowMs: bars[4000].t, home: h, fetchImpl: s.fetchImpl });
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /would leave a hole before the saved ones/);
+  assert.equal(s.calls.length, 0);
+  assert.equal(readCacheFile(h).length, 5000, 'the cache is as it was');
+  const all = await loadHistory('BTCUSD', 'M15', { fromMs: bars[2000].t, nowMs: bars[19999].t + 2 * M15, home: h, fetchImpl: s.fetchImpl });
+  assert.equal(all.ok, true, all.reason);
+  assert.equal(all.bars.length, 18000);
+  assert.deepEqual(all.coverage.gaps, []);
+});
+test('a gold tail more than one page behind is refused inside a short deadline, before a call is spent', async () => {
+  const h = home();
+  const t0 = Date.UTC(2026, 0, 5);
+  const bars = market(t0, 9000, M15, 4000);
+  writeCacheFile(h, bars.slice(0, 2000), 'XAUUSD');
+  const nowMs = bars[8999].t + M15;
+  const s = twelveStub(bars, nowMs);
+  const r = await loadHistory('XAUUSD', 'M15', { fromMs: t0, nowMs, home: h, fetchImpl: s.fetchImpl, keys: { twelvedata: 'K' }, deadlineMs: 5000, sleep: sleeper().sleep });
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /more than one Twelve Data page .* no call was spent\. A fill without a time limit has to run first/);
+  assert.equal(s.calls.length, 0);
+  const full = await loadHistory('XAUUSD', 'M15', { fromMs: t0, nowMs, home: h, fetchImpl: s.fetchImpl, keys: { twelvedata: 'K' }, sleep: sleeper().sleep });
+  assert.equal(full.ok, true, full.reason);
+  assert.equal(full.bars.length, 9000);
+});
+test('a cache another writer shortens during the fetch is not answered from as if it were whole', async () => {
+  const h = home();
+  const t0 = Date.UTC(2026, 0, 1);
+  const bars = market(t0, 3000);
+  writeCacheFile(h, bars.slice(0, 2900));
+  const nowMs = bars[2999].t + M15;
+  const inner = binanceStub(bars, nowMs);
+  const fetchImpl = async (url, init) => { writeCacheFile(h, bars.slice(2400, 2900)); return inner.fetchImpl(url, init); };
+  const r = await loadHistory('BTCUSD', 'M15', { fromMs: t0, nowMs, home: h, fetchImpl });
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /replaced by a shorter one while this ran/);
+});
+
 for (const r of pending) await r();
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

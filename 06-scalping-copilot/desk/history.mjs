@@ -43,6 +43,10 @@
  * Time limits. `opts.signal` (an AbortSignal) and `opts.deadlineMs` reach every
  * fetch and every wait: the journal resolves alerts inside a ~5 s budget and a
  * five-retry backoff (31 s) or a Twelve Data minute must not hold a command up.
+ * A gold tail more than one Twelve Data page behind cannot be filled inside a
+ * deadline shorter than the 8 s between calls (a newest-first partial tail
+ * cannot join the cache), so such a call is refused before it spends one of
+ * the day's 800: a fill without a time limit has to run first.
  *
  * What it is not. A reference feed's bars, not IC Markets' quote (decision 26:
  * the feeds sit tens of dollars from the broker). Binance's volume is that
@@ -81,7 +85,12 @@ export const TWELVE_PAGE_STALE_MS = 7 * 86400e3;
 export const MAX_RETRIES = 5;
 /** A gap is listed from this many missing bars: "a gap of more than 4 bars" (LEARNING-PLAN.md). */
 export const GAP_MIN_MISSING = 5;
-/** Bars an engine read looks back over (the live watcher fetches 1,000 for the higher-timeframe bias). */
+/**
+ * Bars a gap is looked for behind a check, by default: the live watcher's
+ * 1,000-bar fetch. A read is made from 999 of them (live.mjs CLOSED_BARS; the
+ * newest is still forming), so this errs by one bar towards finding a gap;
+ * the journal passes its own lookback.
+ */
 export const GAP_LOOKBACK = 1000;
 
 /*
@@ -98,18 +107,25 @@ export const GAP_LOOKBACK = 1000;
 export const GOLD_CLOSE_ET_MIN = 17 * 60;
 /** 18:00 New York: the restart after every closure. */
 export const GOLD_REOPEN_ET_MIN = 18 * 60;
-/** A closure starting after noon New York and before the usual close is a holiday's early close. */
+/** A closure starting after noon New York and before the usual close is a holiday's early close (to 18:00 the same day; the next day only over 25 December or 1 January). */
 export const GOLD_EARLY_CLOSE_FROM_ET_MIN = 12 * 60;
 /** How far a closure's edge may sit from the scheduled time: one bar, and at least a quarter hour. */
 export const GOLD_CLOSURE_SLACK_MS = 15 * 60000;
-/** An early close and the whole next day shut (Christmas or New Year midweek): about 28 hours. */
+/** An early close and the whole next day shut (Christmas or New Year midweek only): about 28 hours. */
 export const GOLD_HOLIDAY_MAX_MS = 30 * 3600e3;
 /**
  * Gold's weekend: about 49 hours, stretched to about 76 when a holiday falls on
  * the Friday or the Monday (Christmas 2020: Thursday 13:45 to Sunday 18:00 New
  * York is 76¼ hours). A closure over a Saturday up to this long, starting after
- * noon New York and ending on the Sunday or at an 18:00 restart, is the
- * weekend; a hole running into the London session either side is not.
+ * noon New York and ending at the Sunday reopen (17:00–18:00 New York) or at
+ * an 18:00 restart, is the weekend. A hole that starts in Friday's London
+ * session (before noon New York) or runs into Monday's (a restart at any other
+ * time) is listed. What it CANNOT tell apart: a whole Friday or Monday lost
+ * beside a weekend (Thursday 17:00 to Sunday 18:00, or Friday 17:00 to Monday
+ * 18:00, New York) has the shape of a holiday weekend and is read as one —
+ * telling them apart needs a holiday date table, which this module does not
+ * have. Likewise an early close to an 18:00 restart on the same weekday reads
+ * as a holiday's early close on any weekday (from 12:00, or 16:25 on M5).
  */
 export const GOLD_WEEKEND_MAX_MS = 78 * 3600e3;
 
@@ -117,6 +133,8 @@ export const GOLD_WEEKEND_MAX_MS = 78 * 3600e3;
 export const HISTORY_FEEDS = { BTCUSD: 'binance-vision', XAUUSD: 'twelvedata' };
 
 const MAX_PAGES = 20000;
+/** The longest delay a timer can hold (2^31 − 1 ms, about 24.8 days): the most a deadline may be. */
+export const MAX_DEADLINE_MS = 2147483647;
 const DAY_MS = 86400e3;
 
 /** Where the desk keeps container state: $SCALP_DESK_HOME, or ~/.scalp-desk. */
@@ -199,11 +217,17 @@ function overSaturday(fromT, toT) {
  * before a hole) to `reopenAt` (the open of the first bar after it):
  *  - the daily break: from 17:00 to 18:00 New York the same day;
  *  - a holiday: from an early close (after noon, before 17:00) to an 18:00
- *    restart, that day or the next, within GOLD_HOLIDAY_MAX_MS;
+ *    restart the same day; or the next day when the closure covers 25
+ *    December or 1 January (a midweek Christmas or New Year), within
+ *    GOLD_HOLIDAY_MAX_MS. A next-day restart after any other early close is a
+ *    trading day lost, Wednesday's London session with it (review, 17 Oct);
  *  - the weekend: over a Saturday, within GOLD_WEEKEND_MAX_MS, from after
- *    noon New York (so a hole in Friday's London session still counts) to a
- *    Sunday or an 18:00 restart (so a hole in Monday's still counts).
- * Each edge may sit up to a bar (at least 15 minutes) off the hour.
+ *    noon New York (so a hole in Friday's London session still counts) to the
+ *    Sunday reopen, 17:00–18:00 New York, or an 18:00 restart (so a hole in
+ *    Monday's still counts, and so does a Sunday evening lost after the
+ *    reopen: an Asian session).
+ * Each edge may sit up to a bar (at least 15 minutes) off the hour. What the
+ * rule cannot see without a holiday table is in GOLD_WEEKEND_MAX_MS's note.
  */
 function goldShut(closeAt, reopenAt, ms) {
   const slack = Math.max(ms, GOLD_CLOSURE_SLACK_MS) / 60000;
@@ -211,11 +235,15 @@ function goldShut(closeAt, reopenAt, ms) {
   const len = reopenAt - closeAt;
   const atReopen = Math.abs(o.min - GOLD_REOPEN_ET_MIN) <= slack;
   if (len <= GOLD_WEEKEND_MAX_MS && overSaturday(closeAt, reopenAt)) {
-    return c.min >= GOLD_EARLY_CLOSE_FROM_ET_MIN - slack && (o.dow === 'Sun' || atReopen);
+    const sundayReopen = o.dow === 'Sun' && o.min >= GOLD_CLOSE_ET_MIN - slack && o.min <= GOLD_REOPEN_ET_MIN + slack;
+    return c.min >= GOLD_EARLY_CLOSE_FROM_ET_MIN - slack && (sundayReopen || atReopen);
   }
   if (!atReopen) return false;
   if (c.day === o.day && Math.abs(c.min - GOLD_CLOSE_ET_MIN) <= slack) return true;
-  return c.min >= GOLD_EARLY_CLOSE_FROM_ET_MIN && c.min < GOLD_CLOSE_ET_MIN - slack && len <= GOLD_HOLIDAY_MAX_MS;
+  if (!(c.min >= GOLD_EARLY_CLOSE_FROM_ET_MIN && c.min < GOLD_CLOSE_ET_MIN - slack)) return false;
+  if (c.day === o.day) return true;
+  const yearEnd = (d) => d.endsWith('-12-25') || d.endsWith('-01-01');
+  return len <= GOLD_HOLIDAY_MAX_MS && (yearEnd(c.day) || yearEnd(o.day));
 }
 
 /** Whether gold's market is on its scheduled break at `t` (daily 17:00-18:00, or Friday 17:00 to Sunday 18:00, New York). */
@@ -543,15 +571,18 @@ function goldBarPossible(fromT, toT, nowMs, ms) {
  *   pair  'BTCUSD' | 'XAUUSD' (or "bitcoin", "gold")
  *   tf    'M15' | 'M5' (or as typed: "15", "5m")
  *   opts  a plain object (the range is never positional; a call written
- *         loadHistory(pair, tf, fromMs, toMs, …) throws a TypeError):
+ *         loadHistory(pair, tf, fromMs, toMs, …) throws a TypeError, and so
+ *         does a Date, a Map or any object that is not a plain one):
  *     fromMs  earliest bar wanted (open time, UTC ms). Left out: as far back as
  *             the feed goes (Binance from 2017-08-17; Twelve Data until "No data").
  *     toMs    default nowMs. nowMs default Date.now(): bars that have not closed
  *             by then are neither cached nor returned. Any of the three given
  *             but not a finite number → { ok: false, reason }, never "everything".
- *     signal      an AbortSignal; cancels every fetch and wait at once.
- *     deadlineMs  a time budget from the call; no wait is started that would
- *                 pass it, and fetches are cut off when it runs out.
+ *     signal      an AbortSignal (anything else throws a TypeError); cancels
+ *                 every fetch and wait at once.
+ *     deadlineMs  a time budget from the call, up to 2,147,483,647 ms (a
+ *                 timer's limit; leave it out for none); no wait is started
+ *                 that would pass it, and fetches are cut off when it runs out.
  *     home    default $SCALP_DESK_HOME or ~/.scalp-desk. fetchImpl default fetch,
  *             called as fetchImpl(url, { signal, headers? }).
  *     keys    { twelvedata } default $TWELVEDATA_API_KEY.
@@ -576,8 +607,14 @@ function goldBarPossible(fromT, toT, nowMs, ms) {
  *               arrive are still saved when they join onto the cache, so a rerun carries on.
  */
 export async function loadHistory(pair, tf, opts = {}) {
-  if (arguments.length > 3 || opts === null || typeof opts !== 'object' || Array.isArray(opts)) {
-    throw new TypeError('loadHistory(pair, tf, opts): the range and settings go in one options object ({ fromMs, toMs, home, fetchImpl, … }), not as separate arguments');
+  const proto = opts !== null && typeof opts === 'object' ? Object.getPrototypeOf(opts) : undefined;
+  if (arguments.length > 3 || (proto !== Object.prototype && proto !== null)) {
+    // A Date, a Map or URLSearchParams would otherwise read as "no options":
+    // from 1970, the default home and the global fetch (review, 17 Oct 2026).
+    throw new TypeError('loadHistory(pair, tf, opts): the range and settings go in one plain options object ({ fromMs, toMs, home, fetchImpl, … }), not as separate arguments or another kind of object');
+  }
+  if (opts.signal !== undefined && opts.signal !== null && !(opts.signal instanceof AbortSignal)) {
+    throw new TypeError('loadHistory: opts.signal must be an AbortSignal');
   }
   const P = historyPair(pair);
   if (!P) return { ok: false, reason: `There is no price history for "${pair}" here: bitcoin (BTCUSD) and gold (XAUUSD) only.` };
@@ -589,8 +626,10 @@ export async function loadHistory(pair, tf, opts = {}) {
   const toO = timeOpt(opts, 'toMs', nowO.value), fromO = timeOpt(opts, 'fromMs', 0);
   if (toO.error || fromO.error) return { ok: false, reason: toO.error || fromO.error };
   const nowMs = nowO.value, toMs = toO.value, fromMs = fromO.value;
-  if (opts.deadlineMs !== undefined && !(typeof opts.deadlineMs === 'number' && opts.deadlineMs > 0)) {
-    return { ok: false, reason: `deadlineMs must be a positive number of milliseconds; it was ${String(opts.deadlineMs)}.` };
+  // A timer cannot hold more than 2^31 − 1 ms: Node fires a longer one after
+  // 1 ms with a warning, which ended a run meant to have no limit at once.
+  if (opts.deadlineMs !== undefined && !(typeof opts.deadlineMs === 'number' && opts.deadlineMs > 0 && opts.deadlineMs <= MAX_DEADLINE_MS)) {
+    return { ok: false, reason: `deadlineMs must be a positive number of milliseconds, at most ${MAX_DEADLINE_MS} (leave it out for no limit); it was ${String(opts.deadlineMs)}.` };
   }
   const home = opts.home ?? deskHome();
   const key = String((opts.keys ? opts.keys.twelvedata : process.env.TWELVEDATA_API_KEY) || '');
@@ -613,6 +652,7 @@ export async function loadHistory(pair, tf, opts = {}) {
     userSignal: opts.signal ?? null,
     signal: signals.length > 1 ? AbortSignal.any(signals) : signals[0] ?? null,
     deadlineAt: opts.deadlineMs ? clock() + opts.deadlineMs : null,
+    deadlineMs: opts.deadlineMs ?? null,
   };
   try {
     return await fill(P, tfId, { fromMs, toMs, nowMs, home, ctx });
@@ -647,7 +687,14 @@ async function fill(P, tfId, { fromMs, toMs, nowMs, home, ctx }) {
     const first = firstBar.t, last = lastBar.t;
     // headCheckedFrom: an earlier run asked from there and found nothing before the first bar.
     const checked = headTrusted ? Math.min(first, meta.headCheckedFrom) : first;
-    if (fromMs <= checked - ms && fromMs < end) spans.push({ kind: 'head', from: fromMs, to: first });
+    if (fromMs <= checked - ms && fromMs < end) {
+      // Only bars closed by nowMs are kept. With nowMs before the first saved
+      // bar, the head's bars between the two would be dropped and the head
+      // still marked as checked: a hole the "ends only" rule never fills
+      // (review, 17 Oct 2026). Nothing saved is in the range then anyway.
+      if (nowMs < first) return { ok: false, reason: `The saved history starts at ${isoUtc(first)} UTC, after the moment asked for (${isoUtc(nowMs)} UTC); fetching the earlier bars as of then would leave a hole before the saved ones, so nothing was fetched. Ask as of now (leave nowMs out).` };
+      spans.push({ kind: 'head', from: fromMs, to: first });
+    }
     // Sure of the last bar: fetch only once the next one (opening before toMs) has closed.
     // Not sure: fetch the last bar again whenever it is wanted and has closed.
     let wantTail = tailSure ? last + ms < toMs && last + 2 * ms <= nowMs : last < toMs && last + ms <= nowMs;
@@ -665,6 +712,14 @@ async function fill(P, tfId, { fromMs, toMs, nowMs, home, ctx }) {
     spans.length = 0;
   }
   if (spans.length && typeof ctx.fetchImpl !== 'function') return { ok: false, reason: 'This Node has no fetch; it needs version 18 or later.' };
+  // Twelve Data pages newest first, so a tail more than one page long arrives
+  // from the far end and cannot join the cache until every page is in. Inside
+  // a deadline shorter than the spacing between calls only one call can be
+  // made: it would spend one of the day's 800 and keep nothing.
+  const longTail = spans.find((s) => s.kind === 'tail' && (s.to - s.from) / ms > TWELVE_PAGE);
+  if (P === 'XAUUSD' && longTail && ctx.deadlineMs !== null && ctx.deadlineMs < TWELVE_SPACING_MS) {
+    return { ok: false, reason: `Gold's saved history ends at ${isoUtc(longTail.from)} UTC, more than one Twelve Data page (${TWELVE_PAGE.toLocaleString('en-GB')} bars) behind; filling that needs calls ${TWELVE_SPACING_MS / 1000} s apart, more than the time allowed here, so no call was spent. A fill without a time limit has to run first (desk.mjs journal update runs one).` };
+  }
 
   const kept = [];
   let error = null, aborted = false, headCheckedFrom = null;
@@ -695,6 +750,12 @@ async function fill(P, tfId, { fromMs, toMs, nowMs, home, ctx }) {
   if (fresh.length || cached.bars.length) {
     const now = fresh.length ? readCache(file) : cached;
     if (now.error) return { ok: false, reason: now.error };
+    // Another writer shortened the file while this ran: merging onto it would
+    // answer without the bars that were cut (the next call would heal, but this
+    // one must not say ok).
+    if (cached.bars.length && (!now.bars.length || now.bars[0].t > cached.bars[0].t)) {
+      return { ok: false, reason: 'The saved price history was replaced by a shorter one while this ran, so nothing was written; run it again.' };
+    }
     for (const b of fresh) { const i = indexOfT(now.bars, b.t); if (i < 0 || !sameBar(now.bars[i], b)) fetched++; }
     bars = fetched ? mergeBars(now.bars, fresh) : now.bars;
     if (now.bars.length && (bars[0].t > now.bars[0].t || bars[bars.length - 1].t < now.bars[now.bars.length - 1].t)) {

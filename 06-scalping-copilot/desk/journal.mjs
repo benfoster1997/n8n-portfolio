@@ -130,7 +130,15 @@
  *    refused); canonicalAlerts' feedId is a SOURCE id (e.g.
  *    'binance-vision'), one of REFERENCE_FEEDS[pair].sources, never a
  *    fallback feed; run a pull before `journal update`, so that contested
- *    days stay rare.
+ *    days stay rare. forPair and keyFor give one instrument's view of a
+ *    method; a day held for the broker's session comes back pending with why
+ *    'outside-session'. A scan's ideas are shown events of source 'scan'
+ *    (the plan's "scan-extra"): never the sample, whether or not they would
+ *    have passed shouldAlert, and outranked by the watcher's record of the
+ *    same bar. A journal written before commit 9e5f123 must be discarded and
+ *    recorded again, not read as the same method: sanitize now strips each
+ *    line's server offset and the other instrument's costs, so its alerts no
+ *    longer match their day records' checksums (none exists anywhere).
  *
  * What it is not. Not the user's MT5 history: an alert is scored on Binance's
  * or Twelve Data's bars whether or not it was taken. Not a verdict before the
@@ -145,7 +153,7 @@ import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync, unlinkS
 import { createHash } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { liveRead, shouldAlert, alertState, ideaRecord, inWatchHours, TARGET_RULE, FETCH_BARS } from './live.mjs';
+import { liveRead, shouldAlert, alertState, ideaRecord, inWatchHours, TARGET_RULE, CLOSED_BARS } from './live.mjs';
 import { outcome } from './outcome.mjs';
 import { clusteredByDay } from './stats.mjs';
 import { costFor, label, serverOffsetFor } from './lib.mjs';
@@ -270,8 +278,10 @@ export const VERDICTS = Object.freeze({
  *
  * `spreadNum` and `commNum` are distances in price units (what the alert was
  * costed with), not money. `features` is a flat object of numbers or
- * true/false under names from features.mjs; `filter` is the learner's
- * keep/remove call; neither can carry text. `account` sits only on what the
+ * true/false under names from features.mjs — on the method's alerts (read on
+ * the reference feed) and on what the user was shown (read on the live feed
+ * the alert came from); `filter` is the learner's keep/remove call; neither
+ * can carry text. `account` sits only on what the
  * user was shown and did — the method's record belongs to no account.
  */
 const LEVELS = ['pair', 'tf', 'method', 'barCloseMs', 'validUntilMs', 'side', 'feed', 'feedId',
@@ -280,7 +290,7 @@ export const ALLOWED = Object.freeze({
   common: Object.freeze(['type', 'id', 'at']),
   alert: Object.freeze([...LEVELS, 'features', 'filter', 'outcome']),
   day: Object.freeze(['pair', 'tf', 'method', 'day', 'alerts', 'ids', 'sums', 'kinds', 'gap']),
-  shown: Object.freeze(['account', 'source', ...LEVELS]),
+  shown: Object.freeze(['account', 'source', ...LEVELS, 'features']),
   resolved: Object.freeze(['account', 'r', 'how', 'bars', 'mfe', 'mae', 'bothTouched', 'scoring', 'gap', 'feed', 'spreadNum']),
   ticketed: Object.freeze(['account', 'userPrice', 'stopLoss', 'takeProfit']),
   taken: Object.freeze(['account', 'how']),
@@ -338,11 +348,13 @@ const MAX_TEXT = 300;
  * digits in a run.
  *
  * The text is NFKC-normalised first, so fullwidth digits and signs count as
- * their plain forms ("０７７００"); a digit is any \p{Nd}. Up to three
- * characters that are not letters between two digits do not break a run
- * ("07700/900123", "077 00  900 123", "(07700) 900123", "07700:900:123",
- * "07700;900123", "07700|900123"), and a letter O between digits is read as
- * a zero ("07700 9OO123").
+ * their plain forms ("０７７００"); a digit is any \p{Nd}. Every run of
+ * whitespace counts as one space ("07700    900123", tabs too: the re-check
+ * of 17 Oct found 4 spaces slipped past), then up to three characters that
+ * are not letters between two digits do not break a run ("07700/900123",
+ * "077 00  900 123", "(07700) 900123", "07700:900:123", "07700;900123",
+ * "07700|900123"), and a letter O between digits is read as a zero
+ * ("07700 9OO123").
  *
  * Prices are the one exemption: the engine writes them with two decimals
  * ("84250.00", "84,399.55", "4375.20", a gap "84250.00-84300.00"), never more
@@ -370,7 +382,7 @@ const DIGIT_RUN = new RegExp(`\\p{Nd}(?:${NOT_LETTER}{0,3}\\p{Nd}){6,}`, 'u');
 export function sensitiveText(raw) {
   const s = String(raw).normalize('NFKC');
   if (MONEY_TEXT.test(s) || SPELT_EMAIL.test(s) || CURRENCY_NUMBER.test(s) || BALANCE_NUMBER.test(s) || ID_NUMBER.test(s)) return true;
-  const digits = s.replace(O_DIGIT, (o) => '0'.repeat(o.length));
+  const digits = s.replace(/\s+/gu, ' ').replace(O_DIGIT, (o) => '0'.repeat(o.length));
   return DIGIT_RUN.test(digits.replace(PRICE, ' '));
 }
 const TOKEN = /^[A-Za-z0-9._-]{1,40}$/;
@@ -1196,7 +1208,9 @@ function* calendar(fromDay, toDay) {
  *   featuresFor, filterFor   (r, seen) → features / filter output, stored on the alert
  *   keep         (r, seen) → false drops an idea before shouldAlert (a live filter;
  *                it must then be part of `method.filter`)
- *   lookback     bars per read; the watcher fetches FETCH_BARS (1,000)
+ *   lookback     bars per read: CLOSED_BARS (999), the closed bars of the
+ *                watcher's 1,000-bar fetch, so the record reads each close
+ *                exactly as the watcher does
  *   read         the read function (liveRead; a test may memoise it)
  *
  * Returns { events: [...alert events, ...day events], alerts, days, pending: [{day, pair, why}],
@@ -1204,7 +1218,7 @@ function* calendar(fromDay, toDay) {
  */
 export function canonicalAlerts({
   pair, bars, feedId, cfg, fromMs, toMs, method, events = [], nowMs = Date.now(),
-  featuresFor = null, filterFor = null, keep = null, lookback = FETCH_BARS, read = liveRead,
+  featuresFor = null, filterFor = null, keep = null, lookback = CLOSED_BARS, read = liveRead,
 }) {
   if (!PAIRS.includes(pair)) fail(`unknown instrument ${pair}`);
   const ref = REFERENCE_FEEDS[pair];
@@ -1314,9 +1328,11 @@ const modeOf = (cfg) => oneOf((cfg && cfg.account && cfg.account.mode) || 'demo'
  * (`watch`) or a scan reported (`scan`). The account mode is taken from the
  * settings here, once, and every later event for this alert copies it. Only
  * a record from liveRead — one that names its feed — can become an alert, so
- * nothing read from a screenshot ever does.
+ * nothing read from a screenshot ever does. `features` (optional) is
+ * features.mjs featuresAt of that very read, under the names setFeatureNames
+ * was given.
  */
-export function shownEvent(rec, { source, method, cfg, at = Date.now() } = {}) {
+export function shownEvent(rec, { source, method, cfg, at = Date.now(), features = null } = {}) {
   if (!rec || !rec.pair || !(rec.barCloseMs > 0)) fail('a shown alert needs its pair and bar close');
   if (!rec.sourceId) fail('a shown alert must come from a live feed read (it names no feed)');
   if (!PAIRS.includes(rec.pair)) fail(`unknown instrument ${rec.pair}`);
@@ -1331,6 +1347,7 @@ export function shownEvent(rec, { source, method, cfg, at = Date.now() } = {}) {
     stopDist: rec.stopDist, tp1Dist: rec.tp1Dist, tp2Dist: rec.tp2Dist ?? null, spreadNum: rec.spreadNum ?? null,
     commNum: costFor(rec.pair, 0, cfg).comm, netR: rec.netR ?? null, confidence: rec.confidence ?? null,
     reasons: rec.reasons || [], against: rec.against || [],
+    ...(features ? { features } : {}),
   });
 }
 
@@ -1725,9 +1742,16 @@ const GAP_LINE = (n) => `${plural(n, 'day')} had a hole in the price feed's bars
  * instruments) are no longer the sample's method's (summary works it out from cfg). The record is
  * then read under a different method, so the sample has stopped, whether or
  * not a day has been recorded under the new settings yet.
+ * `methodChanged`: the desk now runs another method for one of the sample's
+ * instruments (summary's `methodNow`): a new METHOD_VERSION of the rules that
+ * decide alerts, another target rule or chart timeframe. The same: stopped,
+ * and said so at once (rule 1), before anything is recorded under it.
  */
-function sampleLines(st, { settingsChanged = false } = {}) {
+function sampleLines(st, { settingsChanged = false, methodChanged = false } = {}) {
   if (!st) return ['**The alert sample**: none committed yet, so there is no verdict to give.'];
+  if (!st.complete && methodChanged) {
+    return [`**The alert sample**: stopped at ${Math.min(st.count, st.planned)} of ${st.planned} because the desk's method changed after you committed to it (a new version of the rules that decide alerts, the target rule or the chart timeframe), and that makes it a different method; it gives no verdict. A new sample can be committed under the new one.`];
+  }
   if (!st.complete && settingsChanged) {
     return [`**The alert sample**: stopped at ${Math.min(st.count, st.planned)} of ${st.planned} because your settings changed after you committed to it (the session window or the costs), and that makes it a different method; it gives no verdict. A new sample can be committed under the new settings.`];
   }
@@ -1782,9 +1806,13 @@ function defaultPeriod(nowMs, cfg) {
  * (scored on the feed) and the user's trades (as they told them) in two
  * blocks never added together, then the sample. Covers bar closes in
  * [fromMs, toMs); by default the most recent session day. `method` picks
- * whose record is shown (default: the sample's).
+ * whose record is shown (default: the sample's). `methodNow` is the method
+ * the desk runs now (methodOf with live.mjs METHOD_VERSION and the settings'
+ * timeframe): when it is not the sample's for one of its instruments, the
+ * sample has stopped and the summary says so, and the record shown is the
+ * new method's.
  */
-export function summary(events, { nowMs = Date.now(), cfg, method = null, fromMs = null, toMs = null } = {}) {
+export function summary(events, { nowMs = Date.now(), cfg, method = null, fromMs = null, toMs = null, methodNow = null } = {}) {
   if (!cfg || !cfg.window) fail('summary needs the settings (cfg.window)');
   const tz = tzOf(cfg);
   const [defFrom, defTo] = defaultPeriod(nowMs, cfg);
@@ -1795,9 +1823,10 @@ export function summary(events, { nowMs = Date.now(), cfg, method = null, fromMs
   // read under that one, and the sample has stopped.
   const current = sample && cfg.account ? methodUnder(sample.method, cfg) : sample ? sample.method : null;
   const settingsChanged = !!sample && cfg.account ? settingsDiffer(sample.method, cfg, sample.pairs) : false;
-  const m = method || current || null;
+  const methodChanged = !!sample && !!methodNow && sample.pairs.some((p) => keyFor(methodNow, p) !== keyFor(current, p));
+  const m = method || (methodChanged ? methodNow : current) || null;
   const st = sampleStatus(events, sample);
-  const running = st && !st.ended && !(settingsChanged && !st.complete);
+  const running = st && !st.ended && !((settingsChanged || methodChanged) && !st.complete);
   const entries = [...fold(events, { method: m }).values()];
   const inPeriod = (t) => Number.isFinite(t) && t >= from && t < to;
   const period = entries.filter((e) => inPeriod(e.barCloseMs));
@@ -1865,7 +1894,7 @@ export function summary(events, { nowMs = Date.now(), cfg, method = null, fromMs
     trades.push(modes.map(([mode, xs]) => `- ${mode === 'live' ? 'Live' : 'Demo'}: ${plural(xs.length, 'trade')}, on average ${fmtR(xs.reduce((s, e) => s + e.actual.r, 0) / xs.length)} times the risk`).join('\n'));
   }
 
-  const blocks = [alerts.join('\n'), trades.join('\n'), sampleLines(st, { settingsChanged }).join('\n')];
+  const blocks = [alerts.join('\n'), trades.join('\n'), sampleLines(st, { settingsChanged, methodChanged }).join('\n')];
   const earlierEnded = foldSamples(events).filter((s) => sample && s.committedAt < sample.committedAt)
     .map((s) => ({ s, x: sampleStatus(events, s) })).filter(({ x }) => !x.complete);
   if (earlierEnded.length) blocks.push(earlierEnded.map(({ s, x }) => `An earlier sample (committed ${dayLabel(s.committedAt, tz)}) stopped at ${Math.min(x.count, x.planned)} of ${x.planned} when the method changed.`).join('\n'));

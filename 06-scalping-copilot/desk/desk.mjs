@@ -21,8 +21,14 @@
  *   watch [--pair P] [--hours H] [--anytime] [--once] | --stop
  *                                         read the live chart at every bar close; exits with
  *                                         STATUS: alert (and the reply) when an idea passes
- *   take  --price N [--pair P] [--spread S]
+ *   take  --price N [--pair P] [--spread S] [--account demo|live]
  *                                         the last alert, as a ticket from the user's MT5 price
+ *   journal [summary] | update | result --alert A (--r R | --how H | --pounds P --risk X) [--account M]
+ *         | sample [--alerts N] | took --alert A [--account M] | alert --alert A | account demo|live
+ *                                         the automatic record of alerts (desk/journal.mjs);
+ *                                         A is an alert id, "last" or its London time (HH:MM)
+ *   learn status | report | similar --at <UTC bar close> [--side buy|sell]
+ *                                         the learning layer's words for the user (desk/learn.mjs)
  *
  * Output: a STATUS line for the session, maybe NOTE lines for the session
  * only, then the text to send the user between "--- reply ---" and
@@ -38,9 +44,19 @@
  * Network commands re-run themselves with NODE_USE_ENV_PROXY=1 when the
  * environment has a proxy and it is not set: Node's fetch ignores HTTPS_PROXY
  * otherwise, and every request fails with ENOTFOUND (desk/net.mjs). $SCALP_DESK_BARS (a JSON
- * file of bars per instrument) stands in for the feeds under test, and
- * $SCALP_DESK_NOW sets the clock; under it the watcher's waits move the clock
- * on instead of sleeping.
+ * file of bars per instrument) stands in for the feeds under test — the live
+ * feeds and the reference feed's history alike; an optional "sources" entry
+ * ({ "BTCUSD": "binance-vision" }) names the live feed the bars stand for —
+ * and $SCALP_DESK_NOW sets the clock; under it the watcher's waits move the
+ * clock on instead of sleeping.
+ *
+ * The journal (desk/journal.mjs) lives beside the config (journal.jsonl), or
+ * at $SCALP_DESK_JOURNAL, so a test's config in a temporary folder gets a
+ * temporary journal. watch and scan record every idea they send; take, plan
+ * took and journal result record what the user did; `journal update` records
+ * the method's own alerts on the reference feed. watch, scan, now, brief and
+ * journal also run that update silently first, inside about five seconds:
+ * it never adds a line, and nothing it does can fail the command.
  */
 import { readFileSync, writeFileSync, mkdirSync, renameSync, existsSync, rmSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -57,12 +73,21 @@ import { LENSES, analystPrompt, headPrompt, fastPrompt, checkPlan, parseReply, s
 import { tfInfo, timeframeOf } from '../src/timeframes.js';
 import { SETUPS, planProblem, planStatus, dayKey } from '../src/brief.js';
 import { formatHM } from '../src/timezone.js';
-import { loadBars, closedBars } from '../src/data-feeds.js';
-import { windowState } from '../src/sessions.js';
+import { loadBars, closedBars, BTC_SOURCES, XAU_SOURCES } from '../src/data-feeds.js';
+import { windowState, localDate } from '../src/sessions.js';
+import { zonedTimeToUtc } from '../src/timezone.js';
 import {
-  FETCH_BARS, liveRead, shouldAlert, ideaRecord, formatLiveIdea, formatLiveNone, takeIdea, nextPollMs, inWatchHours,
-  minHistory, alertState,
+  FETCH_BARS, CLOSED_BARS, METHOD_VERSION, TARGET_RULE, liveRead, shouldAlert, ideaRecord, formatLiveIdea, formatLiveNone, takeIdea,
+  nextPollMs, inWatchHours, minHistory, alertState,
 } from './live.mjs';
+import {
+  journalPath, readEvents, appendEvents, setFeatureNames, methodOf, keyFor, fold, foldDays, foldSample, foldConsent, sampleStatus,
+  canonicalAlerts, shownEvent, resolveOpen, markTicketed, markTaken, markActual, accountMismatch, needsLiveConsent, consentEvent,
+  setSample, summary, outcomeSentence, sampleQuestion, fmtR, idOf, KNOWN_FEEDS, REFERENCE_FEEDS, ACCOUNT_MODES, PAIRS as JOURNAL_PAIRS,
+  DEFAULT_PLANNED_ALERTS, HOLDOUT as JOURNAL_HOLDOUT,
+} from './journal.mjs';
+import { FEATURE_NAMES, featuresFromBars } from './features.mjs';
+import { loadHistory, HISTORY_FEEDS } from './history.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const HOME = process.env.SCALP_DESK_HOME || join(homedir(), '.scalp-desk');
@@ -101,9 +126,13 @@ function parseArgs(argv) {
 
 function say(status, reply, notes = []) {
   console.log(`STATUS: ${status}`);
-  for (const n of notes) console.log(n);
+  // The journal's notes (journalNotes, below) ride with whatever the command says.
+  for (const n of [...notes, ...journalNotes.splice(0)]) console.log(n);
   if (reply) console.log(`--- reply ---\n${reply}\n--- end ---`);
 }
+
+/** NOTE lines from the journal for the session, printed with the command's STATUS; never part of the reply. */
+const journalNotes = [];
 
 function usage(msg) {
   console.log(`STATUS: usage\n${msg}`);
@@ -181,7 +210,9 @@ function imagesAlreadyRead() {
 
 /* ------------------------------------------------------------ live prices */
 
-const NET_CMDS = ['scan', 'watch', 'take'];
+// now, brief and journal reach the network too: the journal's silent update
+// reads the reference feed's history (desk/history.mjs); learn similar may.
+const NET_CMDS = ['scan', 'watch', 'take', 'now', 'brief', 'journal', 'learn'];
 // Under test ($SCALP_DESK_NOW) the clock starts there and moves only when the
 // watcher waits: a wait advances it instead of sleeping, so a whole morning of
 // bar closes runs in a second. Otherwise both are the real clock.
@@ -204,8 +235,12 @@ const goldAvailable = () => (process.env.SCALP_DESK_BARS ? !!(readJson(process.e
 async function liveBars(pair, tf, preferred = null) {
   const fixture = process.env.SCALP_DESK_BARS;
   if (fixture) {
-    const bars = readJson(fixture, {})[pair] || [];
-    if (bars.length) return { ok: true, bars, source: { id: 'test', label: 'test bars' } };
+    const file = readJson(fixture, {});
+    const bars = file[pair] || [];
+    // The stand-in may say which live feed its bars stand for; otherwise it is
+    // no feed the journal can name, and nothing read from it is recorded.
+    const named = file.sources && [...BTC_SOURCES, ...XAU_SOURCES].find((x) => x.id === file.sources[pair]);
+    if (bars.length) return { ok: true, bars, source: named ? { id: named.id, label: named.label } : { id: 'test', label: 'test bars' } };
     // No gold bars stands for no gold key, as goldAvailable() reads it.
     return pair === 'XAUUSD' ? { ok: false, noKey: true, reason: 'no Twelve Data key ($TWELVEDATA_API_KEY)' } : { ok: false, reason: 'no test bars' };
   }
@@ -229,14 +264,313 @@ function recordAlerts(recs) {
 
 const KEY_HOW = 'Gold needs a free key from twelvedata.com (sign up, then API Keys). Add it in this session\'s cloud environment settings (title bar → environment → Edit) as an environment variable named TWELVEDATA_API_KEY — not in this chat — then start a new session. Bitcoin needs nothing.';
 
+/* ---------------------------------------------------------------- the journal */
+
+// Beside the config (or $SCALP_DESK_JOURNAL): a test's temporary config gets a
+// temporary journal, never desk/journal.jsonl.
+const JOURNAL = journalPath({ env: process.env, configPath: CONFIG });
+// The feature names an alert may carry are features.mjs's own (journal.mjs
+// refuses features under any other name).
+setFeatureNames(FEATURE_NAMES);
+/** How long the silent update may take before the command goes on without it. */
+const SILENT_MS = 5000;
+/** How long a mark waiting for "which account was it on?" stays answerable. */
+const PENDING_MS = 2 * 3600e3;
+const pendingPath = join(HOME, 'journal-pending.json');
+const COMMIT_JOURNAL = `NOTE: the journal changed — pull with rebase, then commit and push ${JOURNAL}.`;
+const DAY_MS = 86400e3;
+const LONDON = 'Europe/London';
+const nameOf = (pair) => label(pair).toLowerCase();
+
+/** The method the desk runs now: live.mjs METHOD_VERSION and target rule, the settings' timeframe, window and costs. */
+const methodNow = (c = cfg) => methodOf({ version: METHOD_VERSION, targetRule: TARGET_RULE, tf: timeframeFor(c), cfg: c });
+const knownFeed = (id) => KNOWN_FEEDS.some((f) => f.id === id);
+const journalEvents = () => { try { return readEvents(JOURNAL); } catch { return []; } };
+
+/** Rule 6's question, in plain words, with the point about config.json's balance. */
+const LIVE_QUESTION = 'One question before anything from your live account goes in your record: the record of alerts and of your trades is kept in a public repository on GitHub, where anyone can read it. It never holds money amounts, lot sizes or account details — only the alerts, the MT5 prices of a ticket and your results as multiples of the risk. May a record of your live-account alerts and trades sit there? Your desk settings are public there too, the account balance among them: rather than typing in your live balance, you can set a shadow balance to size from, and the real figure never goes in.';
+const LIVE_NOTE = 'NOTE: when they answer, run: config livejournal=yes (or no), then commit and push the journal. Until then nothing from the live account is written.';
+
+/**
+ * Writes events through journal.mjs (which sanitises every one). A live-account
+ * event before the user has answered rule 6's question is held, not written,
+ * and the session is told why. Never throws: a journal problem is a NOTE for
+ * the session, and the command's reply goes out regardless.
+ */
+function writeJournal(events, { note = true, quiet = false } = {}) {
+  if (!events.length) return { added: [], held: [] };
+  try {
+    const res = appendEvents(JOURNAL, events, { liveWithoutConsent: 'hold' });
+    if (res.held.length && !quiet) {
+      const answer = foldConsent(journalEvents());
+      journalNotes.push(answer === 'no'
+        ? 'NOTE: journal — the user said no to a live-account record in the public repository, so that live entry was not written. Nothing to do.'
+        : `NOTE: journal — ${res.held.length === 1 ? 'a live-account entry was' : `${res.held.length} live-account entries were`} not written: the user has not said whether a live record may sit in the public repository. Ask them, in the words "config account=live" prints, then run config livejournal=yes (or no).`);
+    }
+    if (note && res.added.length) journalNotes.push(COMMIT_JOURNAL);
+    return res;
+  } catch (e) {
+    if (!quiet) journalNotes.push(`NOTE: journal — not written: ${e.message}`);
+    return { added: [], held: [], error: e };
+  }
+}
+
+/** features.mjs featuresAt for a live read, from exactly the closed bars it read (null, with a NOTE, if they cannot be had). */
+function liveFeatures(r, bars) {
+  try {
+    const closed = closedBars(bars || [], tfInfo(r.tf).minutes, r.nowMs).slice(-CLOSED_BARS);
+    return featuresFromBars({ bars: closed, nowMs: r.nowMs, cfg, pair: r.pair, tf: r.tf, analysis: r.analysis ?? null });
+  } catch (e) {
+    journalNotes.push(`NOTE: journal — the ${r.pair} read's features could not be described (${e.message}); it is recorded without them.`);
+    return null;
+  }
+}
+
+/**
+ * Records the ideas the user was sent: `watch` (each alert, as sent) or `scan`
+ * (each idea a one-off scan reported, which skips shouldAlert: journal.mjs
+ * keeps it as source 'scan', never part of the sample). Each carries the
+ * method and the features of its own read, nothing else beyond journal.mjs's
+ * allowlist. A read from a stand-in feed (tests) names no price feed and is
+ * not recorded.
+ */
+function recordShown(items, source) {
+  const events = [];
+  for (const { r, bars } of items) {
+    const rec = ideaRecord(r);
+    if (!knownFeed(rec.sourceId)) continue;
+    try {
+      events.push(shownEvent(rec, { source, method: methodNow(), cfg, at: clock(), features: liveFeatures(r, bars) }));
+    } catch (e) {
+      journalNotes.push(`NOTE: journal — the ${rec.pair} idea was not recorded: ${e.message}`);
+    }
+  }
+  return writeJournal(events);
+}
+
+/** A London calendar date (YYYY-MM-DD) and its midnight. */
+const dayOf = (ms) => { const { y, m, d } = localDate(ms, LONDON); return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`; };
+const midnightOf = (day) => { const [y, m, d] = day.split('-').map(Number); return zonedTimeToUtc(y, m, d, 0, 0, LONDON); };
+const nextDay = (day) => dayOf(midnightOf(day) + 36 * 3600e3);
+
+/**
+ * The reference feed's closed bars for the method's record and for scoring
+ * what the user was shown: bitcoin from Binance, gold from Twelve Data
+ * (desk/history.mjs, cached and extended), or the test file's bars under
+ * $SCALP_DESK_BARS (standing in for that history). { ok, bars, feedId } or
+ * { ok: false, needKey?, reason }.
+ */
+async function referenceBars(pair, tf, fromMs, { signal = null, deadlineMs = null } = {}) {
+  const fixture = process.env.SCALP_DESK_BARS;
+  if (fixture) {
+    const bars = readJson(fixture, {})[pair] || [];
+    if (bars.length) return { ok: true, bars, feedId: HISTORY_FEEDS[pair] };
+    return pair === 'XAUUSD' ? { ok: false, needKey: true, reason: 'no Twelve Data key' } : { ok: false, reason: 'no test bars' };
+  }
+  if (pair === 'XAUUSD' && !goldKey()) return { ok: false, needKey: true, reason: 'no Twelve Data key ($TWELVEDATA_API_KEY)' };
+  const h = await loadHistory(pair, tf, {
+    fromMs, home: HOME, keys: { twelvedata: goldKey() },
+    ...(signal ? { signal } : {}), ...(deadlineMs ? { deadlineMs: Math.max(1, Math.round(deadlineMs)) } : {}),
+  });
+  return h.ok ? { ok: true, bars: h.bars, feedId: h.source } : { ok: false, needKey: !!h.needKey, reason: h.reason };
+}
+
+/**
+ * `journal update`: the method's own alerts on the reference feed for each
+ * instrument of a committed sample — every weekday from the first one not yet
+ * recorded, one day at a time (journal.mjs canonicalAlerts: whole days, a day
+ * once recorded frozen) — then the silent resolution of what the user was
+ * shown (resolveOpen), scored on the same feed. With `deadlineMs` (the silent
+ * run at the start of watch, scan, now, brief and journal) it stops between
+ * days when the time is up and passes the time left to history.mjs, so it
+ * never holds a command up for long; nothing it meets is thrown.
+ * `quiet` (the silent run) leaves no NOTE behind either.
+ * Returns { recorded: {pair: days}, alerts: {pair: n}, resolved, needKey: [pairs], pending, problems }.
+ */
+async function journalUpdate({ deadlineMs = null, quiet = false } = {}) {
+  const out = { recorded: {}, alerts: {}, resolved: 0, needKey: [], pending: [], problems: [], wrote: false };
+  if (!existsSync(JOURNAL)) return out;
+  let events = journalEvents();
+  if (!events.length) return out;
+  const until = deadlineMs ? Date.now() + deadlineMs : Infinity;
+  const left = () => until - Date.now();
+  const signal = deadlineMs ? AbortSignal.timeout(deadlineMs) : null;
+  const nowMs = clock();
+  const m = methodNow();
+  const tf = m.tf, tfMs = tfInfo(tf).minutes * 60000;
+  const cfgM = { ...cfg, timeframe: tf };
+  const sample = foldSample(events);
+  const samplePairs = sample ? sample.pairs : [];
+
+  // Days of the record still to compute, per instrument: weekdays from the
+  // commitment (or the end of the held-back years) to today with no day record.
+  const todo = {};
+  for (const pair of samplePairs) {
+    const recorded = foldDays(events, m);
+    const days = [];
+    for (let d = dayOf(Math.max(sample.committedAt, JOURNAL_HOLDOUT.toMs + 1)); d <= dayOf(nowMs); d = nextDay(d)) {
+      const dow = new Date(`${d}T12:00:00Z`).getUTCDay();
+      if (dow === 0 || dow === 6 || recorded.has(`${pair}-${tf}-${d}`)) continue;
+      days.push(d);
+    }
+    todo[pair] = days;
+  }
+  // What the user was shown and has not been scored, once its window has closed.
+  const unscored = () => [...fold(events).values()].filter((e) => e.shown && !e.shownOutcome && nowMs >= windowState(e.barCloseMs, cfg.window).closesAtMs);
+  const open = unscored();
+  const pairs = [...new Set([...samplePairs.filter((p) => todo[p].length), ...open.map((e) => e.pair)])];
+
+  const bars = {};
+  for (const pair of pairs) {
+    if (left() <= 0) break;
+    const needFrom = Math.min(
+      ...(todo[pair] && todo[pair].length ? [midnightOf(todo[pair][0])] : []),
+      ...open.filter((e) => e.pair === pair).map((e) => e.barCloseMs - tfMs),
+    );
+    const got = await referenceBars(pair, tf, needFrom - (CLOSED_BARS + 96) * tfMs, { signal, deadlineMs: deadlineMs ? left() : null });
+    if (!got.ok) { (got.needKey ? out.needKey : out.problems).push(got.needKey ? pair : `${pair}: ${got.reason}`); continue; }
+    bars[pair] = got;
+  }
+
+  // The method's record, a day at a time.
+  for (const pair of samplePairs) {
+    if (!bars[pair]) continue;
+    const featuresFor = (r, seen) => { try { return featuresFromBars({ bars: seen, nowMs: r.nowMs, cfg: cfgM, pair, tf, analysis: r.analysis ?? null }); } catch { return null; } };
+    for (const day of todo[pair]) {
+      if (left() <= 0) break;
+      let res;
+      try {
+        res = canonicalAlerts({ pair, bars: bars[pair].bars, feedId: bars[pair].feedId, cfg, fromMs: midnightOf(day), toMs: midnightOf(nextDay(day)), method: m, events, nowMs, featuresFor });
+      } catch (e) { out.problems.push(`${pair} ${day}: ${e.message}`); break; }
+      out.pending.push(...res.pending);
+      if (!res.events.length) continue;
+      const w = writeJournal(res.events, { note: false, quiet });
+      if (w.error) break;
+      if (w.added.length) out.wrote = true;
+      events = journalEvents();
+      out.recorded[pair] = (out.recorded[pair] || 0) + res.days.length;
+      out.alerts[pair] = (out.alerts[pair] || 0) + res.alerts.length;
+    }
+  }
+
+  // What the user was shown, scored on the same bars.
+  const scorable = unscored().filter((e) => bars[e.pair]);
+  if (scorable.length) {
+    try {
+      const resolved = resolveOpen(new Map(scorable.map((e) => [e.id, e])), Object.fromEntries(Object.entries(bars).map(([p, g]) => [p, g.bars])), cfg,
+        { feed: Object.fromEntries(Object.keys(bars).map((p) => [p, REFERENCE_FEEDS[p].label])), nowMs });
+      const w = writeJournal(resolved, { note: false, quiet });
+      if (w.added.length) out.wrote = true;
+      out.resolved = w.added.length;
+    } catch (e) { out.problems.push(`scoring what was shown: ${e.message}`); }
+  }
+  return out;
+}
+
+/** The silent update: bounded, wordless, and nothing it does can fail the command. */
+async function resolveSilently() {
+  try { await journalUpdate({ deadlineMs: SILENT_MS, quiet: true }); } catch { /* silent by design */ }
+}
+
+/**
+ * The shown alert an argument names: an id (BTCUSD-M15-…), "last", or its
+ * London bar-close time ("10:15"), the latest such, narrowed by `pair`.
+ * { entry } or { error: why, in words for the session }.
+ */
+function shownAlert(ref, pair = null) {
+  const all = [...fold(journalEvents()).values()].filter((e) => e.shown && (!pair || e.pair === pair)).sort((x, y) => y.barCloseMs - x.barCloseMs);
+  if (!all.length) return { error: 'no alert sent to the user is in the journal' };
+  if (ref === undefined || ref === true || ref === 'last') return { entry: all[0] };
+  const hm = /^(\d{1,2}):(\d\d)$/.exec(String(ref));
+  if (hm) {
+    const want = `${hm[1].padStart(2, '0')}:${hm[2]}`;
+    const at = all.filter((e) => formatHM(e.barCloseMs, cfg.window.tz) === want);
+    if (!at.length) return { error: `no alert sent at ${want} London is in the journal` };
+    const day = dayOf(at[0].barCloseMs);
+    const same = at.filter((e) => dayOf(e.barCloseMs) === day);
+    if (same.length > 1) return { error: `${same.length} alerts were sent at ${want} (${same.map((e) => e.pair).join(', ')}): add --pair` };
+    return { entry: at[0] };
+  }
+  const e = all.find((x) => x.id === ref);
+  return e ? { entry: e } : { error: `no alert ${ref} sent to the user is in the journal` };
+}
+
+const readPending = () => (readJson(pendingPath, []) || []).filter((p) => p && clock() - p.atMs <= PENDING_MS);
+const addPending = (item) => writeJson(pendingPath, [...readPending().filter((p) => !(p.kind === item.kind && p.id === item.id)), item]);
+
+/**
+ * Marks something the user did on an alert they were sent: 'ticketed' (take
+ * returned a ticket) or 'taken'. When the settings' account mode is not the
+ * one the alert was shown under (journal.mjs accountMismatch), nothing is
+ * marked: the mark waits (for `journal account demo|live`) and the reply asks
+ * which account it was on. Returns a line to add to the reply, or null.
+ */
+function markUserEvent(kind, entry, payload, account = null) {
+  try {
+    const mismatch = accountMismatch(entry, cfg);
+    if (mismatch && !account) {
+      addPending({ kind, id: entry.id, payload, atMs: clock() });
+      journalNotes.push('NOTE: when they say which account it was, run: journal account demo (or live).');
+      return mismatch.question;
+    }
+    let ev;
+    if (kind === 'ticketed') ev = markTicketed(entry, { ...payload, at: clock(), account });
+    else {
+      const t = markTaken(fold(journalEvents()), { alertId: entry.id, nowMs: clock(), account });
+      if (!t.ok) return null;
+      ev = { ...t.event, how: payload.how || t.event.how };
+    }
+    const res = writeJournal([ev]);
+    if (res.held.length && foldConsent(journalEvents()) === null) { journalNotes.push(LIVE_NOTE); return LIVE_QUESTION; }
+  } catch (e) {
+    journalNotes.push(`NOTE: journal — the ${kind} mark was not recorded: ${e.message}`);
+  }
+  return null;
+}
+
+/**
+ * `plan took`: a trade the user took is linked to an alert only explicitly —
+ * the alert named (--alert), or the one ticket built within the ticket's
+ * freshness (journal.mjs markTaken) — never by recency alone. Otherwise only
+ * the plan's count changes. Returns a line for the reply, or null.
+ */
+function journalTaken(a) {
+  const events = journalEvents();
+  if (!events.length) return null;
+  const account = a.account && a.account !== true ? String(a.account).toLowerCase() : null;
+  if (account && !ACCOUNT_MODES.includes(account)) usage('--account is demo or live.');
+  let res;
+  if (a.alert !== undefined) {
+    const found = shownAlert(a.alert, a.pair ? pairOf(a.pair) : null);
+    if (found.error) { journalNotes.push(`NOTE: journal — not linked to an alert: ${found.error}.`); return null; }
+    res = markTaken(fold(events), { alertId: found.entry.id, nowMs: clock() });
+  } else {
+    res = markTaken(fold(events), { tf: timeframeFor(cfg), nowMs: clock() });
+  }
+  if (!res.ok) {
+    if (res.reason === 'ambiguous') journalNotes.push(`NOTE: journal — tickets were built for ${res.candidates.length} alerts in the last ${tfInfo(timeframeFor(cfg)).maxAgeMin} minutes (${res.candidates.join(', ')}); ask which one they took, then run: journal took --alert <time or id>. The count is already done.`);
+    return null;
+  }
+  const entry = fold(events).get(res.event.id);
+  return markUserEvent('taken', entry, { how: res.event.how }, account);
+}
+
+const HOW_WORDS = { stop: 'stop', target: 'target', manual: 'by-hand', 'by-hand': 'by-hand', hand: 'by-hand', end: 'end-of-session', 'end-of-session': 'end-of-session' };
+const SAID_HOW = { target: 'at its target', stop: 'at its stop', 'by-hand': 'closed by hand', 'end-of-session': 'closed at the end of the session' };
+
 /* ---------------------------------------------------------------- commands */
 
 const cmds = {
-  now() {
+  async now() {
+    // The journal's silent update starts with the command and is waited for
+    // after the reply is out (at most about five seconds); it says nothing.
+    const quiet = resolveSilently();
     say('info', formatNow(NOW, cfg, loadPlan()));
+    await quiet;
   },
 
-  brief(a) {
+  async brief(a) {
+    const quiet = resolveSilently();
     const only = a.only ? pairOf(a.only) : null;
     const [h, l, n] = [num(a.high), num(a.low), num(a.now)];
     let range = null;
@@ -247,6 +581,7 @@ const cmds = {
       range = { pair, high: h, low: l, now: n };
     }
     say('info', formatBrief(NOW, cfg, loadPlan(), only ? [only] : ['XAUUSD', 'BTCUSD'], range));
+    await quiet;
   },
 
   news(a) {
@@ -444,9 +779,16 @@ const cmds = {
       const kept = planStatus(cur, today);
       writeJson(planPath, { date: today, ...draft, taken: typedTaken !== null ? typedTaken : kept ? kept.taken : 0 });
     } else if (sub === 'took' || sub === 'undo') {
+      // The journal links the trade to an alert only explicitly (--alert, or
+      // the one ticket built in the last 30 minutes); the count is the plan's.
+      const ask = sub === 'took' ? journalTaken(a) : null;
       const ps = planStatus(cur, today);
-      if (!ps) return say('need-input', 'No plan set for today, so there is nothing to count it against yet. Tell me your setups and the most trades you will take, and I will count this one.');
+      if (!ps) return say('need-input', ['No plan set for today, so there is nothing to count it against yet. Tell me your setups and the most trades you will take, and I will count this one.', ask].filter(Boolean).join('\n\n'));
       writeJson(planPath, { ...cur, taken: Math.max(0, ps.taken + (sub === 'took' ? 1 : -1)) });
+      if (ask) {
+        const now = planStatus(loadPlan(), today);
+        return say('info', `Today's plan: ${now.setups.join(' · ')}, up to ${now.max} trades.\n${planLine(loadPlan(), NOW, cfg.window)}\n\n${ask}`);
+      }
     } else if (sub === 'clear') {
       writeJson(planPath, null);
       return say('info', 'Plan cleared.');
@@ -471,8 +813,17 @@ const cmds = {
       serveroffset: ['broker', 'serverOffset', (v) => (v === 'auto' ? 'auto' : Number.isInteger(Number(v)) && v !== '' && Math.abs(Number(v)) <= 14 ? Number(v) : NaN)],
       mode: [null, 'mode', (v) => (v === 'fast' || v === 'thorough' ? v : NaN)],
       timeframe: [null, 'timeframe', (v) => timeframeOf(v) || NaN],
+      // Which account the trades are on, for the journal (not `mode`, which is how screenshots are read).
+      account: ['account', 'mode', (v) => (ACCOUNT_MODES.includes(v.toLowerCase()) ? v.toLowerCase() : NaN)],
     };
-    for (const kv of sets) {
+    // The answer to rule 6's question is an event in the journal, not a setting.
+    let consent = null;
+    for (const kv of sets.filter((x) => /^livejournal=/i.test(x))) {
+      const v = kv.slice(kv.indexOf('=') + 1).trim().toLowerCase();
+      if (v !== 'yes' && v !== 'no') usage('livejournal=yes or livejournal=no: whether a live-account record may sit in the public repository.');
+      consent = v;
+    }
+    for (const kv of sets.filter((x) => !/^livejournal=/i.test(x))) {
       const eq = kv.indexOf('=');
       if (eq < 1 || eq === kv.length - 1) usage(`Write settings as key=value, e.g. risk=0.5. Known: ${Object.keys(KEYS).join(', ')}`);
       const k = kv.slice(0, eq), v = kv.slice(eq + 1).replace(/,/g, '').trim();
@@ -489,7 +840,15 @@ const cmds = {
     if (changed) writeJson(CONFIG, file);
     const c = withDefaults(file);
     const ac = c.account;
-    say(changed ? 'changed · commit desk/config.json' : sets.length ? 'unchanged' : 'info', [
+    let journalChanged = false;
+    if (consent) journalChanged = writeJournal([consentEvent({ answer: consent, at: clock() })], { note: false }).added.length > 0;
+    const events = journalEvents();
+    const answer = foldConsent(events);
+    const live = ac.mode === 'live';
+    const ask = live && needsLiveConsent(events, c);
+    if (ask) journalNotes.push(LIVE_NOTE);
+    const what = [changed && 'desk/config.json', journalChanged && JOURNAL].filter(Boolean);
+    say(what.length ? `changed · commit ${what.join(' and ')}` : sets.length ? 'unchanged' : 'info', [
       '**Desk settings**',
       `- Balance ${ac.currency} ${fmt(ac.balance, 2)} · risk ${ac.riskPct}% a trade`,
       `- Shadow balance ${ac.shadowBalance ? `${ac.currency} ${fmt(ac.shadowBalance, 2)}` : 'not set'} · sizing from **${ac.sizeFrom === 'shadow' && ac.shadowBalance ? 'the shadow balance' : 'the account balance'}**`,
@@ -497,6 +856,11 @@ const cmds = {
       `- Commission ${ac.commissionPerSideGBP === null ? 'from the spec (gold £2.75 a lot each side, bitcoin none)' : `£${ac.commissionPerSideGBP} a lot each side`}`,
       `- MT5 server clock ${c.broker.serverOffset === 'auto' ? 'follows New York + 7 (UTC+3 now, UTC+2 from 1 November)' : `UTC${c.broker.serverOffset >= 0 ? '+' : ''}${c.broker.serverOffset}`} · screenshots read **${c.mode === 'fast' ? 'Fast (one reader)' : 'Thorough (three readers and a head trader)'}** unless you say otherwise`,
       `- Chart **${timeframeFor(c)}** (${tfInfo(timeframeFor(c)).words}) · an idea feeds a ticket for ${tfInfo(timeframeFor(c)).maxAgeMin} minutes`,
+      `- Account **${live ? 'live' : 'demo'}** · the alerts you are sent and your trades go in your record as ${live ? 'live' : 'demo'}${!live ? '' : answer === 'yes' ? '' : answer === 'no' ? ' — but nothing from it is written, as you asked' : ' — once you say whether a live record may sit in the public repository'}`,
+      ...(consent ? [consent === 'yes'
+        ? 'Noted: your live-account alerts and trades will go in your record, in the public repository. You can change your mind with a word.'
+        : 'Noted: nothing from your live account will go in your record. Demo alerts and trades still do.'] : []),
+      ...(ask ? ['', LIVE_QUESTION] : []),
     ].join('\n'));
   },
 
@@ -527,7 +891,8 @@ const cmds = {
     const tf = timeframeFor(cfg);
     const pairs = a.pair ? [pairOf(a.pair)] : ['XAUUSD', 'BTCUSD'];
     if (pairs.includes(null)) usage('Which instrument? --pair gold or --pair bitcoin');
-    const replies = [], notes = [], recs = [];
+    const quiet = resolveSilently();
+    const replies = [], notes = [], recs = [], shown = [];
     for (const pair of pairs) {
       const lb = await liveBars(pair, tf);
       if (!lb.ok) {
@@ -539,11 +904,16 @@ const cmds = {
       if (r.kind === 'idea') {
         const rec = ideaRecord(r);
         recs.push(rec);
+        shown.push({ r, bars: lb.bars });
         replies.push(formatLiveIdea(rec, cfg, clock(), loadPlan()));
       } else replies.push(formatLiveNone(r, cfg));
     }
     if (recs.length) recordAlerts(recs);
+    // Every idea a scan reports is recorded as what the user was shown (source
+    // 'scan': never part of the sample, whatever shouldAlert would have said).
+    if (shown.length) recordShown(shown, 'scan');
     say('info', replies.join('\n\n'), notes);
+    await quiet;
   },
 
   async watch(a) {
@@ -570,6 +940,8 @@ const cmds = {
     }
     mkdirSync(watchPath(''), { recursive: true });
     writeFileSync(pidFile, String(process.pid));
+    // The journal's silent update, once, before the first poll (at most about five seconds).
+    await resolveSilently();
     const started = clock();
     const errors = {};
     const status = { startedAtMs: clock(), pairs, tf, polls: 0, last: {} };
@@ -621,7 +993,7 @@ const cmds = {
         status.last[pair] = { kind: r.kind, atMs: now, price: r.price ?? null, source: lb.source.label, barCloseMs: r.barCloseMs ?? null };
         const state = readJson(watchPath('state.json'), { lastAlert: {} });
         // Whether the last alert is still running is judged on closed bars, as the replay does.
-        if (r.kind === 'idea' && shouldAlert(state, r, closedBars(lb.bars, tfInfo(tf).minutes, now), cfg)) alerts.push(r);
+        if (r.kind === 'idea' && shouldAlert(state, r, closedBars(lb.bars, tfInfo(tf).minutes, now), cfg)) alerts.push({ r, bars: lb.bars });
       }
       status.polls += 1;
       writeJson(watchPath('status.json'), status);
@@ -635,8 +1007,10 @@ const cmds = {
       const goneLine = gone.length ? `The live ${names(gone.map((g) => g.pair))} feed has stopped answering, so I have stopped watching ${names(gone.map((g) => g.pair))}. Still watching ${names(rest)}.` : null;
       const again = gone.length ? ` with: watch --pair ${rest.map((p) => (p === 'XAUUSD' ? 'gold' : 'bitcoin')).join(' ')}` : '.';
       if (alerts.length) {
-        const recs = alerts.map((r) => ideaRecord(r));
+        const recs = alerts.map(({ r }) => ideaRecord(r));
         recordAlerts(recs);
+        // Each alert as sent, in the journal (source 'watch').
+        recordShown(alerts, 'watch');
         finish('alert', [...recs.map((rec) => formatLiveIdea(rec, cfg, now, loadPlan())), goneLine].filter(Boolean).join('\n\n'), [...goneNotes, `NOTE: send the reply, push a one-line notification, then start the watch again${again}`]);
       }
       if (gone.length) finish('dropped', goneLine, [...goneNotes, `NOTE: send the reply, then start the watch again${again}`]);
@@ -666,7 +1040,216 @@ const cmds = {
     // Only a price from the same feed as the alert says whether it has moved.
     const livePrice = lb.ok && (lb.source.id === rec.sourceId || rec.sourceId === null) ? lb.bars[lb.bars.length - 1].c : null;
     const res = takeIdea({ rec, priceNow: price, livePrice, nowMs: clock(), cfg, spreadNum: sp.spreadNum, typedSpread: sp.spreadTyped });
-    say(res.ok ? 'done · ticket' : res.needSpread ? 'need-spread' : 'refused', res.text, lb.ok ? [] : [`NOTE: feeds — ${lb.reason}`]);
+    const account = a.account && a.account !== true ? String(a.account).toLowerCase() : null;
+    if (account && !ACCOUNT_MODES.includes(account)) usage('--account is demo or live.');
+    let ask = null;
+    if (res.ok) {
+      // A ticket built: the user's MT5 price and its levels go in the journal,
+      // never the lot size or any money (journal.mjs markTicketed).
+      const entry = fold(journalEvents()).get(idOf(rec.pair, rec.tf, rec.barCloseMs));
+      if (entry && entry.shown) ask = markUserEvent('ticketed', entry, { userPrice: price, stopLoss: res.result.stopLoss ?? null, takeProfit: res.result.takeProfit1 ?? null }, account);
+    }
+    say(res.ok ? 'done · ticket' : res.needSpread ? 'need-spread' : 'refused', ask ? `${res.text}\n\n${ask}` : res.text, lb.ok ? [] : [`NOTE: feeds — ${lb.reason}`]);
+  },
+  /**
+   * The journal (desk/journal.mjs). With no subcommand, what it says now: in
+   * the user's session, process counts only and rule 4's sentence; after it,
+   * the alerts (scored on the feed) and the user's trades (as they told them),
+   * never added together, then the sample.
+   */
+  async journal(a) {
+    const sub = a._[1] || 'summary';
+    const pair = a.pair && a.pair !== true ? pairOf(a.pair) : null;
+    if (a.pair && !pair) usage('Which instrument? --pair gold or --pair bitcoin');
+    const account = a.account && a.account !== true ? String(a.account).toLowerCase() : null;
+    if (account && !ACCOUNT_MODES.includes(account)) usage('--account is demo or live.');
+
+    if (sub === 'summary' || sub === 'show') {
+      await resolveSilently();
+      if (!existsSync(JOURNAL)) return say('info', 'Nothing is in your record yet: it starts with the first alert I send you.');
+      return say('info', summary(journalEvents(), { nowMs: clock(), cfg, methodNow: methodNow() }));
+    }
+
+    if (sub === 'update') {
+      // Without a time limit: every weekday of a committed sample not yet
+      // recorded, then what the user was shown. Run after a pull (journal.mjs).
+      const u = await journalUpdate();
+      const notes = [...u.problems.map((p) => `NOTE: journal update — ${p}`), ...u.pending.filter((p) => p.why !== 'window-open').map((p) => `NOTE: ${p.pair} ${p.day} not recorded yet (${p.why})`)];
+      if (u.wrote) notes.push(COMMIT_JOURNAL);
+      const days = Object.entries(u.recorded).map(([p, n]) => `${n} ${n === 1 ? 'day' : 'days'} of ${nameOf(p)} (${u.alerts[p] || 0} ${u.alerts[p] === 1 ? 'alert' : 'alerts'})`);
+      const lines = [];
+      lines.push(days.length ? `Checked on the price feed: ${days.join(' and ')}.` : 'Nothing new to check on the price feed.');
+      if (u.resolved) lines.push(`${u.resolved} ${u.resolved === 1 ? 'alert you were sent has' : 'alerts you were sent have'} finished and ${u.resolved === 1 ? 'is' : 'are'} scored.`);
+      if (u.needKey.includes('XAUUSD')) lines.push(KEY_HOW);
+      return say(u.problems.length ? 'done · with problems' : 'done', lines.join('\n\n'), notes);
+    }
+
+    if (sub === 'result') {
+      const found = shownAlert(a.alert, pair);
+      if (found.error) return say('need-input', 'Which alert was that trade on? Tell me the time it came and the instrument.', [`NOTE: ${found.error}.`]);
+      const entry = found.entry;
+      const how = a.how === undefined ? null : HOW_WORDS[String(a.how).toLowerCase()];
+      if (a.how !== undefined && !how) usage('--how is stop, target, manual (closed by hand) or end (closed at the end of the session).');
+      let r = num(a.r);
+      if (a.pounds !== undefined) {
+        // Pounds are turned into R with the risk the ticket gave, and only R is kept.
+        const p = num(a.pounds), risk = num(a.risk);
+        if (!Number.isFinite(p) || !(risk > 0)) usage('--pounds P needs --risk X, the amount the ticket said it risked: R = P / X. Neither is stored.');
+        r = p / risk;
+      }
+      if (r === null && how === 'stop') r = -1;
+      if (r === null && how === 'target') r = entry.shown.netR;
+      if (!Number.isFinite(r)) return say('need-input', 'How did that trade end — at its stop, at its target, or closed by hand? If by hand, what did it make or lose, as a multiple of the risk, or in pounds?');
+      const mismatch = accountMismatch(entry, cfg);
+      if (mismatch && !account) return say('need-input', mismatch.question, ['NOTE: when they answer, run the same command again with --account demo (or live).']);
+      let ev;
+      try { ev = markActual(entry, { r, how: how || 'by-hand', at: clock(), account }); } catch (e) { return say('refused', 'That result could not be recorded: it must be a number of times the risk, between −50 and +50.', [`NOTE: ${e.message}`]); }
+      const res = writeJournal([ev]);
+      if (res.error) return say('error', 'Your record could not be updated just now.');
+      if (res.held.length) return say('need-input', foldConsent(journalEvents()) === null ? LIVE_QUESTION : 'Noted — but you asked for nothing from your live account to go in your record, so it was not written.', foldConsent(journalEvents()) === null ? [LIVE_NOTE] : []);
+      const when = formatHM(entry.barCloseMs, cfg.window.tz);
+      return say('done', `Noted for your record: your trade on the ${when} ${nameOf(entry.pair)} ${entry.side} alert, ${SAID_HOW[ev.how]} (${fmtR(ev.r)} times the risk).`);
+    }
+
+    if (sub === 'took') {
+      // Marks a trade taken without touching the plan's count (plan took does both).
+      const found = shownAlert(a.alert, pair);
+      if (found.error) return say('need-input', 'Which alert did you take? Tell me the time it came and the instrument.', [`NOTE: ${found.error}.`]);
+      const ask = markUserEvent('taken', found.entry, { how: 'named' }, account);
+      return say(ask ? 'need-input' : 'done', ask || `Noted: you took the ${formatHM(found.entry.barCloseMs, cfg.window.tz)} ${nameOf(found.entry.pair)} ${found.entry.side} alert.`);
+    }
+
+    if (sub === 'alert') {
+      // A direct question about one named alert is answered in R, at any hour (rule 4).
+      const found = shownAlert(a.alert, pair);
+      if (found.error) return say('need-input', 'Which alert do you mean? Tell me the time it came and the instrument.', [`NOTE: ${found.error}.`]);
+      const e = found.entry;
+      const o = (e.alert && e.alert.outcome) || e.shownOutcome;
+      const lines = [`${outcomeSentence(e, cfg)}.`];
+      if (o && Number.isFinite(o.mfe)) lines.push(`On the way it went as far as ${fmtR(o.mfe)} times the risk in its favour and ${fmtR(-o.mae)} against, over ${o.bars} ${o.bars === 1 ? 'bar' : 'bars'}.`);
+      if (o) lines.push(`Scored on ${(e.alert ? e.alert.feed : e.shownOutcome.feed).split(' (')[0]}'s prices, not your MT5 trade.`);
+      return say('info', lines.join(' '));
+    }
+
+    if (sub === 'sample') {
+      const events = journalEvents();
+      const n = num(a.alerts);
+      if (n === null) return say('need-input', sampleQuestion(DEFAULT_PLANNED_ALERTS), [`NOTE: only on their yes, run: journal sample --alerts ${DEFAULT_PLANNED_ALERTS} — then commit and push the journal.`]);
+      // Only instruments the desk can read on the reference feed: a sample of
+      // gold without a Twelve Data key could never be checked, so never judged.
+      const pairs = a.pairs && a.pairs !== true ? String(a.pairs).split(',').map((x) => pairOf(x.trim())) : ['BTCUSD', ...(goldAvailable() ? ['XAUUSD'] : [])];
+      if (pairs.includes(null)) usage('--pairs gold,bitcoin (either or both).');
+      const m = methodNow();
+      const current = foldSample(events);
+      const st = current ? sampleStatus(events, current) : null;
+      const changed = !!current && !st.complete && current.pairs.some((p) => keyFor(m, p) !== keyFor(current.method, p));
+      let ev;
+      try {
+        ev = setSample({ plannedAlerts: n, method: m, cfg, pairs, committedAt: clock(), events, replaces: changed ? 'method-changed' : null });
+      } catch (e) {
+        const why = e.message.replace(/^journal: /, '');
+        return say('refused', `Not committed: ${why[0].toLowerCase()}${why.slice(1)}.`.replace(/\.\.$/, '.'), [`NOTE: ${e.message}`]);
+      }
+      const res = writeJournal([ev]);
+      if (res.error) return say('error', 'The commitment could not be written just now; nothing was committed.');
+      const names = ev.pairs.map(nameOf).join(' and ');
+      return say('done', `Committed: I will judge the alerts on ${names} on the next ${n} of them, every alert scored on the price feed whether you take it or not, and give no verdict before then. Your own trades stay in 'Is it working yet?', separately.`);
+    }
+
+    if (sub === 'account') {
+      // The user's answer to "which account was that trade on?" for the marks waiting on it.
+      const mode = String(a._[2] || a.is || '').toLowerCase();
+      if (!ACCOUNT_MODES.includes(mode)) usage('journal account demo | live');
+      const waiting = readPending();
+      if (!waiting.length) return say('info', 'There is nothing waiting for that answer.');
+      const lines = [];
+      for (const p of waiting) {
+        const entry = fold(journalEvents()).get(p.id);
+        if (!entry || !entry.shown) continue;
+        const ask = markUserEvent(p.kind, entry, p.payload, mode);
+        if (ask) lines.push(ask);
+      }
+      writeJson(pendingPath, []);
+      return say(lines.length ? 'need-input' : 'done', lines.length ? [...new Set(lines)].join('\n\n') : `Noted: on your ${mode} account.`);
+    }
+
+    usage('journal [summary] | update | result --alert A (--r R | --how stop|target|manual|end | --pounds P --risk X) [--account demo|live] | took --alert A | alert --alert A | sample [--alerts N] | account demo|live');
+  },
+
+  /**
+   * The learning layer's words for the user (desk/learn.mjs): where it stands,
+   * its report in the plan's shape, and "similar setups" — only ever when
+   * asked, never on an alert or a push (plan rule 3). fit and final stay
+   * developer commands of desk/learn.mjs itself.
+   */
+  async learn(a) {
+    const L = await import('./learn.mjs');
+    const sub = a._[1] || 'status';
+    const pair = pairOf(a.pair && a.pair !== true ? a.pair : 'bitcoin');
+    if (!pair) usage('Which instrument? --pair gold or --pair bitcoin');
+    const MODEL = process.env.SCALP_DESK_MODEL || join(dirname(CONFIG), 'model.json');
+    let model;
+    try { model = L.readModel(MODEL); } catch (e) { return say('error', 'The learning layer\'s record could not be read.', [`NOTE: ${MODEL}: ${e.message}`]); }
+    const word = label(pair);
+    const sample = foldSample(journalEvents());
+
+    if (sub === 'report') return say('info', L.userReport(model, { pair, committedAlerts: sample ? sample.plannedAlerts : null }));
+
+    if (sub === 'status') {
+      const ran = L.lastFinal(model);
+      const started = (model.finals || []).some((f) => f && ['started', 'crashed'].includes(f.kind));
+      const notes = [`NOTE: developer status: node 06-scalping-copilot/desk/learn.mjs status --pair ${pair === 'XAUUSD' ? 'gold' : 'bitcoin'}`];
+      if (ran || started) return say('info', `${L.userReport(model, { pair }).split('\n').slice(0, ran ? 1 : 2).join('\n')}${ran ? '\nAsk for the report for the figures.' : ''}`, notes);
+      if (!model.recipeHash) return say('info', `The learning layer has not been built yet for ${word.toLowerCase()}: nothing has been fitted to past prices, so there is nothing to report.`, notes);
+      return say('info', `The learning layer is fitted to ${word.toLowerCase()}'s 2017–2024 prices. The one test on prices it never saw (2025 to mid-October 2026) has not run yet, so there is nothing to report. It does not change which alerts you get.`, notes);
+    }
+
+    if (sub === 'similar') {
+      if (!a.at || a.at === true) usage('learn similar --at 2026-10-21T13:15 (the bar close, UTC) [--side buy|sell]');
+      const closeMs = Date.parse(/Z$/.test(a.at) ? a.at : `${a.at}Z`);
+      if (!Number.isFinite(closeMs)) usage('--at takes a time like 2026-10-21T13:15 (UTC).');
+      if (a.side !== undefined && !['buy', 'sell'].includes(a.side)) usage('--side is buy or sell.');
+      const heldFrom = Date.UTC(2025, 0, 1);
+      if (closeMs >= heldFrom && closeMs <= JOURNAL_HOLDOUT.toMs) {
+        return say('refused', 'That moment is inside the stretch held back for the learner\'s one test (2025 to mid-October 2026), so I will not set it against the past. Ask about an earlier moment, or one from now on.');
+      }
+      const rowsFile = L.defaultRowsPath(HOME, { pair, cfg });
+      if (!existsSync(rowsFile)) return say('info', 'Similar setups need the history of past prices the learner reads, and it has not been built yet.', [`NOTE: no rows at ${rowsFile} (node desk/dataset.mjs --pair bitcoin builds them).`]);
+      let rows;
+      try { ({ rows } = await L.loadDataset(rowsFile, { pair, cfg })); } catch (e) {
+        return say('info', 'Similar setups are not available just now: the history of past prices the learner reads needs rebuilding.', [`NOTE: ${e.message}`]);
+      }
+      if (!rows.length) return say('info', 'Similar setups need the history of past prices the learner reads, and it holds no rows.');
+      let vec, side, day;
+      if (closeMs < heldFrom) {
+        const row = rows.find((x) => x.closeMs === closeMs);
+        if (!row || !row.vL) return say('need-input', 'I have no check of the chart at that moment. Give me the close of a fifteen-minute bar inside your window, in UTC.');
+        side = a.side || (row.lean === 'short' ? 'sell' : 'buy');
+        vec = side === 'sell' ? row.vS : row.vL;
+        day = row.day;
+      } else {
+        // A moment from now on: described from the reference feed's bars up to it, as the watcher would have read it.
+        const tf = timeframeFor(cfg), tfMs = tfInfo(tf).minutes * 60000;
+        const got = await referenceBars(pair, tf, closeMs - (CLOSED_BARS + 96) * tfMs);
+        if (!got.ok) return got.needKey ? say('need-key', KEY_HOW) : say('error', 'The price feed is not answering just now; ask again in a minute.', [`NOTE: ${got.reason}`]);
+        const closed = got.bars.filter((b) => b.t + tfMs <= closeMs).slice(-CLOSED_BARS);
+        if (!closed.length || closed[closed.length - 1].t + tfMs !== closeMs) return say('need-input', 'The price feed has no bar closing at that time. Give me the close of a fifteen-minute bar, in UTC.');
+        const nowMs = closeMs + 20000;
+        const r = liveRead({ pair, bars: closed, nowMs, cfg });
+        let f;
+        try { f = featuresFromBars({ bars: closed, nowMs, cfg, pair, tf, analysis: r.analysis ?? null }); } catch (e) {
+          return say('info', 'That moment cannot be described: the price feed has too few bars before it.', [`NOTE: ${e.message}`]);
+        }
+        side = a.side || (r.analysis && r.analysis.bias === 'short' ? 'sell' : 'buy');
+        vec = L.vectorOf(f, side === 'sell' ? -1 : 1);
+        day = dayOf(closeMs);
+      }
+      const s = L.similarSetups(vec, rows, { beforeDay: day, side });
+      const first = rows[0].day.slice(0, 4), last = String(Math.min(2024, Number(day.slice(0, 4))));
+      return say('info', L.similarWords(s, { pairWord: word.toLowerCase(), years: first === last ? first : `${first}–${last}` }));
+    }
+
+    usage('learn status | report | similar --at <UTC bar close> [--side buy|sell] [--pair bitcoin]');
   },
 };
 

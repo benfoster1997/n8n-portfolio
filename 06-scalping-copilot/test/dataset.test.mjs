@@ -439,11 +439,20 @@ test('the same range with bars missing writes fewer rows: refused unless --repla
   assert.deepEqual(readFileSync(wide.path), bytes, 'the rows are untouched');
   // The pure test, on the manifest's first and last checks.
   const m = readManifest(wide.path);
-  const same = { fromMs: m.fromMs, toMs: m.toMs, rows: m.rows, firstCloseMs: m.firstCloseMs, lastCloseMs: m.lastCloseMs };
+  const closes = (await collect(wide.path)).map((r) => r.closeMs);
+  const same = { fromMs: m.fromMs, toMs: m.toMs, rows: m.rows, firstCloseMs: m.firstCloseMs, lastCloseMs: m.lastCloseMs, closes };
   assert.equal(replaceRefusal(wide.path, same), null, 'the same checks again: allowed');
   assert.match(replaceRefusal(wide.path, { ...same, firstCloseMs: m.firstCloseMs + M15 }), /starts with the check at/);
   assert.match(replaceRefusal(wide.path, { ...same, lastCloseMs: m.lastCloseMs - M15 }), /ends with the check at/);
-  assert.match(replaceRefusal(wide.path, { ...same, rows: 0, firstCloseMs: null, lastCloseMs: null }), /writes only 0/);
+  assert.match(replaceRefusal(wide.path, { ...same, rows: 0, firstCloseMs: null, lastCloseMs: null, closes: [] }), /writes only 0/);
+  // Review, 17 Oct: the same total and ends, but a day lost in the middle and one added before.
+  const day = (c) => new Date(c).toISOString().slice(0, 10);
+  const lostDay = day(closes[Math.floor(closes.length / 2)]);
+  const swapped = [...closes.map((c) => c - 7 * 86400e3).filter((c) => c < m.firstCloseMs).slice(-32), ...closes.filter((c) => day(c) !== lostDay)];
+  const n = swapped.length;
+  assert.ok(n >= m.rows - 32 && swapped[0] < m.firstCloseMs && swapped[n - 1] === m.lastCloseMs);
+  assert.match(replaceRefusal(wide.path, { fromMs: Math.min(m.fromMs, swapped[0]), toMs: m.toMs, rows: Math.max(n, m.rows), firstCloseMs: swapped[0], lastCloseMs: m.lastCloseMs, closes: swapped }),
+    new RegExp(`holds ${m.rows} checks from .* would write only ${m.rows - closes.filter((c) => day(c) === lostDay).length} of them again`));
   const ok = await buildRows({ ...base, bars: cut, ...ALL, home, replace: true });
   assert.ok(ok.rows < 204, 'with --replace it is written');
 });

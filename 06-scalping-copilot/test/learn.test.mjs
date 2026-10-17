@@ -310,6 +310,41 @@ test('a filter that keeps everything gives exactly the unfiltered watcher (throu
   const strict = { model: { ...model.model, filter: { ...model.model.filter, threshold: quantile([...Array(9).keys()], 0.5) - 100 } } };
   assert.ok(evaluateHoldout({ reads: holdReads, bars: data.bars, cfg, pair: 'BTCUSD', model: strict }).t1.kept.n <= plain.length);
 });
+test('the held-back evaluation leaves out a check whose trade crosses a hole, as the walk-forward does', async () => {
+  const { rowFor } = await import('../desk/dataset.mjs');
+  const { outcome } = await import('../desk/outcome.mjs');
+  const rows = data.compact.filter((r) => r.day >= '2024-01-01');
+  const fit = fitModels(trainRowsFor(data.compact, 2024), [1]);
+  const model = { model: { filter: { ...serialiseModel(fit.filter.fits[1], 1), threshold: -Infinity }, ranking: { ...serialiseModel(fit.ranking.fits[1], 1), threshold: 0 } } };
+  const withExtra = (reads, rs) => reads.map((rd) => { const r = rs.find((x) => x.closeMs === rd.closeMs); return { ...rd, extra: { f: Object.fromEntries(FEATURE_NAMES.map((n, j) => [n, Number.isNaN(r.vL[j]) ? null : r.vL[j]])), stopStd: r.stopStd } }; });
+  const pass = (reads, bars, predicate = null) => alertPass(reads, bars, { cfg, rule: '1.5R', pair: 'BTCUSD', bothTouched: 'half', predicate }).trades;
+  const T = pass(readsFromRows(rows, data.bars), data.bars).find((t) => t.bars >= 2);
+  // Six bars missing straight after the alert's entry: its trade would be scored across them.
+  const cut = data.bars.filter((_, i) => i <= T.k || i > T.k + 6);
+  const have = new Set(cut.map((b) => b.t));
+  const kept = rows.filter((r) => have.has(r.t));
+  const reads = withExtra(readsFromRows(kept, cut), kept);
+  const gap = new Set(reads.filter((rd) => rowFor(rd, cut, { pair: 'BTCUSD', cfg, cost: 'max', calendar: 'full', comm: 0 }).gapAhead).map((rd) => rd.k));
+  const kT = reads.find((rd) => rd.closeMs === T.closeMs).k;
+  assert.ok(gap.has(kT), 'the alert\'s own check is gap-ahead');
+  const ev = evaluateHoldout({ reads, bars: cut, cfg, pair: 'BTCUSD', model });
+  assert.equal(ev.gapAhead.checks, gap.size);
+  assert.ok(ev.gapAhead.ideas >= 1);
+  // Both passes leave it out through the predicate, so later alerts are judged as the walk-forward judges them.
+  const expected = pass(reads, cut, (rd) => !gap.has(rd.k));
+  assert.equal(ev.t1.unfiltered.n, expected.length);
+  assert.ok(Math.abs(ev.t1.unfiltered.mean - summary(expected).mean) < 1e-12);
+  assert.equal(ev.t1.kept.n, expected.length, 'the kept pass (keep everything) leaves it out too');
+  assert.ok(pass(reads, cut).some((t) => t.closeMs === T.closeMs) && !expected.some((t) => t.closeMs === T.closeMs), 'without the rule it would have been scored');
+  // And T2's pairs (so P2) skip the same checks.
+  const closes = (rd) => windowState(rd.closeMs, cfg.window).closesAtMs;
+  const scored = (rd, side) => outcome(cut, rd.k, { side, stopDist: rd.extra.stopStd, tp1Dist: 1.5 * rd.extra.stopStd }, { spread: rd.spreadNum, comm: 0, closesAtMs: closes(rd), tfMinutes: 15, bothTouched: 'half' });
+  const pairs = reads.filter((rd) => rd.extra.f && rd.extra.stopStd > 0 && !gap.has(rd.k) && scored(rd, 'buy') && scored(rd, 'sell')).length * 2;
+  assert.equal(ev.t2.n, pairs);
+  // The recipe says so, for the walk-forward and the holdout alike.
+  assert.match(recipe.walkForward.gaps, /more than 4 bars/);
+  assert.match(recipe.holdout.gaps, /walk-forward's rule/);
+});
 test('a model survives model.json: serialised and read back, it predicts the same', () => {
   const fit = fitModels(trainRowsFor(data.compact, 2024), [0.1]).filter.fits[0.1];
   const back = deserialiseModel(JSON.parse(JSON.stringify(serialiseModel(fit, 0.1))));
@@ -914,6 +949,32 @@ test('a final is recorded in three logs: $SCALP_DESK_HOME\'s, ~/.scalp-desk\'s a
   } finally { s.done(); }
 });
 
+test('the default desk home\'s log follows the account\'s home, not $HOME; a final also locks the git common directory', async () => {
+  const { userInfo } = await import('node:os');
+  const { finalLockPaths, GIT_FINAL_LOCK, accountHome } = await import('../desk/learn.mjs');
+  assert.notEqual(process.env.HOME, userInfo().homedir, 'this suite moved $HOME to a scratch folder');
+  assert.equal(accountHome(), userInfo().homedir);
+  const s = scratch();
+  try {
+    const logs = finalsLogPaths({ home: s.home, modelPath: s.path });
+    assert.equal(logs[1], join(userInfo().homedir, '.scalp-desk', 'learn', 'finals.log'), 'not under $HOME');
+    const locks = finalLockPaths({ home: s.home, modelPath: s.path });
+    assert.equal(locks.length, 2);
+    assert.match(locks[1], new RegExp(`\\.git/${GIT_FINAL_LOCK}$`));
+    await armFinal(finalOpts(s));
+    git(s.dir, 'commit', '-q', '-am', 'armed');
+    // Another final under ANOTHER home holds the repository's lock: refused, and nothing of ours is left behind.
+    writeFileSync(locks[1], 'x');
+    const r = await runFinal(finalOpts(s, { home: join(s.dir, 'other-home') }));
+    assert.equal(r.code, 'locked');
+    assert.ok(r.reason.includes(GIT_FINAL_LOCK), r.reason);
+    assert.ok(!existsSync(join(s.dir, 'other-home', 'learn', 'final.lock')), 'the home lock taken first is released');
+    rmSync(locks[1]);
+    assert.equal((await runFinal(finalOpts(s))).refused, false);
+    for (const p of locks) assert.ok(!existsSync(p), `released: ${p}`);
+  } finally { s.done(); }
+});
+
 test('fit and final work only on <project>/desk/model.json without the test-only option', async () => {
   assert.equal(MODEL_PATH, join(fileURLToPath(new URL('..', import.meta.url)), 'desk', 'model.json'));
   assert.equal(modelPathRefusal(MODEL_PATH), null);
@@ -932,6 +993,9 @@ test('fit and final work only on <project>/desk/model.json without the test-only
     assert.match(cli(['final', '--pair', 'bitcoin']), /^EXIT 2\nfit and final work only on/);
     assert.match(cli(['fit', '--pair', 'bitcoin', ...rows, '--test-model', s.path]), /^EXIT 2\nNo rows at/, 'with --test-model it goes on (to the missing rows)');
     assert.match(cli(['fit', '--pair', 'bitcoin', '--test-model']), /^EXIT 2\n--test-model needs a file/);
+    // A final never takes another model file on the command line (review, 17 Oct: a fresh clone ran a second final that way).
+    assert.match(cli(['final', '--pair', 'bitcoin', '--test-model', s.path]), /^EXIT 2\n--test-model is for scratch fits only/);
+    assert.match(cli(['final', '--run', '--pair', 'bitcoin', '--test-model', s.path]), /^EXIT 2\n--test-model is for scratch fits only/);
   } finally { s.done(); }
 });
 

@@ -15,7 +15,9 @@
  *    dollars from IC Markets' quote. So an alert gives the stop and target as
  *    DISTANCES, and the ticket is built from the price the user then types
  *    from MT5 (`take`), never from the feed's level.
- *  - NOT TESTED AGAINST OUTCOMES. The engine has no track record. On random
+ *  - NO LIVE RECORD YET. The replay measured it on past bars (decision 26:
+ *    roughly break-even after the spread), and the journal records every
+ *    alert from now on, but no committed sample has a verdict. On random
  *    walks it still leaned a direction about 70% of the time; the checks are
  *    what keep that from becoming a stream of alerts.
  *  - NOT THE LIVE SPREAD. The cost is the confirmed usual spread. Wherever the
@@ -40,6 +42,29 @@ import {
 /** Bars the engine reads (as on the page), and bars fetched (for the higher-timeframe bias). */
 export const ENGINE_BARS = 300;
 export const FETCH_BARS = 1000;
+
+/**
+ * Closed bars a read is made from: the fetch's 1,000 hold the bar still
+ * forming at the poll (20 s after a close), so the live engine reads 999.
+ * The replay, the dataset and the journal's record hand every read exactly
+ * this many, ending at the check, and engineRead never reads more: the H1 and
+ * H4 EMA seeds and the supertrend path depend on where the series starts, so
+ * a history path reading 1,000 could in rare cases read a moment differently
+ * from the watcher (review of desk/features.mjs, 17 Oct 2026).
+ */
+export const CLOSED_BARS = FETCH_BARS - 1;
+
+/**
+ * The version of the method that decides alerts: the engine, the gate, the
+ * checks, the target rule's arithmetic, the alert sequence and the scoring.
+ * The journal stamps it on every alert, and a committed sample is judged on
+ * one method only (LEARNING-PLAN.md rule 1). test/method.test.mjs hashes the
+ * files that decide alerts and fails when they change, so a change that could
+ * move any alert is bumped here on purpose — which ends a committed sample,
+ * and the desk says so (`journal`) — and one that cannot is recorded in that
+ * test with a note saying why.
+ */
+export const METHOD_VERSION = 1;
 
 /**
  * Bars a feed must give for the read the replay measured: 30 closed bars of
@@ -168,7 +193,9 @@ export function liveRead({ pair, bars, nowMs, cfg, plan = null, source = null, t
 export function engineRead({ pair, bars, nowMs, cfg, source = null, spreadNum = null, calendar = 'full' }) {
   const tf = tfInfo(timeframeFor(cfg));
   const inst = INSTRUMENTS[pair];
-  const closed = closedBars(bars || [], tf.minutes, nowMs);
+  // Never more than the watcher's 999 closed bars (CLOSED_BARS), whatever the
+  // caller hands in, so a long history reads exactly as the live fetch does.
+  const closed = closedBars(bars || [], tf.minutes, nowMs).slice(-CLOSED_BARS);
   const base = { pair, tf: tf.id, nowMs, source };
   if (closed.length < Math.max(MIN_BARS, minHistory(tf.id) - 1)) return { done: { ...base, kind: 'no-data', reason: `only ${closed.length} closed ${tf.id} bars from the feed, too few for the ${tf.htf[1].id} trend` } };
   const last = closed[closed.length - 1];
@@ -312,7 +339,10 @@ export function formatLiveIdea(rec, cfg, nowMs, plan = null) {
   if (why.length) out.push(why.join('\n'));
   const tail = [nextNewsLine(nowMs, pair, cfg.window), planLine(plan, nowMs, cfg.window)].filter(Boolean);
   if (tail.length) out.push(tail.join('\n'));
-  out.push('_From the live chart, not your screenshot, and not your broker\'s price. It has no track record, and the decision is yours._');
+  // Nothing about the learner here, in any mode (LEARNING-PLAN.md rule 3): no
+  // number, no "similar setups". "No live record yet" is the journal's state
+  // until a committed sample has its verdict, said the same on every alert.
+  out.push('_From the live chart, not your screenshot, and not your broker\'s price. It has no live record yet, and the decision is yours._');
   return out.join('\n\n');
 }
 

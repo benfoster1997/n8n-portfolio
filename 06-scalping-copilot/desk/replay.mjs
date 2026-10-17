@@ -48,12 +48,18 @@
  *        [--calendar full|rules|none] [--both-touched stop|half]
  *        [--holdout] [--no-store] [--list] [--by-condition]
  *
- * History is cached under $SCALP_DESK_HOME/history/ and only ever extended,
- * never replaced. Under test, $SCALP_DESK_BARS (the desk's file of bars per
- * instrument) stands in for it, $SCALP_DESK_CONFIG for desk/config.json and
- * $SCALP_DESK_MODEL for desk/model.json.
+ * History is cached under $SCALP_DESK_HOME/history/ by desk/history.mjs, the
+ * one writer of that file: only ever extended, never replaced. Under test,
+ * $SCALP_DESK_BARS (the desk's file of bars per instrument) stands in for it,
+ * $SCALP_DESK_CONFIG for desk/config.json and $SCALP_DESK_MODEL for
+ * desk/model.json.
+ *
+ * --by-condition (a new look at held-back rows on any of them, so --holdout
+ * there) makes the reads with desk/features-extra.mjs, so every lean carries
+ * features.mjs conditionOf's cell, and prints desk/conditions.mjs
+ * conditionReport's table under each block.
  */
-import { readFileSync, writeFileSync, mkdirSync, existsSync, renameSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -64,6 +70,7 @@ import { ensureProxy } from './net.mjs';
 import {
   DEFAULT_RULES, COST_MODES, SCALED_REFERENCE, loadBarsFile, checkIndices, readsFor, alertPass, defaultWorkers, kindFor,
 } from './reads.mjs';
+import { loadHistory, historyPath } from './history.mjs';
 import { CALENDAR_MODES } from '../src/news-calendar.js';
 import { windowState } from '../src/sessions.js';
 import { tfInfo } from '../src/timeframes.js';
@@ -137,53 +144,23 @@ if (toMs >= HOLDOUT_FROM) {
 /* ----------------------------------------------------------------- bars */
 
 /**
- * Binance BTCUSDT bars, cached. The cache is only ever extended — backwards
- * to 12 days before `start` (the reads' warm-up), forwards from its last bar
- * (refetched, in case it was still forming) — and rewritten only when the
- * merged history is at least as long as the old one. The previous version
- * refetched the whole range and overwrote the file whenever the cache did not
- * reach `end`, which could have replaced nine years of bars with twelve days.
- * A failed fetch leaves the cache as it was and the replay uses what it has.
+ * Binance BTCUSDT bars, through desk/history.mjs: the cache is extended at
+ * either end as needed — back to 12 days before `start` (the reads' warm-up),
+ * on to a day after `end` (the last session's outcomes) — merged, never
+ * replaced, and only closed bars are kept. The replay used to write the file
+ * itself, and once rewrote nine years as twelve days; history.mjs is now its
+ * only writer. The whole cache is then read as one array, because the read
+ * workers parse that same file and index into it. A fetch that fails leaves
+ * the cache as it was, and the replay uses what it holds.
  */
 async function history(start, end) {
-  const file = join(HOME, 'history', `${pair}-${tf.id}.json`);
-  const old = existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : [];
-  const want = start - 12 * 86400e3;
-  const now = Date.now();
-  const fetchRange = async (from, until) => {
-    const out = [];
-    for (let t = from; t < until;) {
-      const u = `https://data-api.binance.vision/api/v3/klines?symbol=BTCUSDT&interval=${tf.minutes}m&startTime=${t}&limit=1000`;
-      const r = await fetch(u);
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      const d = await r.json();
-      if (!d.length) break;
-      for (const k of d) if (k[0] + tfMs <= now) out.push({ t: k[0], o: +k[1], h: +k[2], l: +k[3], c: +k[4], v: +k[5] });
-      t = d[d.length - 1][0] + tfMs;
-    }
-    return out;
-  };
-  const parts = [];
-  try {
-    if (!old.length) parts.push(await fetchRange(want, end));
-    else {
-      if (old[0].t > want) parts.push(await fetchRange(want, old[0].t));
-      if (old[old.length - 1].t < end - 2 * tfMs) parts.push(await fetchRange(old[old.length - 1].t, end));
-    }
-  } catch (e) {
-    if (!old.length) throw e;
-    console.error(`Could not extend the bar cache (${e.message}); using the bars it has.`);
-    return old;
+  const file = historyPath(pair, tf.id, HOME);
+  const h = await loadHistory(pair, tf.id, { home: HOME, fromMs: start - 12 * 86400e3, toMs: end + 86400e3, log: process.stderr.isTTY ? (l) => console.error(l) : null });
+  if (!h.ok) {
+    if (!existsSync(file)) fail(h.reason);
+    console.error(`Could not extend the bar cache (${h.reason}); using the bars it has.`);
   }
-  if (!parts.some((p) => p.length)) return old;
-  const byT = new Map(old.map((b) => [b.t, b]));
-  for (const p of parts) for (const b of p) byT.set(b.t, b);
-  const merged = [...byT.values()].sort((a, b) => a.t - b.t);
-  if (merged.length < old.length) return old;   // never shrink the cache
-  mkdirSync(join(HOME, 'history'), { recursive: true });
-  writeFileSync(`${file}.tmp`, JSON.stringify(merged));
-  renameSync(`${file}.tmp`, file);
-  return merged;
+  return loadBarsFile(file, pair);
 }
 
 const barFile = process.env.SCALP_DESK_BARS || join(HOME, 'history', `${pair}-${tf.id}.json`);
@@ -205,7 +182,10 @@ const stats = {};
 // The bars' source is in the store's key: the test stand-in's reads must never
 // answer for the real history's (each read's slice is checked as well).
 const source = process.env.SCALP_DESK_BARS ? `file:${resolve(barFile)}` : 'binance';
-const { reads, fromStore, computed, replaced } = await readsFor(bars, ks, { pair, cfg, rules: DEFAULT_RULES, cost, calendar, workers, file: barFile, source, stats }, { home: HOME, useStore: !has('no-store') });
+// --by-condition needs each lean's condition cell, so its reads are made with
+// the features module (a store of their own: the module is in the key).
+const extraModule = has('by-condition') ? fileURLToPath(new URL('./features-extra.mjs', import.meta.url)) : null;
+const { reads, fromStore, computed, replaced } = await readsFor(bars, ks, { pair, cfg, rules: DEFAULT_RULES, cost, calendar, workers, file: barFile, source, stats, extraModule }, { home: HOME, useStore: !has('no-store') });
 // Timing goes to stderr (a terminal only), so the report itself is the same whatever the workers.
 if (process.stderr.isTTY) console.error(`${reads.length} reads (${fromStore} from the read store${replaced ? `, ${replaced} stored from other bars and recomputed` : ''}, ${computed ? `${computed} computed ${stats.workers ? `on ${stats.workers} workers` : 'in this process'}` : 'none computed'}) in ${((Date.now() - t0) / 1000).toFixed(1)} s`);
 
@@ -279,11 +259,12 @@ for (const rule of rules) {
       if (has('list')) for (const t of trades) console.log(`   ${t.at} ${t.side} ${t.conf} netR ${t.netR} → ${t.how} ${t.r.toFixed(2)}R after ${t.bars} bars`);
     }
     if (has('by-condition')) {
-      // The by-condition table (LEARNING-PLAN.md Part 2) is desk/conditions.mjs,
-      // built separately. It is handed this block's reads and alerts, and the
-      // bars only up to the close of the last check's session — what those
-      // alerts were followed on, and nothing after — never the whole cache.
-      // It returns the lines to print.
+      // The by-condition table (LEARNING-PLAN.md Part 2) is desk/conditions.mjs
+      // conditionReport. It is handed this block's reads (each lean with its
+      // condition cell, from the features module) and alerts, and the bars only
+      // up to the close of the last check's session — what those alerts were
+      // followed on, and nothing after — never the whole cache. It returns the
+      // lines to print.
       const report = await conditionsHook();
       if (report === null) console.log('   by condition: not built yet (desk/conditions.mjs).');
       else if (typeof report !== 'function') console.log('   by condition: desk/conditions.mjs has no conditionReport function to call.');

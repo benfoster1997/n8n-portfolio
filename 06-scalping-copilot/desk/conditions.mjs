@@ -49,16 +49,32 @@
  *
  * This module does no I/O and reads no file. It does not decide whether the
  * held-back years may be looked at — the replay does, from model.json — and it
- * does not decide whether the journal's committed sample is complete.
+ * does not decide whether the journal's committed sample is complete: rows
+ * after the holdout (the live sample's period) are refused unless the caller
+ * says the sample is complete (allowFresh).
+ *
+ * conditionReport() is the adapter desk/replay.mjs calls for --by-condition:
+ * it takes the replay's reads (made with desk/features-extra.mjs, so each
+ * lean carries features.mjs conditionOf's cell) and its alerts, and prints a
+ * table per period.
  */
 import { clusteredByDay } from './stats.mjs';
+import { REGIMES as FEATURE_REGIMES, HOUR_BANDS as FEATURE_HOUR_BANDS, WEEKDAYS as FEATURE_WEEKDAYS, DIRECTIONAL } from './features.mjs';
+import { tfInfo } from '../src/timeframes.js';
 
 /**
- * The fixed holdout (plan rule 2): from 2025-01-01 00:00 UTC to the bar at
- * 2026-10-14 20:45 UTC, inclusive. Inside it, 2025 is clean and 2026 was
- * already looked at while choosing the 1.5R rule; the plan reports them
- * separately, always. Later rows (the live journal) are fresh: after the
- * window, not in it.
+ * The fixed holdout (plan rule 2): from 2025-01-01 00:00 UTC to 2026-10-14
+ * 20:45 UTC, inclusive. Inside it, 2025 is clean and 2026 was already looked
+ * at while choosing the 1.5R rule; the plan reports them separately, always.
+ * Later rows (the live journal) are fresh: after the window, not in it.
+ *
+ * A trade's `at` is its BAR CLOSE time, as desk/replay.mjs and reads.mjs
+ * alertPass write it (the moment the watcher could have sent it), and the
+ * boundaries are compared with that instant. The plan defines the window by
+ * bars, whose history times are open times, so the bar opening 2026-10-14
+ * 20:45 (closing 21:00) counts as fresh here, and the bar opening 2024-12-31
+ * 23:45 (closing at midnight) as 2025. Both lie outside the London window, so
+ * no check of the table falls on either edge.
  */
 export const HOLDOUT = Object.freeze({ from: '2025-01-01T00:00Z', seenFrom: '2026-01-01T00:00Z', to: '2026-10-14T20:45Z' });
 const FROM_MS = Date.parse(HOLDOUT.from), SEEN_MS = Date.parse(HOLDOUT.seenFrom), TO_MS = Date.parse(HOLDOUT.to);
@@ -73,18 +89,19 @@ export const PERIODS = Object.freeze({
 
 const MULTI_YEAR_CAVEAT = 'Before 2025 there is no news calendar, so these years include trades around releases that the live desk would have sat out.';
 
-// The contract's vocabulary. These match features.mjs (REGIMES, HOUR_BANDS,
-// WEEKDAYS, the directional buckets) and the engine's confidence words; they
-// are written out here rather than imported because features.mjs lives on
-// another branch until integration. The contract test after the merge runs
-// the real conditionOf() through validateCond(). A low-confidence idea is
-// refused by checkPlan(), so on alerts that cell will normally be empty; it is
-// still counted in the Bonferroni total, because it was declared in advance.
-export const REGIMES = Object.freeze(['trending', 'ranging', 'mixed', 'compressed']);
+// The contract's vocabulary, from features.mjs, which builds every cond
+// (conditionOf): its regimes, the labels of its hour bands and weekdays, and
+// its directional buckets (the b_* names among DIRECTIONAL). Imported rather
+// than copied, so the two cannot drift (test/conditions.test.mjs runs the real
+// conditionOf() through validateCond()). The confidence words are the
+// engine's (features.mjs confidenceLabel). A low-confidence idea is refused by
+// checkPlan(), so on alerts that cell will normally be empty; it is still
+// counted in the Bonferroni total, because it was declared in advance.
+export const REGIMES = Object.freeze([...FEATURE_REGIMES]);
 export const CONFIDENCE = Object.freeze(['low', 'moderate', 'firm']);
-export const BUCKETS = Object.freeze(['trend', 'momentum', 'structure', 'location', 'volume']);
-export const HOUR_BANDS = Object.freeze(['08-10', '10-12', '12-14', '14-16']);
-export const WEEKDAYS = Object.freeze(['Mon', 'Tue', 'Wed', 'Thu', 'Fri']);
+export const BUCKETS = Object.freeze(DIRECTIONAL.filter((n) => n.startsWith('b_')).map((n) => n.slice(2)));
+export const HOUR_BANDS = Object.freeze(FEATURE_HOUR_BANDS.map((b) => b.label));
+export const WEEKDAYS = Object.freeze(FEATURE_WEEKDAYS.map((d) => d.label));
 const DAY_NAMES = { Mon: 'Monday', Tue: 'Tuesday', Wed: 'Wednesday', Thu: 'Thursday', Fri: 'Friday' };
 const cap = (s) => `${s[0].toUpperCase()}${s.slice(1)}`;
 
@@ -121,9 +138,12 @@ const show = (v) => (typeof v === 'string' ? `'${v}'` : String(v));
  * Throws, naming the field, unless `cond` is exactly the contract's shape.
  * Exported so the integration test can run the real conditionOf() through it.
  */
+const COND_KEYS = Object.freeze(['regime', 'confidenceLabel', 'h1', 'h4', 'agree', 'buckets', 'hourBand', 'weekday', 'side']);
 export function validateCond(cond) {
   if (!cond || typeof cond !== 'object') throw new Error(`cond must be an object from conditionOf(), not ${show(cond)}`);
   const bad = (field, v, allowed) => new Error(`cond.${field} is ${show(v)}, not one of ${allowed} (the contract: features.mjs conditionOf)`);
+  // An extra key (cond.volatility, say) is a contract drift too: refused, not ignored.
+  for (const k of Object.keys(cond)) if (!COND_KEYS.includes(k)) throw bad('key', k, COND_KEYS.join(', '));
   if (!REGIMES.includes(cond.regime)) throw bad('regime', cond.regime, REGIMES.join(', '));
   if (!CONFIDENCE.includes(cond.confidenceLabel)) throw bad('confidenceLabel', cond.confidenceLabel, CONFIDENCE.join(', '));
   for (const k of ['h1', 'h4']) if (!SIGNS.includes(cond[k])) throw bad(k, cond[k], '−1, 0, 1');
@@ -160,11 +180,18 @@ export function periodOf(at) {
   return 'fresh';
 }
 
-/** Trades split into { dev, clean, seen, fresh }, for one byCondition() call each. */
+/**
+ * Trades split into { dev, clean, seen, fresh }, for one byCondition() call
+ * each. Anything that is not a trade object throws: dropping it here would
+ * hide it from byCondition's coverage line (`skipped`).
+ */
 export function splitByPeriod(trades) {
   if (!Array.isArray(trades)) throw new Error('splitByPeriod needs an array of trades');
   const out = { dev: [], clean: [], seen: [], fresh: [] };
-  for (const t of trades) if (t) out[periodOf(t.at)].push(t);
+  trades.forEach((t, i) => {
+    if (!t || typeof t !== 'object') throw new Error(`splitByPeriod: entry ${i} is ${show(t)}, not a trade`);
+    out[periodOf(t.at)].push(t);
+  });
   return out;
 }
 
@@ -268,12 +295,17 @@ export function bonferroniZ(cells, alpha = 0.05) {
  *                    alpha / cells, two-sided.
  *   cluster ('day')  'none' treats trades as independent. Only for showing how
  *                    much narrower — and wronger — that makes the ranges.
- *   allowHeldBack    false refuses any row inside HOLDOUT. Fresh rows (after
- *                    it) need no permission.
+ *   allowHeldBack    false refuses any row inside HOLDOUT.
+ *   allowFresh       false refuses rows after HOLDOUT: they are the live
+ *                    journal's committed sample in progress, which gets no
+ *                    by-condition breakdown before it is complete (plan Part
+ *                    3). Pass true only when it is (the journal, after its
+ *                    verdict) or for synthetic rows in a test.
  * Throws when the trades span more than one period (dev, clean 2025, seen
  * 2026, fresh): rule 2 reports them separately, so split with splitByPeriod().
- * Rows with no cond, or no finite r (still running), are left out and counted
- * in `skipped`; a malformed time or a cond outside the contract throws.
+ * Rows with no cond, or with r null, undefined or NaN (still running), are
+ * left out and counted in `skipped`; a malformed time, an r of another type
+ * (a string, an infinity) or a cond outside the contract throws.
  * Returns {
  *   rows: [{ cell, group, label, n, days, mean, lo, hi, crit, tooFew, why,
  *            clearsZero, clearsAt95 }],  one per CELLS entry, same order;
@@ -288,10 +320,11 @@ export function bonferroniZ(cells, alpha = 0.05) {
  *   skipped: { noCond, noResult }, minN, minDays, cluster }.
  * lo/hi are mean ± crit × se, where se is the day-clustered error times
  * √(G/(G−1)) and crit the t quantile on G−1 days of freedom at alpha/cells.
- * `why` is null, 'trades', 'days' or 'spread' (every result identical: no
- * range can be measured, so nothing is marked).
+ * `why` is null, 'trades', 'days' or 'spread' (no spread between days — every
+ * day's average the same, identical results included — so no range can be
+ * measured, and nothing is marked).
  */
-export function byCondition(trades, { minN = 30, minDays = 10, alpha = 0.05, cluster = 'day', allowHeldBack = false } = {}) {
+export function byCondition(trades, { minN = 30, minDays = 10, alpha = 0.05, cluster = 'day', allowHeldBack = false, allowFresh = false } = {}) {
   if (!Array.isArray(trades)) throw new Error(`byCondition needs an array of trades, not ${show(trades)}`);
   if (cluster !== 'day' && cluster !== 'none') throw new Error(`cluster must be 'day' or 'none', not ${cluster}`);
   if (!Number.isInteger(minN) || minN < 2) throw new Error(`minN must be a whole number of at least 2, not ${minN}`);
@@ -304,7 +337,10 @@ export function byCondition(trades, { minN = 30, minDays = 10, alpha = 0.05, clu
     if (!t || typeof t !== 'object') { skipped.noCond++; continue; }
     atMs(t.at);
     if (t.cond === undefined || t.cond === null) { skipped.noCond++; continue; }
-    if (!Number.isFinite(t.r)) { skipped.noResult++; continue; }
+    // Still running is null, undefined or NaN; anything else that is not a
+    // finite number is a mistake, not a trade without a result.
+    if (t.r === null || t.r === undefined || Number.isNaN(t.r)) { skipped.noResult++; continue; }
+    if (typeof t.r !== 'number' || !Number.isFinite(t.r)) throw new Error(`Trade at ${t.at} has r ${show(t.r)}: a result is a finite number of R, or null while it runs`);
     validateCond(t.cond);
     usable.push(t);
   }
@@ -317,6 +353,9 @@ export function byCondition(trades, { minN = 30, minDays = 10, alpha = 0.05, clu
   if ((period === 'clean' || period === 'seen') && !allowHeldBack) {
     const late = usable[0];
     throw new Error(`Trade at ${late.at} is in the held-back window (${HOLDOUT.from} to ${HOLDOUT.to}). The by-condition table does not look at it until the replay says it may.`);
+  }
+  if (period === 'fresh' && !allowFresh) {
+    throw new Error(`Trade at ${usable[0].at} is after the held-back window (${HOLDOUT.to}): that is the live journal's committed sample in progress, which gets no by-condition breakdown before it is complete (plan Part 3).`);
   }
   const ats = usable.map((t) => t.at).sort();
 
@@ -409,8 +448,13 @@ const lpad = (s, w) => String(s).padStart(w);
  * after-the-sample breakdown.
  */
 export function headerWarning(result, { audience = 'developer' } = {}) {
-  const lead = audience === 'journal' ? 'Described, not tested' : 'Developer report';
-  return `${lead} — ${aboutHowMany(result.expectedByChance)} of these cells will clear zero by chance at 95%; `
+  // The journal's breakdown is description only (plan Part 3): nothing in it
+  // is marked, so its header does not promise a mark.
+  if (audience === 'journal') {
+    return `Described, not tested — ${aboutHowMany(result.expectedByChance)} of these cells would clear zero by chance at 95%, so none is marked; `
+      + `each range is drawn with all ${result.cells} cells counted. None of these is a rule to trade by.`;
+  }
+  return `Developer report — ${aboutHowMany(result.expectedByChance)} of these cells will clear zero by chance at 95%; `
     + `a cell is only marked when it clears zero with all ${result.cells} cells counted (z = ${result.z.toFixed(2)} on many days, wider on few). `
     + 'None of these is a rule to trade by.';
 }
@@ -421,17 +465,20 @@ export function headerWarning(result, { audience = 'developer' } = {}) {
  *   title       first line; defaults to "Alerts by condition" (or "Checks …").
  *   unit        'alerts' (default) or 'checks' — Part 4's window checks.
  *   htfIds      the two higher timeframes' names, from tf.htf (['H1', 'H4']
- *               on M15; ['M15', 'H1'] on M5).
+ *               on M15; ['M15', 'H1'] on M5): exactly two strings.
  *   multiYear   'auto' adds the plan's rule-8 caveat when any trade is before
  *               2025, true always adds it, false leaves it to the caller.
  *   audience    'developer' (default) or 'journal'. The journal may show this
  *               only after its committed sample is complete (Part 3), so
  *               'journal' throws unless sampleComplete is true, and takes only
- *               fresh rows; it drops the developer and sample-in-progress lines.
+ *               fresh rows; it drops the developer and sample-in-progress lines,
+ *               and marks no cell (a description, not a test).
  */
 export function formatConditions(result, { title = null, unit = 'alerts', htfIds = ['H1', 'H4'], multiYear = 'auto', audience = 'developer', sampleComplete = false } = {}) {
   if (unit !== 'alerts' && unit !== 'checks') throw new Error(`unit must be 'alerts' or 'checks', not ${unit}`);
   if (audience !== 'developer' && audience !== 'journal') throw new Error(`audience must be 'developer' or 'journal', not ${audience}`);
+  if (!Array.isArray(htfIds) || htfIds.length !== 2 || !htfIds.every((x) => typeof x === 'string' && x)) throw new Error(`htfIds must be the two higher timeframes' names, like ['H1', 'H4'], not ${show(htfIds)}`);
+  const journal = audience === 'journal';
   if (audience === 'journal') {
     if (sampleComplete !== true) throw new Error('No by-condition breakdown of the journal before its committed sample is complete (plan Part 3).');
     if (result.period !== 'fresh' && result.period !== null) throw new Error(`The journal's breakdown covers fresh rows only, not ${result.period}.`);
@@ -453,7 +500,7 @@ export function formatConditions(result, { title = null, unit = 'alerts', htfIds
   out.push(`${pad('', 2)}${pad('Cell', W)}${lpad('n', 6)}${lpad('days', 6)}${lpad('mean', 8)}  range, all ${result.cells} cells counted`);
   const line = (label, r, markIt) => {
     const head = `${pad('', 2)}${pad(label, W)}${lpad(r.n, 6)}${lpad(r.days, 6)}`;
-    if (r.tooFew) return `${head}${lpad('—', 8)}  ${r.why === 'spread' ? 'every result the same, no range' : 'too few to say'}`;
+    if (r.tooFew) return `${head}${lpad('—', 8)}  ${r.why === 'spread' ? 'no spread between days, no range' : r.why === 'days' ? 'too few days to say' : 'too few to say'}`;
     const range = `${signed(r.lo)} to ${signed(r.hi)}`;
     const mark = markIt && r.clearsZero ? `clears zero, ${r.lo > 0 ? 'above' : 'below'}` : '';
     return `${head}${lpad(signed(r.mean), 8)}  ${pad(range, 18)}${mark}`.trimEnd();
@@ -476,7 +523,7 @@ export function formatConditions(result, { title = null, unit = 'alerts', htfIds
   let group = null;
   for (const r of result.rows) {
     if (r.group !== group) { if (group) closeGroup(group); group = r.group; out.push(groupHead(group)); }
-    out.push(line(r.label, r, true));
+    out.push(line(r.label, r, !journal));
   }
   if (group) closeGroup(group);
 
@@ -486,21 +533,69 @@ export function formatConditions(result, { title = null, unit = 'alerts', htfIds
   // for normal results; on the desk's skewed R (a third at −1, a fifth at
   // +1.5) a simulation put a 30-trade cell at about 2.4 times its share and a
   // 200-trade cell at 1.3 times, hence the bracket.
+  // The "about twice" was measured for cells near 30 trades; with a larger
+  // minimum the excess is smaller (about a third more at 100 trades), so the
+  // clause follows minN rather than claiming twice for every table.
+  const small = result.minN <= 50
+    ? `; somewhat more when many cells sit near the ${result.minN}-trade minimum: results as lopsided as a 1.5R target against a −1 stop clear by luck up to about twice as often in a cell that small`
+    : `; a little more in cells near the ${result.minN}-trade minimum, because results as lopsided as a 1.5R target against a −1 stop are not spread like a bell curve`;
   const family = result.cluster === 'none'
     ? 'The chance of a false mark is not known here: these ranges ignore same-day overlap.'
-    : `On a system with no edge at all, the chance of even one is at most ${oneIn(result.alpha)} (somewhat more when many cells sit near the ${result.minN}-trade minimum: results as lopsided as a 1.5R target against a −1 stop clear by luck up to about twice as often in a cell that small).`;
+    : result.alpha >= 0.75
+      ? 'On a system with no edge at all, at least one is close to certain to clear by luck at this setting.'
+      : `On a system with no edge at all, the chance of even one is ${oneIn(result.alpha)} when every cell rests on many days${small}.`;
   out.push(
     '',
-    `Cleared zero with all ${result.cells} cells counted: ${result.found} of ${result.cells}. ${family}`,
+    ...(journal ? [] : [`Cleared zero with all ${result.cells} cells counted: ${result.found} of ${result.cells}. ${family}`]),
     `Cleared zero at the ordinary 95%: ${result.foundAt95} of ${result.cells}, against ${result.expectedByChance.toFixed(1)} expected by chance alone.`,
-    ...(result.all && result.all.clearsZero
+    ...(!journal && result.all && result.all.clearsZero
       ? [`All trades together clear zero ${result.all.lo > 0 ? 'above' : 'below'} as well, so a cell clearing zero here mostly repeats the whole sample's average; it says little about the cell itself.`]
       : []),
     'A cell counts here only with at least '
       + `${result.minN} trades on at least ${result.minDays} days. The cells overlap (every trade sits in one regime, one hour band, one weekday and so on), so they are not ${result.cells} separate results.`,
-    audience === 'journal'
+    journal
       ? 'Using any cell to pick trades would change the method and would need a new sample of its own before anything could be said about it.'
       : 'Using any cell to pick trades would change the method: it ends the sample in progress and needs a new one of its own before anything can be said about it.',
   );
   return out.join('\n');
+}
+
+/**
+ * The adapter desk/replay.mjs calls for --by-condition: one table per period
+ * of the replay's alerts, by the cell each fired in.
+ *   reads   the block's reads, made with desk/features-extra.mjs (the replay
+ *           passes it when --by-condition is set): a lean's `extra.cond` is
+ *           features.mjs conditionOf() for the side the engine leaned, which
+ *           is the alert's side
+ *   trades  the alerts reads.mjs alertPass sent ({ at, closeMs, r, ... })
+ *   rule    the target rule they were judged under, for the title
+ *   cfg, settings   the timeframe (for the higher timeframes' names)
+ *   bars, block     accepted as the replay hands them; the table needs no bar
+ * The replay has already decided whether held-back rows may be looked at (it
+ * requires --holdout and records the look), so a 2025 or 2026 block is passed
+ * with allowHeldBack. Rows after the holdout are the live journal's sample in
+ * progress: they are counted and left out, never broken down (plan Part 3).
+ * Returns the lines to print.
+ */
+export function conditionReport({ reads, trades, rule, cfg = null, settings = null } = {}) {
+  if (!Array.isArray(reads) || !Array.isArray(trades)) throw new Error('conditionReport needs the replay\'s reads and trades');
+  if (reads.some((r) => r.kind === 'lean') && !reads.some((r) => r.extra && 'cond' in r.extra)) {
+    throw new Error('conditionReport: the reads carry no features. The replay makes them with desk/features-extra.mjs when --by-condition is set; these were made without it.');
+  }
+  const condAt = new Map(reads.map((r) => [r.closeMs, r.extra ? r.extra.cond ?? null : null]));
+  const rows = trades.map((t) => ({ at: t.at, r: t.r, cond: condAt.get(t.closeMs) ?? null }));
+  const tf = (settings && settings.timeframe) || (cfg && cfg.timeframe) || 'M15';
+  const htfIds = tfInfo(tf).htf.map((x) => x.id);
+  const parts = splitByPeriod(rows);
+  const out = [];
+  for (const period of ['dev', 'clean', 'seen']) {
+    if (!parts[period].length) continue;
+    const res = byCondition(parts[period], { allowHeldBack: period !== 'dev' });
+    out.push(formatConditions(res, { title: `Alerts by condition (rule ${rule})`, htfIds }));
+  }
+  if (parts.fresh.length) {
+    out.push(`${parts.fresh.length} alert${parts.fresh.length === 1 ? '' : 's'} after 14 October 2026 20:45 UTC left out: that is the live journal's committed sample in progress, which is not broken down by condition before it is complete.`);
+  }
+  if (!out.length) out.push(`Alerts by condition (rule ${rule}): no alerts in this block.`);
+  return out.join('\n\n');
 }

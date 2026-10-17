@@ -10,7 +10,7 @@
  * both in British Summer Time): the journal refuses to read the held-back
  * years (rule 2), and the recording sits inside them. A few invented bars
  * cover the rare cases. Nothing here touches the network; every file is in a
- * temporary folder. Reads are memoised, so the whole suite makes about 64.
+ * temporary folder. Reads are memoised, so the whole suite makes about 420.
  */
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, mkdtempSync, existsSync, readdirSync, utimesSync } from 'node:fs';
@@ -966,6 +966,46 @@ test('only settings that can change the record end a sample: the server offset a
   assert.throws(() => setSample({ cfg: gbp, method: METHOD, pairs: ['XAUUSD', 'BTCUSD'], events: [] }), /different method/);
   assert.throws(() => canonicalAlerts({ pair: 'XAUUSD', bars: [], feedId: 'twelvedata', cfg: gbp, method: METHOD, fromMs: Date.UTC(2026, 9, 21), toMs: Date.UTC(2026, 9, 22) }), /different method/);
   assert.equal(canon({ cfg: gbp, method: METHOD }).events.length, canon().events.length);
+});
+test('a bitcoin-only sample in progress cannot be restarted as "method changed" when only GBP/USD changed', () => {
+  // GBP/USD moves gold's commission only: bitcoin's record, and so this sample, cannot change.
+  const gbp = withDefaults({ account: { gbpusd: 1.34 } });
+  const M_GBP = methodOf({ version: 'm1', tf: 'M15', cfg: gbp });
+  assert.notEqual(methodKey(M_GBP), methodKey(METHOD), 'the whole method differs (gold\'s costs)');
+  const evs = sampleOf(wave(60, 1.4, 0.9), { N: 100 });
+  assert.equal(sampleStatus(evs).complete, false);
+  assert.throws(() => setSample({ cfg: gbp, method: M_GBP, pairs: ['BTCUSD'], events: evs, committedAt: NOW + 60 * DAY, replaces: 'method-changed' }), /the method is unchanged/);
+  // A real change to bitcoin's method may restart it.
+  const m2 = methodOf({ version: 'm2', tf: 'M15', cfg: gbp });
+  assert.equal(setSample({ cfg: gbp, method: m2, pairs: ['BTCUSD'], events: evs, committedAt: NOW + 60 * DAY, replaces: 'method-changed' }).method.version, 'm2');
+});
+test('the desk\'s method changing (a new version or timeframe) stops the sample at once, before anything is recorded under it', () => {
+  const evs = sampleOf(byDay(40, 1.4, 0.2), { N: 100 });
+  const after = Date.UTC(2027, 0, 20, 18);
+  assert.match(summary(evs, { nowMs: after, cfg, methodNow: METHOD }), /40 of the 100 alerts you committed to/);
+  for (const m of [methodOf({ version: 'm2', tf: 'M15', cfg }), methodOf({ version: 'm1', tf: 'M5', cfg })]) {
+    const text = summary(evs, { nowMs: after, cfg, methodNow: m });
+    assert.match(text, /\*\*The alert sample\*\*: stopped at 40 of 100 because the desk's method changed after you committed to it/);
+    assert.doesNotMatch(text, /40 of the 100 alerts you committed to/);
+  }
+  // In session, the running count is no longer offered.
+  const during = Date.UTC(2027, 0, 20, 11);
+  assert.match(summary(evs, { nowMs: during, cfg, methodNow: METHOD }), /- Alert sample: 40 of 100/);
+  assert.doesNotMatch(summary(evs, { nowMs: during, cfg, methodNow: methodOf({ version: 'm2', tf: 'M15', cfg }) }), /- Alert sample:/);
+});
+test('a shown alert may carry the features of its read, under the injected names only', () => {
+  const rec = recAt(C1315);
+  const e = shownEvent(rec, { source: 'watch', method: METHOD, cfg, at: C1315 + 20000, features: { relVol: 1.2, abstain: false, engineNet: null } });
+  assert.deepEqual(e.features, { relVol: 1.2, abstain: false, engineNet: null });
+  assert.throws(() => shownEvent(rec, { source: 'watch', method: METHOD, cfg, features: { accountBalance: 9816107.46 } }), /not on the features list|may not be stored/);
+  assert.equal('features' in shownEvent(rec, { source: 'watch', method: METHOD, cfg }), false, 'none given, none stored');
+});
+test('whitespace runs between digits do not hide a phone number (re-check, 17 Oct)', () => {
+  for (const bad of ['07700    900123', '07700\t\t\t\t900123', '07700          900123', '077  00    900  123', 'ring 07700 \n\n 900123']) {
+    assert.equal(sensitiveText(bad), true, JSON.stringify(bad));
+    assert.throws(() => sanitize({ ...base(), reasons: [bad] }), /long number/, JSON.stringify(bad));
+  }
+  assert.equal(sensitiveText('EMA 9  <  21  <  50, RSI 55'), false, 'engine-like text with wide spacing still passes');
 });
 test('two records of a day that differ only in the gap flag are contested, and withhold the verdict', () => {
   const evs = sampleOf(byDay(100, 1.4, 0.2));

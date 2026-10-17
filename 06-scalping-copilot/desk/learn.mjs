@@ -33,10 +33,14 @@
  *    "armed" entry for the session to commit. `final --run` refuses unless
  *    that entry is in the committed model.json; it writes "started" to
  *    model.json and to three logs outside the working tree
- *    ($SCALP_DESK_HOME/learn/finals.log, ~/.scalp-desk/learn/finals.log and
- *    <git common dir>/scalp-desk-finals.log, which no checkout, stash, reset
- *    or clean touches, and which no environment variable moves) immediately
- *    before the first outcome is computed, then the results. A final that
+ *    ($SCALP_DESK_HOME/learn/finals.log; ~/.scalp-desk/learn/finals.log, with
+ *    ~ the account's home from the system (os.userInfo), not $HOME; and <git
+ *    common dir>/scalp-desk-finals.log — no checkout, stash, reset or clean
+ *    touches any of them, and no environment variable moves the last two)
+ *    immediately before the first outcome is computed, then the results. It
+ *    holds a lock in $SCALP_DESK_HOME and another in the git common dir, so
+ *    two finals started together under different homes still exclude each
+ *    other. A final that
  *    started or ran, for an overlapping window, in ANY committed version of
  *    model.json, the working copy or any of the logs, refuses every later
  *    final and every refit. Both fit and final work only on
@@ -69,7 +73,10 @@
  * model file is $SCALP_DESK_MODEL or model.json beside the config
  * ($SCALP_DESK_CONFIG or desk/config.json), as the replay's "looks" already
  * are; `fit` and `final` refuse any but desk/model.json. --test-model <file>
- * (tests and scratch runs only) names another, for `fit` and `final` alike.
+ * (scratch runs only) names another for `fit`; `final` refuses it on the
+ * command line — a second model file committed beside the first would carry a
+ * history of its own, and a fresh clone could run a second final on it
+ * (review, 17 Oct 2026). Tests reach armFinal and runFinal through the module.
  */
 import {
   readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, createReadStream, openSync, writeSync, fsyncSync, closeSync, unlinkSync, realpathSync,
@@ -78,13 +85,13 @@ import { createInterface } from 'node:readline';
 import { createHash, randomBytes } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { join, dirname, resolve, relative, sep, basename } from 'node:path';
-import { homedir } from 'node:os';
+import { homedir, userInfo } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import {
   FEATURE_NAMES, FEATURES_VERSION, DIRECTIONAL, SWAPPED, sideSigned,
 } from './features.mjs';
 import {
-  alertPass, computeReads, checkIndices, engineFiles, extraFor, loadBarsFile, loadStore, sliceOf, spreadAt, storePath, defaultWorkers, DEFAULT_RULES,
+  alertPass, computeReads, checkIndices, engineFiles, extraFor, loadBarsFile, loadStore, sliceOf, spreadAt, storePath, defaultWorkers, DEFAULT_RULES, GAP_BARS,
 } from './reads.mjs';
 import { outcome } from './outcome.mjs';
 import { clusteredByDay } from './stats.mjs';
@@ -138,8 +145,9 @@ export const TRAIN_SOURCE = 'binance';
 
 /**
  * What the held-back bars and reads must be before anything is recorded:
- * at least `barsBefore` bars before 2025-01-01 (the first check's 1,000-bar
- * slice), and of the window checks the calendar expects, at most
+ * at least `barsBefore` bars before 2025-01-01 (the first check's 999-bar
+ * slice, live.mjs CLOSED_BARS, and one to spare), and of the window checks
+ * the calendar expects, at most
  * `maxMissingShare` without a bar and at most `maxGapShare` read as 'gap',
  * 'no-data' or 'stale'. None of this sees an outcome.
  */
@@ -993,12 +1001,14 @@ export function buildRecipe({ pair, tf, cfg, dataset: ds }) {
       score: 'mean net R of kept alerts over all test years, from the filtered watcher simulated through the alert sequence (reads.mjs alertPass with the predicate)',
       nearTie: 'within one day-clustered SE (x sqrt(G/(G-1))) of the best: prefer the larger lambda, then the larger q',
       finalFit: 'both models refitted on every development day before 2025-01-01 minus the purge, at the chosen lambda; both thresholds from those rows',
+      gaps: `a check whose trade (label (a), or label (b) long or short, gross or net) would cross a hole of more than ${GAP_BARS} bars on its way to its exit is gapAhead (dataset.mjs rowFor): not scored, so out of training, and left out of every alert pass (the predicate refuses it: it neither alerts nor starts a cooldown)`,
     },
     holdout: {
       ...HOLDOUT,
       rule: 'looked at once. `final` checks everything that sees no outcome and records an armed entry to commit; `final --run` needs that entry committed, records started (model.json, $SCALP_DESK_HOME/learn/finals.log, ~/.scalp-desk/learn/finals.log and <git common dir>/scalp-desk-finals.log) immediately before the first outcome, then the results. A final that started or ran for an overlapping window, in any committed version of model.json, the working copy or any of the logs, refuses every later final and every refit. fit and final run only on <project>/desk/model.json and never in a shallow clone.',
       data: { ...HOLDOUT_DATA, expected: 'every bar close in the window that src/sessions.js windowState calls open on a weekday, at the timeframe' },
       reads: `computed by the final itself (never dataset rows): reads.mjs at cost ${HOLDOUT_COST}, calendar ${HOLDOUT_CALENDAR}, rule ${TARGET_RULE}, with desk/features-extra.mjs`,
+      gaps: `the walk-forward's rule: a held-back check that dataset.mjs rowFor marks gapAhead (a trade crossing a hole of more than ${GAP_BARS} bars) is left out of the unfiltered and kept passes (so of the coin-flip baseline), of T2's pairs and of P2`,
     },
     tests: {
       z: Z_TEST,
@@ -1106,6 +1116,15 @@ export function committedVersions(modelPath) {
   return out;
 }
 
+/**
+ * The account's home directory as the system records it (os.userInfo), not
+ * $HOME: a final's default log must not move with an environment variable
+ * (review, 17 Oct 2026). homedir() only where the system has no record.
+ */
+export function accountHome() {
+  try { return userInfo().homedir || homedir(); } catch { return homedir(); }
+}
+
 /** The append-only record of finals under a desk home: outside the repository, so no git step erases it. */
 export const finalsLogPath = (home) => join(home, 'learn', 'finals.log');
 
@@ -1126,7 +1145,9 @@ export function gitCommonDirOf(path) {
  * Every log a final is written to and looked for in, deduplicated:
  *   - $SCALP_DESK_HOME's (`home`), as before;
  *   - the default desk home's, ~/.scalp-desk/learn/finals.log, whatever the
- *     variable says (`userHome` stands in for ~ under test only);
+ *     variable says, with ~ the account's home as the system records it
+ *     (os.userInfo), which $HOME does not move (`userHome` stands in for ~
+ *     under test only);
  *   - <git common dir>/scalp-desk-finals.log of the repository model.json is
  *     in: no checkout, stash, reset or clean touches it, and every worktree
  *     of the repository shares it.
@@ -1134,7 +1155,7 @@ export function gitCommonDirOf(path) {
 export function finalsLogPaths({ home = null, modelPath = null, userHome = null } = {}) {
   const out = [];
   if (home) out.push(finalsLogPath(home));
-  out.push(finalsLogPath(join(userHome || homedir(), '.scalp-desk')));
+  out.push(finalsLogPath(join(userHome || accountHome(), '.scalp-desk')));
   const common = modelPath ? gitCommonDirOf(modelPath) : null;
   if (common) out.push(join(common, GIT_FINALS_LOG));
   return [...new Set(out.map((p) => resolve(p)))];
@@ -1479,18 +1500,38 @@ async function prepareHoldout({ pair, cfg, tf, home, bars, workers, readsFn }) {
   return { ok: true, bars: b, reads, readsHash: readsHashOf(reads), data };
 }
 
-/** Takes the final's lock (O_EXCL); returns a release function, or null when another final holds it. */
-function takeLock(home) {
-  const p = join(home, 'learn', 'final.lock');
-  mkdirSync(dirname(p), { recursive: true });
-  try {
-    const fd = openSync(p, 'wx');
-    try { writeSync(fd, `${process.pid} ${new Date().toISOString()}\n`); } finally { closeSync(fd); }
-  } catch (e) {
-    if (e && e.code === 'EEXIST') return null;
-    throw e;
+/** The name of the final's lock kept in the git common directory, beside GIT_FINALS_LOG. */
+export const GIT_FINAL_LOCK = 'scalp-desk-final.lock';
+
+/** Where a final's locks are: under $SCALP_DESK_HOME, and in the git common dir of model.json's repository. */
+export function finalLockPaths({ home, modelPath = null }) {
+  const common = modelPath ? gitCommonDirOf(modelPath) : null;
+  return [join(home, 'learn', 'final.lock'), ...(common ? [join(common, GIT_FINAL_LOCK)] : [])];
+}
+
+/**
+ * Takes every lock of finalLockPaths (O_EXCL), in order. The home's alone did
+ * not exclude two finals started together under different $SCALP_DESK_HOMEs;
+ * the git common dir's is shared by every checkout and worktree of the
+ * repository. Returns { release } with all of them held, or { busy: path }
+ * naming the one another final holds (and holding none).
+ */
+function takeLock(home, modelPath = null) {
+  const held = [];
+  const release = () => { for (const p of held.splice(0)) { try { unlinkSync(p); } catch { /* already gone */ } } };
+  for (const p of finalLockPaths({ home, modelPath })) {
+    mkdirSync(dirname(p), { recursive: true });
+    try {
+      const fd = openSync(p, 'wx');
+      try { writeSync(fd, `${process.pid} ${new Date().toISOString()}\n`); } finally { closeSync(fd); }
+      held.push(p);
+    } catch (e) {
+      release();
+      if (e && e.code === 'EEXIST') return { busy: p };
+      throw e;
+    }
   }
-  return () => { try { unlinkSync(p); } catch { /* already gone */ } };
+  return { release };
 }
 
 const BLOCKS = [
@@ -1502,9 +1543,21 @@ const BLOCKS = [
 /**
  * Everything the final reports, from the holdout's reads and the frozen model.
  * Pure given its inputs, so it is tested on synthetic reads.
+ *
+ * Holes ahead, exactly as the walk-forward: a check whose trade — label (a)
+ * on the 1.5R levels, or label (b)'s long or short, gross or net — would
+ * cross a hole of more than GAP_BARS bars on its way to its exit is left out
+ * of both alert passes (the predicate refuses it, so it neither alerts nor
+ * starts a cooldown), and so out of the coin-flip baseline, and out of T2's
+ * pairs and P2. The test is dataset.mjs rowFor's own `gapAhead`, the flag the
+ * development rows carry, so the two periods are judged by one rule
+ * (review, 17 Oct 2026). outcome() has no hole guard of its own: without
+ * this, a trade before a hole would be scored on the bar after it.
  */
 export function evaluateHoldout({ reads, bars, cfg, pair, model }) {
   const comm = costFor(pair, 0, cfg).comm;
+  const gapAt = new Set(reads.filter((rd) => dataset.rowFor(rd, bars, { pair, cfg, cost: HOLDOUT_COST, calendar: HOLDOUT_CALENDAR, comm }).gapAhead).map((rd) => rd.k));
+  const scorable = (rd) => !gapAt.has(rd.k);
   const minutes = tfInfo(timeframeFor(cfg)).minutes;
   const filter = deserialiseModel(model.model.filter), ranking = deserialiseModel(model.model.ranking);
   const tau = model.model.filter.threshold, tau2 = model.model.ranking.threshold;
@@ -1522,7 +1575,8 @@ export function evaluateHoldout({ reads, bars, cfg, pair, model }) {
     keepCall.set(rd.k, pred >= tau);
   }
   const predicate = (rd) => keepCall.get(rd.k) === true;
-  const pass = (p) => alertPass(reads, bars, { cfg, rule: TARGET_RULE, pair, predicate: p, bothTouched: 'half', tfMinutes: minutes }).trades;
+  // Every pass leaves the gap-ahead checks out the same way (see above).
+  const pass = (p) => alertPass(reads, bars, { cfg, rule: TARGET_RULE, pair, predicate: p ? (rd) => scorable(rd) && p(rd) : scorable, bothTouched: 'half', tfMinutes: minutes }).trades;
   const unfiltered = pass(null), kept = pass(predicate);
   const removed = unfiltered.filter((t) => keepCall.get(t.k) !== true);
 
@@ -1544,7 +1598,7 @@ export function evaluateHoldout({ reads, bars, cfg, pair, model }) {
   const pairs = [], checks = [];
   for (const rd of reads) {
     const x = rd.extra;
-    if (!x || !x.f || !(x.stopStd > 0)) continue;
+    if (!x || !x.f || !(x.stopStd > 0) || !scorable(rd)) continue;
     const L = scoreSide(rd, 'buy', x.stopStd, B_TARGET * x.stopStd), S = scoreSide(rd, 'sell', x.stopStd, B_TARGET * x.stopStd);
     if (!L || !S) continue;
     const cost = costInR(rd.spreadNum, comm, x.stopStd);
@@ -1587,7 +1641,8 @@ export function evaluateHoldout({ reads, bars, cfg, pair, model }) {
   }
   const t1 = t1Test(kept, unfiltered);
   const t2 = t2Test(pairs);
-  return { t1, t2, blocks, threshold: tau, p2Threshold: tau2, ideas: keepCall.size, keptIdeas: [...keepCall.values()].filter(Boolean).length };
+  const gapIdeas = reads.filter((rd) => gapAt.has(rd.k) && verdict(rd) && verdict(rd).kind === 'idea').length;
+  return { t1, t2, blocks, threshold: tau, p2Threshold: tau2, ideas: keepCall.size, keptIdeas: [...keepCall.values()].filter(Boolean).length, gapAhead: { checks: gapAt.size, ideas: gapIdeas } };
 }
 
 /**
@@ -1630,8 +1685,9 @@ export async function runFinal({ pair, cfg, modelPath, home, bars = null, worker
   const model = readModel(modelPath);
   const base = () => ({ at: now().toISOString(), pair, recipeHash: model.recipeHash ?? null, window: { ...WINDOW } });
   const refuse = (code, reason) => { recordFinal(modelPath, { kind: 'refused', step: 'run', ...base(), code, reason }); return { refused: true, code, reason }; };
-  const release = takeLock(home);
-  if (!release) return refuse('locked', `Another final holds the lock (${join(home, 'learn', 'final.lock')}). If none is running, a run was killed: it may have been before it started or after. Look for a 'started' record in model.json and the finals logs (${finalsLogPaths({ home, modelPath, userHome }).join(', ')}); if there is one, the held-back years are used. Otherwise remove the lock file and try again.`);
+  const lock = takeLock(home, modelPath);
+  if (!lock.release) return refuse('locked', `Another final holds the lock (${lock.busy}). If none is running, a run was killed: it may have been before it started or after. Look for a 'started' record in model.json and the finals logs (${finalsLogPaths({ home, modelPath, userHome }).join(', ')}); if there is one, the held-back years are used. Otherwise remove the lock file and try again.`);
+  const release = lock.release;
   const logs = { home, modelPath, userHome };
   try {
     const g = finalGuard(model, { pair, tf, cfg, modelPath, home, codeCheck, rowsKeyFor, userHome, anyModelPath });
@@ -1844,6 +1900,7 @@ export function developerReport(model) {
     if (f.earlierLooks) out.push(`  Note: the held-back window had been looked at ${f.earlierLooks} time(s) before (model.json looks): ${ALREADY_USED} Status cannot be shadow.`);
     out.push(`  T1 filter: ${r.t1.pass ? 'PASS' : 'not passed'} — (a) kept lower bound ${fmt(r.t1.kept.lo)} ${r.t1.a ? '> 0' : '≤ 0'}; (b) kept − all ${fmt(r.t1.diff)}, bootstrap lower ${fmt(r.t1.diffLo)} ${r.t1.b ? '> 0' : '≤ 0'}; (c) ${r.t1.kept.n} kept ${r.t1.c ? '≥' : '<'} ${r.t1.minKept}`);
     out.push(`  T2 ranking: ${r.t2.pass ? 'PASS' : 'not passed'} — correlation ${fmt(r.t2.corr)}, bootstrap lower ${fmt(r.t2.lo)} over ${r.t2.days} days (switches nothing on)`);
+    if (r.gapAhead) out.push(`  holes ahead: ${r.gapAhead.checks} checks left out (${r.gapAhead.ideas} of them ideas), by the walk-forward's rule`);
     for (const id of ['clean', 'seen', 'pooled']) {
       const b = r.blocks[id];
       out.push(`  ${b.label}: ${b.checks} checks`);
@@ -1886,8 +1943,8 @@ async function main() {
   const fail = (msg) => { console.log(msg); process.exit(2); };
   const HOME = process.env.SCALP_DESK_HOME || join(homedir(), '.scalp-desk');
   const CONFIG = process.env.SCALP_DESK_CONFIG || join(here, 'config.json');
-  // --test-model names another model file for fit and final (tests and
-  // scratch runs only); without it they refuse any but desk/model.json.
+  // --test-model names another model file for fit (scratch runs only);
+  // final refuses it. Without it both refuse any but desk/model.json.
   const testModel = arg('test-model');
   if (has('test-model') && !testModel) fail('--test-model needs a file.');
   const MODEL = testModel ? resolve(testModel) : process.env.SCALP_DESK_MODEL || join(dirname(CONFIG), 'model.json');
@@ -1897,6 +1954,10 @@ async function main() {
   const pair = pairOf(arg('pair', 'bitcoin'));
   if (!['status', 'fit', 'final', 'report', 'similar'].includes(cmd)) fail('Usage: node desk/learn.mjs status|report|fit|final [--run]|similar --pair bitcoin [--rows <file>] [--bars <file>] [--store <file>] [--workers <n>] [--at <UTC time>] [--side buy|sell] [--test-model <file>]');
   if (!pair) fail('--pair is bitcoin or gold.');
+  // A final runs on desk/model.json alone: its git history is where every
+  // final is looked for, and a second model file would start a history of its
+  // own (review, 17 Oct 2026: a fresh clone ran a second final that way).
+  if (cmd === 'final' && has('test-model')) fail('--test-model is for scratch fits only: a final runs on desk/model.json alone, whose git history records every final.');
   if (cmd === 'fit' || cmd === 'final') { const where = modelPathRefusal(MODEL, { anyModelPath }); if (where) fail(where); }
   if (pair === 'XAUUSD' && !process.env.TWELVEDATA_API_KEY) fail('Gold needs a free key from twelvedata.com (sign up, then API Keys). Add it in this session\'s cloud environment settings (title bar → environment → Edit) as an environment variable named TWELVEDATA_API_KEY — not in this chat — then start a new session. Bitcoin needs nothing.');
   const barsFile = arg('bars', process.env.SCALP_DESK_BARS || null);

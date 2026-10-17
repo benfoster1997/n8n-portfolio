@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 import {
   readAt, computeReads, alertPass, checkIndices, kindFor, longestGap, loadBarsFile, spreadAt, readsFor, storePath, sliceOf, GAP_BARS,
 } from '../desk/reads.mjs';
-import { liveRead } from '../desk/live.mjs';
+import { liveRead, CLOSED_BARS, FETCH_BARS } from '../desk/live.mjs';
 import { withDefaults, gateFor } from '../desk/lib.mjs';
 import { outcome } from '../desk/outcome.mjs';
 import { getActiveBlackout, getUpcomingEvents, fromDateTable, EVENTS } from '../src/news-calendar.js';
@@ -92,7 +92,7 @@ test('extra() is handed the bars up to k and nothing after: no history, no index
   const c = seen[0];
   assert.deepEqual(Object.keys(c).sort(), ['analysis', 'cfg', 'closed', 'kind', 'nowMs', 'pair', 'read', 'spreadNum', 'tf', 'window']);
   assert.equal(c.closed[c.closed.length - 1].t, BARS[k].t, 'the history ends at bar k');
-  assert.equal(c.closed.length, Math.min(1000, k + 1));
+  assert.equal(c.closed.length, Math.min(CLOSED_BARS, k + 1));
   assert.deepEqual(c.window, c.closed.slice(-300), 'the engine\'s window is its last 300 bars');
   assert.ok(Object.isFrozen(c.closed) && Object.isFrozen(c.window));
   assert.equal(c.analysis.price, BARS[k].c, 'the engine\'s own analysis of this moment');
@@ -104,6 +104,47 @@ test('extra() is handed the bars up to k and nothing after: no history, no index
   readAt(shifted, kNfp, { ...opts, extra: hook });
   assert.deepEqual([seen[1].kind, seen[1].analysis], ['blocked', null]);
   assert.equal(seen[1].closed[seen[1].closed.length - 1].t, shifted[kNfp].t);
+});
+
+console.log('\nthe same read live and in history');
+/**
+ * Twenty days of bars: the fixture with a copy of itself prepended, one
+ * fixture-length earlier and scaled so the seam has no price jump (as
+ * test/features.test.mjs builds it), so a check can have a full 999-bar
+ * history behind it and a bar still forming after it.
+ */
+const LONG = (() => {
+  const span = BARS.length * M15, s = BARS[0].o / BARS[BARS.length - 1].c;
+  return [...BARS.map((b) => ({ ...b, t: b.t - span, o: b.o * s, h: b.h * s, l: b.l * s, c: b.c * s })), ...BARS];
+})();
+test('the watcher (1,000 bars fetched, one still forming) and the history path give identical reads at the same bar', () => {
+  assert.equal(CLOSED_BARS, FETCH_BARS - 1);
+  // Wednesday 7 Oct in the window, on the long series: every check has 999 bars behind it.
+  const ks = checkIndices(LONG, { fromMs: Date.parse('2026-10-07T00:00Z'), toMs: Date.parse('2026-10-07T23:59Z'), cfg });
+  assert.equal(ks.length, 32);
+  const kinds = {};
+  for (const k of ks) {
+    const nowMs = LONG[k].t + M15 + 20000;
+    const raw = LONG.slice(k - (FETCH_BARS - 2), k + 2);          // what the watcher's fetch returns at this poll
+    assert.equal(raw.length, FETCH_BARS);
+    const live = liveRead({ pair: 'BTCUSD', bars: raw, nowMs, cfg });
+    let seen = null;
+    const hist = readAt(LONG, k, { ...opts, extra: (ctx) => { seen = ctx; return null; } });
+    assert.equal(seen.closed.length, CLOSED_BARS, 'the history path reads 999 closed bars, as the watcher does');
+    assert.equal(seen.closed[0].t, raw[0].t, 'starting on the same bar');
+    assert.equal(kindFor(hist, '1.5R'), live.kind, `bar ${k}`);
+    assert.equal(hist.blackoutId, live.blackoutId ?? null);
+    assert.deepStrictEqual(seen.analysis, live.analysis ?? null, `bar ${k}: the engine read the same series`);
+    if (live.kind === 'idea' || live.kind === 'rejected') {
+      const v = hist.rules['1.5R'];
+      assert.deepEqual([v.decision, v.entry, v.stopDistance, v.takeProfit1, v.netR, v.confidence],
+        ['decision', 'entry', 'stopDistance', 'takeProfit1', 'netR', 'confidence'].map((f) => live.result[f] ?? null), `bar ${k}`);
+    }
+    // And the whole history handed to liveRead reads as the fetch does: it never reads more than 999.
+    assert.deepStrictEqual(liveRead({ pair: 'BTCUSD', bars: LONG.slice(0, k + 2), nowMs, cfg }).analysis, live.analysis, `bar ${k}, whole history`);
+    kinds[live.kind] = (kinds[live.kind] || 0) + 1;
+  }
+  assert.ok(kinds.idea >= 1 && kinds.none >= 1, `a lean and a quiet read among them: ${JSON.stringify(kinds)}`);
 });
 
 console.log('\nscoring a bar that touches both');
@@ -123,7 +164,7 @@ test('the default counts it as the stop; "half" scores the average of the target
 });
 
 console.log('\ngaps in the history');
-test('a check whose 1,000 bars are missing more than four in a row is skipped; four is not', () => {
+test('a check whose 999 bars are missing more than four in a row is skipped; four is not', () => {
   const k = kAt(BARS, '2026-10-08T13:45Z');
   const cut = (n) => [...BARS.slice(0, 400), ...BARS.slice(400 + n)];
   assert.equal(longestGap(cut(GAP_BARS + 1), 0, k - GAP_BARS - 1, M15), GAP_BARS + 1);
@@ -299,6 +340,15 @@ test('--by-condition on decision 26\'s stretch needs --holdout and is recorded; 
   assert.match(out, /STUB 64 reads, \d+ trades, bars to 2026-10-08T14:45 \(2026, already seen \(decision 26\)\)/);
   assert.equal(r.looks().length, 2);
   assert.deepEqual(r.looks()[1].flags, ['by-condition']);
+});
+test('--by-condition with the real desk/conditions.mjs: the reads carry each lean\'s cell, and a table is printed under the block', () => {
+  const r = scratchReplay();
+  const out = r.run(['--from', '2026-10-06', '--to', '2026-10-09T23:59', '--rule', '1.5R', '--workers', '1', '--by-condition', '--holdout']);
+  assert.match(out, /^Alerts by condition \(rule 1\.5R\)$/m, out);
+  assert.match(out, /^Developer report — /m);
+  assert.match(out, /^2026 to 14 October: already used to choose the 1\.5R rule; this is not unseen data\.$/m);
+  assert.doesNotMatch(out, /with no condition/, 'every alert found its read\'s cell');
+  assert.deepEqual(r.looks()[0].flags, ['by-condition'], 'the look is recorded');
 });
 test('a broken desk/conditions.mjs stops the run instead of reading as "not built yet"', () => {
   const r = scratchReplay();

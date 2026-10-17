@@ -4,9 +4,10 @@
  * Why this exists. The replay, the dataset the learner trains on and the
  * by-condition report all need the same thing: what the live watcher would
  * have read at each bar close in the trading window. That read is a pure
- * function of the 1,000 bars ending at the check, the clock 20 seconds after
- * the close, the config and the costs — it does not depend on any earlier
- * alert. Only the alert sequence does (no repeat bar, the cooldown, no new
+ * function of the 999 closed bars ending at the check (what the live watcher
+ * reads: its 1,000-bar fetch holds the bar still forming; live.mjs
+ * CLOSED_BARS), the clock 20 seconds after the close, the config and the
+ * costs — it does not depend on any earlier alert. Only the alert sequence does (no repeat bar, the cooldown, no new
  * alert while the last is still running). So the work is split in two:
  *   1. reads: one record per check, independent of each other, so they are
  *      computed in parallel (worker threads, each given a range of checks and
@@ -38,7 +39,7 @@ import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Worker } from 'node:worker_threads';
 import { availableParallelism } from 'node:os';
-import { engineRead, judgeLean, shouldAlert, alertState, FETCH_BARS, ENGINE_BARS } from './live.mjs';
+import { engineRead, judgeLean, shouldAlert, alertState, CLOSED_BARS, ENGINE_BARS } from './live.mjs';
 import { costFor, timeframeFor } from './lib.mjs';
 import { outcome } from './outcome.mjs';
 import { windowState } from '../src/sessions.js';
@@ -50,7 +51,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 /** The target rules a read is judged under unless told otherwise. */
 export const DEFAULT_RULES = ['level', '1.5R', '2R'];
 
-/** A check is skipped when its 1,000-bar slice is missing more than this many bars in a row. */
+/** A check is skipped when its 999-bar slice is missing more than this many bars in a row. */
 export const GAP_BARS = 4;
 
 /**
@@ -110,7 +111,7 @@ export function checkIndices(bars, { fromMs, toMs, cfg }) {
 }
 
 /**
- * What a read at bar k was made from: the first bar of its 1,000-bar slice,
+ * What a read at bar k was made from: the first bar of its 999-bar slice,
  * how many bars the slice holds, and a short hash of every bar's time and
  * close. The read store answers a check only from a read whose slice matches
  * the bars in hand, because the close time alone does not identify them: a
@@ -121,7 +122,7 @@ export function checkIndices(bars, { fromMs, toMs, cfg }) {
  * recomputed read, so it errs on the side of recomputing.
  */
 export function sliceOf(bars, k) {
-  const lo = Math.max(0, k - (FETCH_BARS - 1));
+  const lo = Math.max(0, k - (CLOSED_BARS - 1));
   const buf = new Float64Array(2 * (k - lo + 1));
   for (let j = lo, i = 0; j <= k; j++) { buf[i++] = bars[j].t; buf[i++] = bars[j].c; }
   return { from: bars[lo].t, n: k - lo + 1, hash: createHash('sha256').update(new Uint8Array(buf.buffer)).digest('hex').slice(0, 16) };
@@ -154,7 +155,8 @@ function verdict(plan, result) {
 
 /**
  * One check: the watcher's read at bar k, as it would have been 20 seconds
- * after that bar closed, from the 1,000 bars ending there.
+ * after that bar closed, from the 999 bars ending there (CLOSED_BARS: the
+ * watcher's own 1,000-bar fetch less the bar still forming).
  *   opts.pair, opts.cfg      instrument and desk config
  *   opts.rules               target rules to judge the lean under (DEFAULT_RULES)
  *   opts.cost                'fixed' | 'scaled' | 'max' (COST_MODES); opts.spreadNum overrides all
@@ -164,7 +166,7 @@ function verdict(plan, result) {
  *                            slice ending at k and no index into the history.
  *                            ctx = { pair, tf, cfg, nowMs, spreadNum, kind,
  *                                    closed, window, analysis, read }
- *                              closed    the closed bars up to k, at most 1,000
+ *                              closed    the closed bars up to k, at most 999
  *                                        (frozen; the engine's htfBars)
  *                              window    the last 300 of them (frozen; the
  *                                        engine's bars)
@@ -186,7 +188,7 @@ export function readAt(bars, k, opts) {
   const { pair, cfg, rules = DEFAULT_RULES, cost = 'fixed', calendar = 'full', extra = null } = opts;
   const tf = tfInfo(timeframeFor(cfg));
   const tfMs = tf.minutes * 60000;
-  const lo = Math.max(0, k - (FETCH_BARS - 1));
+  const lo = Math.max(0, k - (CLOSED_BARS - 1));
   const closeMs = bars[k].t + tfMs;
   const nowMs = closeMs + 20000;
   const spreadNum = Number.isFinite(opts.spreadNum) ? opts.spreadNum : spreadAt(pair, bars[k].c, cost);
@@ -324,7 +326,7 @@ export function alertPass(reads, bars, { cfg, rule, pair, predicate = null, both
     if (predicate && !predicate(read)) continue;
     const k = read.k;
     const res = read.rules[rule];
-    const seen = bars.slice(Math.max(0, k - (FETCH_BARS - 1)), k + 1);
+    const seen = bars.slice(Math.max(0, k - (CLOSED_BARS - 1)), k + 1);
     const r = { pair, tf: tf.id, nowMs: read.nowMs, barCloseMs: read.closeMs, spreadNum: read.spreadNum, result: { decision: res.decision } };
     if (!shouldAlert(state, r, seen, cfg)) continue;
     const tp1Dist = Math.abs(res.takeProfit1 - res.entry);
