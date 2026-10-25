@@ -204,6 +204,9 @@ export function supabaseApi(url: string, anonKey: string): Api {
       }
       check(await sb.from('clients').delete().eq('id', id));
     },
+    async deleteHealthData(clientId) {
+      check(await sb.rpc('owner_delete_health_data', { p_client_id: clientId }));
+    },
     async listClientAppointments(clientId) {
       const rows = check(await sb.from('appointments').select(APPT_SELECT).eq('client_id', clientId)
         .order('starts_at', { ascending: false })) as ApptRow[];

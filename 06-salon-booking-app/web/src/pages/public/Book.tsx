@@ -39,6 +39,7 @@ function BookingFlow({ info }: { info: BookingInfo }) {
   const [consent, setConsent] = useState(false);
   const [signedName, setSignedName] = useState('');
   const [website, setWebsite] = useState(''); // honeypot: real people never see or fill this
+  const [ageOk, setAgeOk] = useState(false);
   const [result, setResult] = useState<{ reference: string; starts_at: string } | null>(null);
   const { busy, error, run, setError } = useAction();
   const topRef = useRef<HTMLDivElement>(null);
@@ -78,6 +79,7 @@ function BookingFlow({ info }: { info: BookingInfo }) {
       if (!consent) return setError(new Error('consent_required'));
       if (signedName.trim().length < 2) return setError(new Error('signature_required'));
     }
+    if (!ageOk) return setError(new Error('Please confirm you are 16 or over, or that a parent or guardian is booking for you.'));
     const ok = await run(async () => {
       setResult(await api.createBooking({
         service_id: service!.id, starts_at: slot!.toISOString(), full_name: details.full_name.trim(),
@@ -190,9 +192,13 @@ function BookingFlow({ info }: { info: BookingInfo }) {
             </div>
           )}
           {info.cancellation_policy && <p className="sub"><b>Cancellations:</b> {info.cancellation_policy}</p>}
+          <label className="check">
+            <input type="checkbox" checked={ageOk} onChange={(e) => setAgeOk(e.target.checked)} />
+            <span>I’m 16 or over, or I’m a parent or guardian booking for my child.</span>
+          </label>
           <ErrorBox error={error ? new Error(friendlyError(error)) : null} />
           <button className="btn primary block" disabled={busy} onClick={submit}>{busy ? 'Booking…' : 'Confirm booking'}</button>
-          <p className="sub centre">By booking you agree to the <Link to="/privacy">privacy notice</Link>.</p>
+          <p className="sub centre">How your information is used: <Link to="/privacy">privacy notice</Link>.</p>
         </>
       )}
 

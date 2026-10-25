@@ -52,7 +52,7 @@ export function AppointmentNew() {
     if (clientId) api.countCompletedVisits(clientId).then(setVisits).catch(() => setVisits(0));
   }, [clientId]);
 
-  const isNew = newClient || visits === 0;
+  const isNew = newClient || (visits === 0 && !client?.is_regular);
   const depositOn = askDeposit ?? (isNew && s.deposit_amount_pence > 0);
 
   const { data: busy7 } = useLoad(
@@ -113,7 +113,7 @@ export function AppointmentNew() {
         <h3>Client</h3>
         {client && !newClient ? (
           <div className="row spread">
-            <div><div style={{ fontWeight: 600 }}>{client.full_name}</div><div className="sub">{client.phone || client.email || ''}{visits !== null && ` · ${visits ? `${visits} visit${visits === 1 ? '' : 's'}` : 'New client'}`}</div></div>
+            <div><div style={{ fontWeight: 600 }}>{client.full_name}</div><div className="sub">{client.phone || client.email || ''}{visits !== null && ` · ${visits ? `${visits} visit${visits === 1 ? '' : 's'}` : client.is_regular ? 'Regular' : 'New client'}`}</div></div>
             <button className="btn small" onClick={() => setClientId(null)}>Change</button>
           </div>
         ) : newClient ? (

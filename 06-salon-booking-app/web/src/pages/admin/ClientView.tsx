@@ -22,10 +22,11 @@ export function ClientView() {
       api.getClient(id), api.listClientAppointments(id), api.listPatchTests(id), api.listForms(id), api.listPhotos(id)]);
     return { client, appts, tests, forms, photos };
   }, [id]);
-  const [sheet, setSheet] = useState<null | 'edit' | 'test' | 'delete'>(null);
+  const [sheet, setSheet] = useState<null | 'edit' | 'test' | 'delete' | 'consent' | 'health-delete'>(null);
   const [form, setForm] = useState<ConsultationForm | null>(null);
   const [photo, setPhoto] = useState<ClientPhoto | null>(null);
-  const [health, setHealth] = useState<{ allergies: string; notes: string } | null>(null);
+  const [notes, setNotes] = useState<string | null>(null);
+  const [allergies, setAllergies] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const act = useAction();
 
@@ -39,12 +40,16 @@ export function ClientView() {
   const spent = data!.appts.filter((a) => a.status === 'completed').reduce((n, a) => n + a.price_pence, 0);
   const visits = data!.appts.filter((a) => a.status === 'completed').length;
   const latestTest = data!.tests[0];
+  const consented = !!c.health_consent_at;
+  const hasHealth = consented || !!c.allergies || data!.tests.length > 0 || data!.forms.length > 0;
 
-  async function saveHealth() {
-    if (!health) return;
-    if (await act.run(() => api.updateClient(c!.id, { allergies: health.allergies.trim() || null, notes: health.notes.trim() || null }))) {
-      setHealth(null); toast('Saved'); reload();
-    }
+  async function saveNotes() {
+    if (notes === null) return;
+    if (await act.run(() => api.updateClient(c!.id, { notes: notes.trim() || null }))) { setNotes(null); toast('Saved'); reload(); }
+  }
+  async function saveAllergies() {
+    if (allergies === null) return;
+    if (await act.run(() => api.updateClient(c!.id, { allergies: allergies.trim() || null }))) { setAllergies(null); toast('Saved'); reload(); }
   }
   async function addPhotos(files: FileList | null) {
     if (!files?.length) return;
@@ -74,25 +79,52 @@ export function ClientView() {
       </div>
       <Link className="btn primary block" to={`/appointments/new?client=${c.id}`}>Book an appointment</Link>
 
-      <div className="section-title">Health &amp; notes</div>
+      <label className="check card" style={{ padding: '12px 16px' }}>
+        <input type="checkbox" checked={c.is_regular} disabled={act.busy}
+          onChange={async (e) => { const v = e.target.checked; if (await act.run(() => api.updateClient(c.id, { is_regular: v }))) { toast(v ? 'Marked as a regular' : 'Updated'); reload(); } }} />
+        <span>Regular client — never asked for a new-client deposit<br />
+          <span className="sub">Tick this for regulars you’ve moved across from your old booking app.</span></span>
+      </label>
+
+      <div className="section-title">Notes</div>
       <div className="card stack">
-        {c.allergies && !health && <div className="error"><b>Allergies:</b> {c.allergies}</div>}
-        {health ? (
+        {notes !== null ? (
           <>
-            <Field label="Allergies / sensitivities"><textarea value={health.allergies} maxLength={2000} onChange={(e) => setHealth({ ...health, allergies: e.target.value })} /></Field>
-            <Field label="Notes (shape, colours, preferences…)"><textarea value={health.notes} maxLength={5000} onChange={(e) => setHealth({ ...health, notes: e.target.value })} /></Field>
-            <div className="btn-row"><button className="btn" onClick={() => setHealth(null)}>Cancel</button><button className="btn primary" disabled={act.busy} onClick={saveHealth}>Save</button></div>
+            <Field label="Notes (shape, colours, preferences…)"><textarea value={notes} maxLength={5000} onChange={(e) => setNotes(e.target.value)} /></Field>
+            <div className="btn-row"><button className="btn" onClick={() => setNotes(null)}>Cancel</button><button className="btn primary" disabled={act.busy} onClick={saveNotes}>Save</button></div>
           </>
         ) : (
           <>
             {c.notes ? <p style={{ whiteSpace: 'pre-wrap' }}>{c.notes}</p> : <p className="sub">No notes yet.</p>}
-            <button className="btn small" onClick={() => setHealth({ allergies: c.allergies ?? '', notes: c.notes ?? '' })}>Edit allergies &amp; notes</button>
+            <button className="btn small" style={{ alignSelf: 'flex-start' }} onClick={() => setNotes(c.notes ?? '')}>Edit notes</button>
           </>
+        )}
+      </div>
+
+      <div className="section-title">Health information</div>
+      <div className="card stack">
+        {consented ? (
+          <p className="sub">✓ Consent to keep health information: {fmtDay(c.health_consent_at!, tz)}{c.health_consent_note ? ` · ${c.health_consent_note}` : ''}</p>
+        ) : (
+          <div className="notice warn">
+            No consent recorded, so allergies and patch tests can’t be saved yet. New clients give consent on the online form;
+            for anyone else, send them the form link from their next appointment, or record consent they’ve given you in writing.
+            <div style={{ marginTop: 8 }}><button className="btn small" onClick={() => setSheet('consent')}>Record consent</button></div>
+          </div>
+        )}
+        {c.allergies && allergies === null && <div className="error"><b>Allergies:</b> {c.allergies}</div>}
+        {allergies !== null ? (
+          <>
+            <Field label="Allergies / sensitivities"><textarea value={allergies} maxLength={2000} onChange={(e) => setAllergies(e.target.value)} /></Field>
+            <div className="btn-row"><button className="btn" onClick={() => setAllergies(null)}>Cancel</button><button className="btn primary" disabled={act.busy} onClick={saveAllergies}>Save</button></div>
+          </>
+        ) : consented && (
+          <button className="btn small" style={{ alignSelf: 'flex-start' }} onClick={() => setAllergies(c.allergies ?? '')}>{c.allergies ? 'Edit allergies' : 'Add allergies'}</button>
         )}
         <hr className="divider" />
         <div className="row spread">
           <h3>Patch tests</h3>
-          <button className="btn small" onClick={() => setSheet('test')}>Add test</button>
+          <button className="btn small" disabled={!consented} onClick={() => setSheet('test')}>Add test</button>
         </div>
         {data!.tests.length === 0 ? <p className="sub">No patch test recorded.</p> : (
           <ul className="list">
@@ -115,6 +147,9 @@ export function ClientView() {
               );
             })}
           </ul>
+        )}
+        {hasHealth && (
+          <button className="btn danger small" style={{ alignSelf: 'flex-start' }} onClick={() => setSheet('health-delete')}>Delete health information only</button>
         )}
       </div>
 
@@ -150,6 +185,19 @@ export function ClientView() {
 
       {sheet === 'edit' && <ClientSheet initial={c} onClose={() => setSheet(null)} onSaved={reload} />}
       {sheet === 'test' && <PatchTestSheet clientId={c.id} tz={tz} onClose={() => setSheet(null)} onSaved={() => { setSheet(null); reload(); }} />}
+      {sheet === 'consent' && <ConsentSheet clientId={c.id} tz={tz} onClose={() => setSheet(null)} onSaved={() => { setSheet(null); toast('Consent recorded'); reload(); }} />}
+      {sheet === 'health-delete' && (
+        <Sheet title="Delete health information?" onClose={() => setSheet(null)}>
+          <div className="stack">
+            <p>Use this when {firstName(c.full_name)} withdraws consent. It deletes their consultation forms, patch tests and allergy notes, and the consent record. Their bookings, notes and photos stay.</p>
+            <ErrorBox error={act.error} />
+            <button className="btn danger solid block" disabled={act.busy}
+              onClick={async () => { if (await act.run(() => api.deleteHealthData(c.id))) { setSheet(null); toast('Health information deleted'); reload(); } }}>
+              {act.busy ? 'Deleting…' : 'Delete health information'}
+            </button>
+          </div>
+        </Sheet>
+      )}
       {sheet === 'delete' && (
         <Sheet title={`Delete ${c.full_name}?`} onClose={() => setSheet(null)}>
           <div className="stack">
@@ -202,6 +250,32 @@ function PatchRow({ t, onDeleted }: { t: PatchTest; onDeleted: () => void }) {
         <Icon name="trash" size={20} />
       </button>
     </li>
+  );
+}
+
+function ConsentSheet({ clientId, tz, onClose, onSaved }: { clientId: string; tz: string; onClose: () => void; onSaved: () => void }) {
+  const [how, setHow] = useState('Paper consultation form');
+  const [on, setOn] = useState(todayInZone(tz));
+  const { busy, error, run } = useAction();
+  return (
+    <Sheet title="Record consent" onClose={onClose}>
+      <div className="stack">
+        <p className="sub">Only record consent the client has actually given you in writing — to you keeping their health and allergy information so treatments are safe. Keep the paper form or message.</p>
+        <Field label="How they gave it">
+          <select value={how} onChange={(e) => setHow(e.target.value)}>
+            <option>Paper consultation form</option>
+            <option>WhatsApp message</option>
+            <option>Email</option>
+          </select>
+        </Field>
+        <Field label="Date"><input type="date" value={on} onChange={(e) => setOn(e.target.value)} /></Field>
+        <ErrorBox error={error} />
+        <button className="btn primary block" disabled={busy}
+          onClick={async () => { if (await run(() => api.updateClient(clientId, { health_consent_at: new Date(`${on}T12:00:00Z`).toISOString(), health_consent_note: how }))) onSaved(); }}>
+          {busy ? 'Saving…' : 'Record consent'}
+        </button>
+      </div>
+    </Sheet>
   );
 }
 

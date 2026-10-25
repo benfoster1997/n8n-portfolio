@@ -11,7 +11,7 @@ import { addDays, dateInZone, todayInZone, zonedToInstant } from '../lib/time';
 import { availableSlots } from '../lib/slots';
 import { normalizeUkPhone } from '../lib/text';
 
-const KEY = 'salon-demo-v1';
+const KEY = 'salon-demo-v2';
 const TZ = 'Europe/London';
 
 type Row<T> = T;
@@ -63,6 +63,8 @@ function seed(): Store {
     wa_template_deposit: null,
     wa_template_confirmed: null,
     booking_enabled: true,
+    legal_name: 'Demo Owner',
+    auto_cancel_unpaid: false,
     email_secret_hash: null,
     email_last_poll_at: null,
   };
@@ -85,7 +87,9 @@ function seed(): Store {
     svc('Removal only', 30, 10, 6, null),
   ];
   const cl = (full_name: string, phone: string, email: string | null, allergies: string | null = null, notes: string | null = null): Client =>
-    ({ id: uid(), full_name, phone, phone_e164: normalizeUkPhone(phone), email, allergies, notes, created_at: at(-60, '12:00') });
+    ({ id: uid(), full_name, phone, phone_e164: normalizeUkPhone(phone), email, allergies, notes, is_regular: false,
+      health_consent_at: allergies ? at(-40, '12:00') : null, health_consent_note: allergies ? 'Paper consultation form' : null,
+      created_at: at(-60, '12:00') });
   const clients = [
     cl('Amelia Hart', '07700 900101', 'amelia@example.com', null, 'Likes almond shape, short length. Nude/pink shades.'),
     cl('Grace Patel', '07700 900102', 'grace@example.com', 'Sensitive to HEMA — use HEMA-free gel only.', 'Prefers Thursday evenings.'),
@@ -137,6 +141,8 @@ function seed(): Store {
   add(ruby, gel, at(3, '10:30'), 'confirmed');
   add(amelia, infill, at(8, '12:00'), 'confirmed');
 
+  sophie.health_consent_at = newBooking.created_at;
+  sophie.health_consent_note = 'Online consultation form';
   return {
     settings, hours, services, clients, appointments: appts,
     patch_tests: [
@@ -218,7 +224,7 @@ export function demoApi(): Api {
         cancellation_policy: s.cancellation_policy, timezone: s.timezone, slot_interval_min: s.slot_interval_min,
         buffer_min: s.buffer_min, min_notice_hours: s.min_notice_hours, max_days_ahead: s.max_days_ahead,
         deposit_amount_pence: s.deposit_amount_pence, deposit_deadline_hours: s.deposit_deadline_hours,
-        booking_enabled: s.booking_enabled, hours: db.hours,
+        booking_enabled: s.booking_enabled, legal_name: s.legal_name, contact_email: s.owner_email, hours: db.hours,
         services: db.services.filter((v) => v.is_active && v.online_bookable).sort((a, b) => a.sort_order - b.sort_order)
           .map(({ id, name, description, duration_min, price_pence }) => ({ id, name, description, duration_min, price_pence })),
       };
@@ -238,12 +244,15 @@ export function demoApi(): Api {
       if (!ok) fail('slot_taken');
       const email = r.email.trim().toLowerCase();
       const phone = normalizeUkPhone(r.phone);
-      let c = db.clients.find((x) => x.email === email) ?? db.clients.find((x) => x.phone_e164 === phone);
+      // Same rule as the database: match by email only, never change an existing record.
+      let c = db.clients.find((x) => x.email === email);
+      const created = !c;
       if (!c) {
-        c = { id: uid(), full_name: r.full_name.trim(), email, phone: r.phone.trim(), phone_e164: phone, allergies: null, notes: null, created_at: nowIso() };
+        c = { id: uid(), full_name: r.full_name.trim(), email, phone: r.phone.trim(), phone_e164: phone, allergies: null, notes: null,
+          is_regular: false, health_consent_at: null, health_consent_note: null, created_at: nowIso() };
         db.clients.push(c);
       }
-      const isNew = !db.appointments.some((a) => a.client_id === c!.id && a.status === 'completed');
+      const isNew = !(c.is_regular || db.appointments.some((a) => a.client_id === c!.id && a.status === 'completed'));
       const deposit = isNew ? s.deposit_amount_pence : 0;
       const ends = new Date(new Date(r.starts_at).getTime() + service.duration_min * 60e3).toISOString();
       const a = withBusy({
@@ -256,10 +265,12 @@ export function demoApi(): Api {
         reminder_email_sent_at: null, whatsapp_reminder_sent_at: null, cancelled_at: null, cancel_reason: null, created_at: nowIso(),
       });
       db.appointments.push(a);
-      if (r.consultation) {
+      if (r.consultation && created) {
         if (!r.health_consent) fail('consent_required');
         db.forms.push({ id: uid(), client_id: c.id, appointment_id: a.id, answers: r.consultation, health_consent: true,
           signed_name: r.signed_name ?? r.full_name, submitted_at: nowIso() });
+        c.health_consent_at = nowIso();
+        c.health_consent_note = 'Online consultation form';
       }
       queue(a.id, 'booking_received', email);
       queue(a.id, 'owner_new_booking', s.owner_email);
@@ -279,6 +290,8 @@ export function demoApi(): Api {
       if (db.forms.some((f) => f.appointment_id === a.id)) fail('already_submitted');
       if (!consent) fail('consent_required');
       db.forms.push({ id: uid(), client_id: a.client_id, appointment_id: a.id, answers, health_consent: true, signed_name: signedName, submitted_at: nowIso() });
+      const c = db.clients.find((x) => x.id === a.client_id);
+      if (c) { c.health_consent_at = nowIso(); c.health_consent_note = 'Online consultation form'; }
       commit();
       await delay(null);
     },
@@ -415,7 +428,8 @@ export function demoApi(): Api {
       const email = c.email?.trim().toLowerCase() || null;
       if (email && db.clients.some((x) => x.email === email)) fail('A client with that email already exists');
       const created: Client = { id: uid(), full_name: c.full_name.trim(), email, phone: c.phone?.trim() || null,
-        phone_e164: normalizeUkPhone(c.phone), allergies: c.allergies ?? null, notes: c.notes ?? null, created_at: nowIso() };
+        phone_e164: normalizeUkPhone(c.phone), allergies: c.allergies ?? null, notes: c.notes ?? null,
+        is_regular: false, health_consent_at: null, health_consent_note: null, created_at: nowIso() };
       db.clients.push(created);
       commit();
       return delay(created);
@@ -439,6 +453,15 @@ export function demoApi(): Api {
       db.photos = db.photos.filter((p) => p.client_id !== id);
       db.outbox = db.outbox.filter((o) => !gone.has(o.appointment_id));
       db.payments.forEach((p) => { if (p.client_id === id) p.client_id = null; if (p.appointment_id && gone.has(p.appointment_id)) p.appointment_id = null; });
+      commit();
+      await delay(null);
+    },
+    async deleteHealthData(clientId) {
+      needOwner();
+      db.forms = db.forms.filter((f) => f.client_id !== clientId);
+      db.patch_tests = db.patch_tests.filter((p) => p.client_id !== clientId);
+      const c = db.clients.find((x) => x.id === clientId);
+      if (c) { c.allergies = null; c.health_consent_at = null; c.health_consent_note = null; }
       commit();
       await delay(null);
     },

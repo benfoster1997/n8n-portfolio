@@ -57,11 +57,14 @@ async function asAnon(sql, params) {
 }
 
 /** Load Code.gs with stand-ins for Google's services. fetchQueue answers each UrlFetchApp call in order. */
-function loadScript({ fetchQueue, props }) {
+function loadScript({ fetchQueue, props, quota = 100 }) {
   const sent = [];
   const calls = [];
   const sandbox = {
-    PropertiesService: { getScriptProperties: () => ({ getProperty: (k) => props[k] ?? null }) },
+    PropertiesService: { getScriptProperties: () => ({
+      getProperty: (k) => props[k] ?? null,
+      setProperty: (k, v) => { props[k] = v; },
+    }) },
     LockService: { getScriptLock: () => ({ tryLock: () => true, releaseLock: () => {} }) },
     UrlFetchApp: {
       fetch: (url, opts) => {
@@ -70,9 +73,15 @@ function loadScript({ fetchQueue, props }) {
         return { getResponseCode: () => next.code ?? 200, getContentText: () => JSON.stringify(next.body) };
       },
     },
-    MailApp: { sendEmail: (to, subject, text, options) => sent.push({ to, subject, text, html: options.htmlBody, ...options }) },
-    Utilities: { formatDate: (d, tz, pattern) => formatInTimeZone(d, tz, pattern, { locale: enGB }) },
-    Session: { getActiveUser: () => ({ getEmail: () => 'owner@example.com' }) },
+    MailApp: {
+      sendEmail: (to, subject, text, options) => sent.push({ to, subject, text, html: options.htmlBody, ...options }),
+      getRemainingDailyQuota: () => quota,
+    },
+    Utilities: { formatDate: (d, tz, pattern) => formatInTimeZone(d, tz, pattern, { locale: enGB }), sleep: () => {} },
+    Session: {
+      getActiveUser: () => ({ getEmail: () => 'owner@example.com' }),
+      getEffectiveUser: () => ({ getEmail: () => 'studio@gmail.example' }),
+    },
     ScriptApp: { getProjectTriggers: () => [], deleteTrigger: () => {}, newTrigger: () => ({ timeBased: () => ({ everyMinutes: () => ({ create: () => {} }) }) }) },
     Logger: { log: () => {} },
   };
@@ -87,7 +96,7 @@ test('the script sends exactly what the database hands over, and reports back', 
   const start = (await db.query(
     `select ((((now() at time zone 'Europe/London')::date + 3) + time '10:00') at time zone 'Europe/London') as t`)).rows[0].t;
   const svc = (await db.query(`select id from public.services`)).rows[0].id;
-  await asAnon(`select public.public_create_booking($1, $2, 'Jess <b>Example</b>', 'jess@example.com', '07700900123', '<script>alert(1)</script>')`,
+  await asAnon(`select public.public_create_booking($1, $2, 'Jess & Co Example', 'jess@example.com', '07700900123', '<script>alert(1)</script>')`,
     [svc, start]);
 
   const claim = (await asAnon(`select public.email_jobs_claim($1) as j`, [SECRET])).rows[0].j;
@@ -100,7 +109,7 @@ test('the script sends exactly what the database hands over, and reports back', 
   // It called the right endpoints with the key and the secret.
   assert.equal(calls[0].url, 'https://abcdefghijkl.supabase.co/rest/v1/rpc/email_jobs_claim');
   assert.equal(calls[0].headers.apikey, 'anon-key');
-  assert.deepEqual(calls[0].body, { p_secret: SECRET });
+  assert.deepEqual(calls[0].body, { p_secret: SECRET, p_limit: 50 });
   assert.equal(calls[1].url, 'https://abcdefghijkl.supabase.co/rest/v1/rpc/email_jobs_report');
 
   const client = sent.find((m) => m.to === 'jess@example.com');
@@ -111,16 +120,17 @@ test('the script sends exactly what the database hands over, and reports back', 
     assert.ok(client.html.includes(bit), `email is missing ${bit}`);
     assert.ok(client.text.includes(bit), `plain-text email is missing ${bit}`);
   }
-  assert.ok(!client.html.includes('<b>Example</b>'), 'client-typed HTML must be escaped');
+  assert.ok(!client.html.includes('Jess & Co'), 'client-typed text must be HTML-escaped');
   assert.ok(client.html.includes('Test &lt;Studio&gt;'));
   assert.ok(!/<(p|table|tr|td|div|a|br)[\s>/]/i.test(client.text), 'plain text has no markup');
   assert.ok(client.text.includes('Sort code: 00-00-00'), 'plain text keeps label: value rows');
 
   const owner = sent.find((m) => m.to === 'owner@example.com');
-  assert.match(owner.subject, /^New booking: Jess <b>Example<\/b> — BIAB new set/);
+  assert.match(owner.subject, /^New booking: Jess & Co Example — BIAB new set/);
+  assert.ok(owner.html.includes('Jess &amp; Co Example'));
   assert.ok(!owner.html.includes('<script>'), 'the client note is escaped in the owner alert');
   assert.ok(owner.html.includes('&lt;script&gt;'));
-  assert.equal(owner.replyTo, undefined);
+  assert.equal(owner.replyTo, 'jess@example.com', 'the owner can reply straight to the client');
 
   // Feed the script's report back to the real database.
   const report = calls[1].body;
@@ -173,4 +183,31 @@ test('the script refuses to run with missing or wrong settings', async () => {
   assert.throws(() => noSecret.sandbox.processEmails(), /EMAIL_SECRET/);
   const refused = loadScript({ fetchQueue: [{ code: 400, body: { message: 'unauthorized' } }], props: PROPS });
   assert.throws(() => refused.sandbox.processEmails(), /refused the EMAIL_SECRET/);
+});
+
+test('if the "sent" report is lost, the next run reports instead of sending twice', async () => {
+  const job = { id: 7, kind: 'reminder', to: 'x@example.com', first_name: 'X', service_name: 'Gel', price_pence: 2500,
+    starts_at: new Date().toISOString(), reference: 'ABCDEF', status: 'confirmed', form_needed: false };
+  const claim = { settings: { business_name: 'X', timezone: 'Europe/London' }, jobs: [job] };
+  const props = { ...PROPS };
+  // Run 1: sends, then every report attempt fails.
+  const run1 = loadScript({ fetchQueue: [{ body: claim }, { code: 503, body: 'down' }, { code: 503, body: 'down' }, { code: 503, body: 'down' }], props });
+  assert.throws(() => run1.sandbox.processEmails(), /email_jobs_report failed/);
+  assert.equal(run1.sent.length, 1);
+  // Run 2: the database hands the same job out again (still "sending").
+  const run2 = loadScript({ fetchQueue: [{ body: claim }, { body: 1 }], props });
+  assert.equal(run2.sandbox.processEmails(), 0);
+  assert.equal(run2.sent.length, 0, 'not sent a second time');
+  assert.deepEqual(run2.calls[1].body.p_results, [{ id: 7, ok: true }]);
+  assert.equal(props.SENT_UNREPORTED, '{}');
+});
+
+test('asks only for as many emails as Gmail will still send today, and uses the right key header', async () => {
+  const { sandbox, calls } = loadScript({ fetchQueue: [{ body: { settings: {}, jobs: [] } }], props: { ...PROPS, SUPABASE_ANON_KEY: 'sb_publishable_abc' }, quota: 3 });
+  sandbox.processEmails();
+  assert.equal(calls[0].body.p_limit, 3);
+  assert.deepEqual({ ...calls[0].headers }, { apikey: 'sb_publishable_abc' });
+  const legacy = loadScript({ fetchQueue: [{ body: { settings: {}, jobs: [] } }], props: { ...PROPS, SUPABASE_ANON_KEY: 'eyJhbGciOi.x.y' } });
+  legacy.sandbox.processEmails();
+  assert.equal(legacy.calls[0].headers.Authorization, 'Bearer eyJhbGciOi.x.y');
 });

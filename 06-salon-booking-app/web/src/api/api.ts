@@ -64,8 +64,11 @@ export interface Api {
   listClients(): Promise<(Client & { last_visit: string | null; visits: number })[]>;
   getClient(id: string): Promise<Client | null>;
   createClient(c: Pick<Client, 'full_name' | 'email' | 'phone'> & Partial<Pick<Client, 'allergies' | 'notes'>>): Promise<Client>;
-  updateClient(id: string, patch: Partial<Pick<Client, 'full_name' | 'email' | 'phone' | 'allergies' | 'notes'>>): Promise<Client>;
+  updateClient(id: string, patch: Partial<Pick<Client,
+    'full_name' | 'email' | 'phone' | 'allergies' | 'notes' | 'is_regular' | 'health_consent_at' | 'health_consent_note'>>): Promise<Client>;
   deleteClient(id: string): Promise<void>;
+  /** Consent withdrawn: delete forms, patch tests and allergy notes, keep the client. */
+  deleteHealthData(clientId: string): Promise<void>;
   listClientAppointments(clientId: string): Promise<Appointment[]>;
   countCompletedVisits(clientId: string): Promise<number>;
   listPatchTests(clientId: string): Promise<PatchTest[]>;

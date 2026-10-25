@@ -61,20 +61,24 @@ function Page({ title, children }: { title: string; children: ReactNode }) {
 }
 
 const txt = (v: string | null | undefined) => v ?? '';
-const nul = (v: string) => (v.trim() ? v.trim() : null);
 
 export function BusinessSettings() {
-  const f = useSettingsForm(['business_name', 'booking_intro', 'location_note', 'address', 'owner_email', 'owner_phone', 'public_site_url', 'booking_enabled']);
+  const f = useSettingsForm(['business_name', 'legal_name', 'booking_intro', 'location_note', 'address', 'owner_email', 'owner_phone', 'public_site_url', 'booking_enabled']);
   const d = f.draft;
   async function submit() {
     if (!d.business_name.trim()) return f.setError(new Error('Enter your business name.'));
     if (d.owner_email && !isPlausibleEmail(d.owner_email)) return f.setError(new Error('Check your email address.'));
+    if (d.public_site_url && !/^(https:\/\/[^\s/]+|http:\/\/(localhost|127\.0\.0\.1)(:\d+)?)/i.test(d.public_site_url.trim()))
+      return f.setError(new Error('The web address must start with https:// — tap “Use …” below to fill it in.'));
     await f.save({ ...d, business_name: d.business_name.trim(), public_site_url: d.public_site_url ? d.public_site_url.trim().replace(/\/$/, '') : null });
   }
   return (
     <Page title="Business details">
       <Field label="Business name"><input type="text" value={d.business_name} maxLength={80} onChange={(e) => f.set('business_name', e.target.value)} /></Field>
-      <Field label="Booking page welcome" hint="A line or two shown above your treatments."><textarea value={txt(d.booking_intro)} maxLength={1000} onChange={(e) => f.set('booking_intro', nul(e.target.value) ?? '')} /></Field>
+      <Field label="Your legal name" hint="Shown in the privacy notice as the person responsible for client data.">
+        <input type="text" autoComplete="name" value={txt(d.legal_name)} maxLength={100} onChange={(e) => f.set('legal_name', e.target.value)} />
+      </Field>
+      <Field label="Booking page welcome" hint="A line or two shown above your treatments."><textarea value={txt(d.booking_intro)} maxLength={1000} onChange={(e) => f.set('booking_intro', e.target.value)} /></Field>
       <Field label="Area (shown publicly)" hint="e.g. “South Woodham Ferrers — full address in your confirmation”">
         <input type="text" value={txt(d.location_note)} maxLength={200} onChange={(e) => f.set('location_note', e.target.value)} />
       </Field>
@@ -115,7 +119,7 @@ export function RulesSettings() {
 }
 
 export function DepositSettings() {
-  const f = useSettingsForm(['deposit_amount_pence', 'deposit_deadline_hours', 'bank_account_name', 'bank_sort_code', 'bank_account_number', 'cancellation_policy']);
+  const f = useSettingsForm(['deposit_amount_pence', 'deposit_deadline_hours', 'auto_cancel_unpaid', 'bank_account_name', 'bank_sort_code', 'bank_account_number', 'cancellation_policy']);
   const d = f.draft;
   const [amount, setAmount] = useState((d.deposit_amount_pence / 100).toFixed(2));
   async function submit() {
@@ -128,7 +132,12 @@ export function DepositSettings() {
     <Page title="Deposits & bank details">
       <p className="sub">New clients (anyone who hasn’t had a completed appointment) are asked for this deposit by bank transfer. Returning clients aren’t. Set £0 to switch deposits off.</p>
       <Field label="Deposit (£)"><input type="text" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} /></Field>
-      <Field label="Pay within (hours)" hint="Shown to the client. You decide what happens if it’s late."><input type="number" inputMode="numeric" min={1} max={336} value={d.deposit_deadline_hours} onChange={(e) => f.set('deposit_deadline_hours', Number(e.target.value))} /></Field>
+      <Field label="Pay within (hours)" hint="Shown to the client."><input type="number" inputMode="numeric" min={1} max={336} value={d.deposit_deadline_hours} onChange={(e) => f.set('deposit_deadline_hours', Number(e.target.value))} /></Field>
+      <label className="check">
+        <input type="checkbox" checked={d.auto_cancel_unpaid} onChange={(e) => f.set('auto_cancel_unpaid', e.target.checked)} />
+        <span>Release the slot automatically if the deposit hasn’t arrived in time<br />
+          <span className="sub">The client is emailed. Leave this off to decide yourself — late ones are flagged on Today. Remember to mark deposits received promptly if it’s on.</span></span>
+      </label>
       <div className="section-title">Bank details (sent only to clients who owe a deposit)</div>
       <Field label="Account name"><input type="text" value={txt(d.bank_account_name)} maxLength={80} onChange={(e) => f.set('bank_account_name', e.target.value)} /></Field>
       <div className="row">

@@ -29,6 +29,8 @@ export interface Settings {
   wa_template_deposit: string | null;
   wa_template_confirmed: string | null;
   booking_enabled: boolean;
+  legal_name: string | null;
+  auto_cancel_unpaid: boolean;
   email_secret_hash: string | null;
   email_last_poll_at: string | null;
 }
@@ -61,6 +63,11 @@ export interface Client {
   phone_e164: string | null;
   allergies: string | null;
   notes: string | null;
+  /** A regular moved over from another system: never asked for a new-client deposit. */
+  is_regular: boolean;
+  /** When the client gave explicit consent to health information being kept. */
+  health_consent_at: string | null;
+  health_consent_note: string | null;
   created_at: string;
 }
 
@@ -171,6 +178,8 @@ export interface BookingInfo {
   deposit_amount_pence: number;
   deposit_deadline_hours: number;
   booking_enabled: boolean;
+  legal_name: string | null;
+  contact_email: string | null;
   hours: OpeningHours[];
   services: Pick<Service, 'id' | 'name' | 'description' | 'duration_min' | 'price_pence'>[];
 }

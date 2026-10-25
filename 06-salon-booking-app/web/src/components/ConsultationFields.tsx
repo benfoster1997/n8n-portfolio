@@ -1,4 +1,6 @@
-import { CONSULTATION_QUESTIONS, HEALTH_CONSENT_TEXT, type Answers } from '../lib/consultation';
+import { useState } from 'react';
+import { Link } from 'react-router-dom';
+import { ACCURACY_TEXT, CONSULTATION_QUESTIONS, HEALTH_CONSENT_TEXT, type Answers } from '../lib/consultation';
 
 export function ConsultationFields({ answers, onChange, consent, onConsent, signedName, onSignedName, businessName }: {
   answers: Answers;
@@ -10,6 +12,10 @@ export function ConsultationFields({ answers, onChange, consent, onConsent, sign
   businessName: string;
 }) {
   const set = (k: string, v: unknown) => onChange({ ...answers, [k]: v });
+  // Two separate ticks; the form only counts as consented when both are ticked.
+  const [accurate, setAccurate] = useState(consent);
+  const [agrees, setAgrees] = useState(consent);
+  const update = (a: boolean, g: boolean) => { setAccurate(a); setAgrees(g); onConsent(a && g); };
   return (
     <div className="stack">
       {CONSULTATION_QUESTIONS.map((q) => (
@@ -47,8 +53,12 @@ export function ConsultationFields({ answers, onChange, consent, onConsent, sign
         </fieldset>
       ))}
       <label className="check">
-        <input type="checkbox" checked={consent} onChange={(e) => onConsent(e.target.checked)} />
-        <span>{HEALTH_CONSENT_TEXT.replace('stored securely', `stored securely by ${businessName}`)}</span>
+        <input type="checkbox" checked={accurate} onChange={(e) => update(e.target.checked, agrees)} />
+        <span>{ACCURACY_TEXT(businessName)}</span>
+      </label>
+      <label className="check">
+        <input type="checkbox" checked={agrees} onChange={(e) => update(accurate, e.target.checked)} />
+        <span>{HEALTH_CONSENT_TEXT(businessName)} <Link to="/privacy" target="_blank">How it’s kept</Link></span>
       </label>
       <label className="field">
         <span>Type your full name to sign</span>

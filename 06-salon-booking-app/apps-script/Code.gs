@@ -41,26 +41,58 @@ function processEmails() {
   if (!lock.tryLock(5000)) return 0; // a previous run is still going
   try {
     var cfg = config_();
-    var claim = rpc_(cfg, 'email_jobs_claim', { p_secret: cfg.secret });
+    var props = PropertiesService.getScriptProperties();
+    // Emails sent on an earlier run whose "sent" report never reached the
+    // database (network blip, run cut short). Remembered here so they are
+    // reported as sent rather than sent twice.
+    var unreported = JSON.parse(props.getProperty('SENT_UNREPORTED') || '{}');
+    var quota = MailApp.getRemainingDailyQuota();
+    var claim = rpc_(cfg, 'email_jobs_claim', { p_secret: cfg.secret, p_limit: Math.max(0, Math.min(quota, 50)) });
     var s = claim.settings || {};
+    var me = (Session.getEffectiveUser().getEmail() || '').toLowerCase();
     var results = [];
     var sent = 0;
     (claim.jobs || []).forEach(function (job) {
+      if (unreported[job.id]) { results.push({ id: job.id, ok: true }); return; }
       try {
         var msg = render_(job, s);
         var options = { htmlBody: msg.html, name: s.business_name || 'Bookings' };
-        if (s.owner_email && job.kind !== 'owner_new_booking') options.replyTo = s.owner_email;
+        // Replies go to the owner. Only set Reply-To when it differs from this
+        // Gmail account: a needless Reply-To to another free-mail address is a spam signal.
+        if (job.kind === 'owner_new_booking') {
+          if (job.client_email) options.replyTo = job.client_email;
+        } else if (s.owner_email && s.owner_email.toLowerCase() !== me) {
+          options.replyTo = s.owner_email;
+        }
         MailApp.sendEmail(job.to, msg.subject, msg.text, options);
+        unreported[job.id] = true;
+        props.setProperty('SENT_UNREPORTED', JSON.stringify(unreported));
         results.push({ id: job.id, ok: true });
         sent++;
       } catch (e) {
         results.push({ id: job.id, ok: false, error: String((e && e.message) || e) });
       }
     });
-    if (results.length) rpc_(cfg, 'email_jobs_report', { p_secret: cfg.secret, p_results: results });
+    if (results.length) {
+      reportWithRetry_(cfg, results);
+      // Reported: forget them. (Anything not in this batch is kept for next time.)
+      results.forEach(function (r) { delete unreported[r.id]; });
+      props.setProperty('SENT_UNREPORTED', JSON.stringify(unreported));
+    }
     return sent;
   } finally {
     lock.releaseLock();
+  }
+}
+
+function reportWithRetry_(cfg, results) {
+  for (var attempt = 1; ; attempt++) {
+    try {
+      return rpc_(cfg, 'email_jobs_report', { p_secret: cfg.secret, p_results: results });
+    } catch (e) {
+      if (attempt >= 3) throw e;
+      Utilities.sleep(2000 * attempt);
+    }
   }
 }
 
@@ -96,10 +128,14 @@ function config_() {
 }
 
 function rpc_(cfg, fn, body) {
+  var headers = { apikey: cfg.key };
+  // Older "anon" keys are JWTs and also go in Authorization; the newer
+  // "sb_publishable_…" keys belong in the apikey header only.
+  if (/^eyJ/.test(cfg.key)) headers.Authorization = 'Bearer ' + cfg.key;
   var res = UrlFetchApp.fetch(cfg.url + '/rest/v1/rpc/' + fn, {
     method: 'post',
     contentType: 'application/json',
-    headers: { apikey: cfg.key, Authorization: 'Bearer ' + cfg.key },
+    headers: headers,
     payload: JSON.stringify(body),
     muteHttpExceptions: true,
   });
@@ -135,11 +171,13 @@ function render_(job, s) {
   var address = s.address ? ['Where', s.address] : null;
 
   if (job.kind === 'owner_new_booking') {
-    var rows = [
-      ['Client', job.client_name], ['Mobile', job.client_phone || '—'], ['Email', job.client_email || '—'],
+    var rows = [['Client', job.client_name]];
+    if (job.booking_name && job.booking_name !== job.client_name) rows.push(['Booked as', job.booking_name]);
+    rows = rows.concat([
+      ['Mobile', job.client_phone || '—'], ['Email', job.client_email || '—'],
       ['Treatment', job.service_name], ['When', when], ['Reference', job.reference],
       ['Status', job.status === 'pending_deposit' ? 'New client — waiting for ' + money_(job.deposit_required_pence) + ' deposit' : 'Confirmed (returning client)'],
-    ];
+    ]);
     if (job.client_notes) rows.push(['Their note', job.client_notes]);
     return msg_('New booking: ' + job.client_name + ' — ' + job.service_name + ', ' + fmt_(job.starts_at, tz, 'EEE d MMM HH:mm'),
       'New online booking', [table_(rows), site ? p_(link_(site + '/', 'Open your diary')) : ''], biz);
@@ -153,11 +191,11 @@ function render_(job, s) {
       ['Account number', s.bank_account_number || ''],
       ['Reference', job.reference],
     ];
-    var due = job.deposit_due_at ? fmt_(job.deposit_due_at, tz, "EEEE d MMMM 'by' HH:mm") : 'as soon as you can';
+    var due = job.deposit_due_at ? 'by ' + fmt_(job.deposit_due_at, tz, "HH:mm 'on' EEEE d MMMM") : 'as soon as you can';
     return msg_('Please pay your deposit to secure your booking — ' + biz,
       'Thanks for booking, ' + esc_(job.first_name) + '!',
       [
-        p_('Your appointment is reserved. As a new client, please pay a <b>' + money_(job.deposit_required_pence) + ' deposit</b> by bank transfer on ' + esc_(due) + ' to secure it. It comes off your bill on the day.'),
+        p_('Your appointment is reserved. As a new client, please pay a <b>' + money_(job.deposit_required_pence) + ' deposit</b> by bank transfer ' + esc_(due) + ' to secure it. It comes off your bill on the day.'),
         box_(table_(bank)),
         p_('Please use the reference <b>' + esc_(job.reference) + '</b> so your payment can be matched. You’ll get another email once it has arrived.'),
         table_(details), formBlock, policy, contact,
@@ -227,7 +265,7 @@ function stripHtml_(html) {
     .replace(/<br\s*\/?>/gi, '\n').replace(/<\/tr>/gi, '\n').replace(/<\/td><td[^>]*>/gi, ': ')
     .replace(/<a [^>]*href="([^"]+)"[^>]*>([^<]*)<\/a>/gi, '$2 ($1)')
     .replace(/<[^>]+>/g, '')
-    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&')
     .replace(/\n{3,}/g, '\n\n').trim();
 }
 function money_(pence) {

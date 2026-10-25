@@ -33,8 +33,10 @@ test('a new client books online, fills in the form, and the owner confirms the d
   await expect(page.getByRole('alert')).toContainText('Please answer');
 
   for (const group of await page.locator('.card .seg').all()) await group.getByRole('radio', { name: 'No' }).click();
-  await page.getByLabel(/I confirm this information is correct/).check();
+  await page.getByLabel(/My answers are true/).check();
+  await page.getByLabel(/I explicitly consent/).check();
   await page.getByLabel('Type your full name to sign').fill('Poppy Tester');
+  await page.getByLabel(/16 or over/).check();
   await shot(page, '03-book-details');
   await page.getByRole('button', { name: 'Confirm booking' }).click();
 
@@ -72,6 +74,7 @@ test('a returning client is not asked for a deposit', async ({ page }) => {
   await page.getByLabel('Email').fill('AMELIA@example.com');
   await page.getByLabel('Mobile').fill('07700 900101');
   await page.getByRole('radio', { name: 'I’ve been before' }).click();
+  await page.getByLabel(/16 or over/).check();
   await page.getByRole('button', { name: 'Confirm booking' }).click();
   await expect(page.getByRole('heading', { name: /Booking received/ })).toBeVisible();
 

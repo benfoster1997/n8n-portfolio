@@ -94,6 +94,13 @@ export function describeAnswers(a: Answers): { question: string; answer: string;
   return rows;
 }
 
-export const HEALTH_CONSENT_TEXT =
-  'I confirm this information is correct, and I agree to it being stored securely so my treatment can be carried out safely. ' +
-  'I will let you know if anything changes. I can ask for it to be deleted at any time.';
+// Two separate statements: a declaration, and the explicit consent UK GDPR
+// Article 9 needs for health information. If this wording changes, bump
+// public.current_consent_version() in supabase/schema.sql so every stored form
+// records which wording the client agreed to.
+export const ACCURACY_TEXT = (business: string) =>
+  `My answers are true to the best of my knowledge, and I'll tell ${business} if anything changes before a treatment.`;
+
+export const HEALTH_CONSENT_TEXT = (business: string) =>
+  `I explicitly consent to ${business} keeping the health and allergy information on this form, and any patch test results, ` +
+  `so my treatments can be done safely. I can withdraw this consent at any time by contacting ${business}; some treatments may then not be possible.`;

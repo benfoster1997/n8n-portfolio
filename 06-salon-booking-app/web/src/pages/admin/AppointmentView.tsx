@@ -99,10 +99,10 @@ export function AppointmentView() {
         </div>
       )}
 
-      {live && a.is_new_client && !a.has_form && (
+      {live && !a.has_form && (
         <div className="card stack">
           <h3>Consultation form</h3>
-          <p className="sub">This new client hasn’t filled in the health and allergy form yet.</p>
+          <p className="sub">{a.is_new_client ? 'This new client hasn’t filled in the health and allergy form yet.' : 'No health and allergy form on file for this client. Send them the link to fill one in.'}</p>
           <div className="btn-row">
             {phone && (
               <a className="btn wa" target="_blank" rel="noreferrer"

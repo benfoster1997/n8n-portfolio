@@ -67,12 +67,13 @@ beforeEach(async () => {
 // helpers
 // ---------------------------------------------------------------------------
 
-async function as(role, uid, sql, params = []) {
+async function as(role, uid, sql, params = [], extraClaims = {}, headers = null) {
   await db.query('begin');
   try {
     await db.query(`set local role ${role}`);
-    const claims = JSON.stringify(uid ? { sub: uid, role } : { role });
+    const claims = JSON.stringify(uid ? { sub: uid, role, ...extraClaims } : { role });
     await db.query(`select set_config('request.jwt.claims', $1, true)`, [claims]);
+    if (headers) await db.query(`select set_config('request.headers', $1, true)`, [JSON.stringify(headers)]);
     const r = await db.query(sql, params);
     await db.query('commit');
     return r;
@@ -82,8 +83,8 @@ async function as(role, uid, sql, params = []) {
   }
 }
 const asAnon = (sql, params) => as('anon', null, sql, params);
-const asOwner = (sql, params) => as('authenticated', OWNER, sql, params);
-const asStranger = (sql, params) => as('authenticated', STRANGER, sql, params);
+const asOwner = (sql, params) => as('authenticated', OWNER, sql, params, { email: 'owner@example.com' });
+const asStranger = (sql, params) => as('authenticated', STRANGER, sql, params, { email: 'stranger@example.com' });
 
 /** A London wall-clock time N days from today, as an ISO instant. */
 async function londonAt(daysAhead, hhmm) {
@@ -148,7 +149,7 @@ test('the public key cannot call owner functions', async () => {
   await rejects(asAnon(`select public.claim_owner()`), 'permission denied');
 });
 
-test('booking info shows services and rules but never bank details or the address', async () => {
+test('booking info shows services, rules and a contact email, but never bank details or the address', async () => {
   await addService();
   await db.query(`update public.settings set address = '1 Secret Street' where id = 1`);
   const info = (await asAnon(`select public.public_booking_info() as i`)).rows[0].i;
@@ -156,9 +157,11 @@ test('booking info shows services and rules but never bank details or the addres
   assert.equal(info.services.length, 1);
   assert.equal(info.hours.length, 7);
   const text = JSON.stringify(info);
-  for (const secret of ['12345678', '00-00-00', 'Secret Street', 'owner@example.com', 'email_secret']) {
+  for (const secret of ['12345678', '00-00-00', 'Secret Street', 'email_secret']) {
     assert.ok(!text.includes(secret), `leaked ${secret}`);
   }
+  // The privacy notice must say who to contact, so the business email is public on purpose.
+  assert.equal(info.contact_email, 'owner@example.com');
 });
 
 test('inactive and owner-only services are not offered online', async () => {
@@ -211,13 +214,48 @@ test('a returning client (has a completed visit) books without a deposit', async
   assert.equal((await db.query(`select count(*)::int as n from public.clients`)).rows[0].n, 1);
 });
 
-test('a client is recognised by phone when the email differs', async () => {
+test('a phone number alone never links a booking to an existing client', async () => {
+  // Otherwise anyone who knew a regular's mobile could book as them: skip the
+  // deposit, learn their name, redirect their reminders, file a fake health form.
   const svc = await addService();
-  const first = await book(svc, await londonAt(3, '10:00'));
-  await db.query(`update public.appointments set status = 'completed' where reference = $1`, [first.reference]);
-  const second = await book(svc, await londonAt(4, '10:00'),
-    { p_email: 'other@example.com', p_phone: '+44 (0)7700 900123' });
-  assert.equal((await appt(second.reference)).status, 'confirmed');
+  const victim = (await db.query(
+    `insert into public.clients (full_name, phone, allergies) values ('Victoria Regular', '07700 900123', 'HEMA') returning *`)).rows[0];
+  await db.query(`insert into public.appointments (client_id, service_name, duration_min, starts_at, ends_at, busy_until, reference, status)
+                  values ($1, 'Gel', 45, now() - interval '30 days', now(), now(), '', 'completed')`, [victim.id]);
+  const r = await book(svc, await londonAt(4, '10:00'), {
+    p_full_name: 'Mallory Evil', p_email: 'mallory@evil.test', p_phone: '+44 (0)7700 900123',
+    p_consultation: { allergies: 'no' }, p_health_consent: true, p_signed_name: 'Mallory Evil' });
+  const a = await appt(r.reference);
+  assert.equal(a.status, 'pending_deposit', 'treated as a new client, so a deposit is due');
+  assert.notEqual(a.client_id, victim.id);
+  const after = (await db.query(`select * from public.clients where id = $1`, [victim.id])).rows[0];
+  assert.equal(after.email, null, 'the regular’s record is untouched');
+  assert.equal(after.allergies, 'HEMA');
+  assert.equal((await db.query(`select count(*)::int n from public.consultation_forms where client_id = $1`, [victim.id])).rows[0].n, 0);
+});
+
+test('booking with a known email never changes that client’s record or files a form on it', async () => {
+  const svc = await addService();
+  const c = (await db.query(
+    `insert into public.clients (full_name, email) values ('Rosa Regular', 'rosa@example.com') returning *`)).rows[0];
+  await book(svc, await londonAt(4, '10:00'), {
+    p_full_name: 'Someone Else', p_email: 'rosa@example.com', p_phone: '07700900999',
+    p_consultation: { allergies: 'no' }, p_health_consent: true, p_signed_name: 'Someone Else' });
+  const after = (await db.query(`select * from public.clients where id = $1`, [c.id])).rows[0];
+  assert.equal(after.full_name, 'Rosa Regular');
+  assert.equal(after.phone, null, 'the typed phone is not written onto her record');
+  assert.equal((await db.query(`select count(*)::int n from public.consultation_forms`)).rows[0].n, 0);
+  // The emails greet whoever booked, never the name on file.
+  const claim = (await asAnon(`select public.email_jobs_claim($1) as j`, [SECRET])).rows[0].j;
+  assert.ok(claim.jobs.every((j) => j.first_name === 'Someone'));
+});
+
+test('database errors never echo a client row back to the public key', async () => {
+  const svc = await addService();
+  await db.query(`insert into public.clients (full_name, email, notes) values ('Rosa Regular', 'rosa@example.com', 'PRIVATE NOTE')`);
+  await assert.rejects(
+    book(svc, await londonAt(4, '10:00'), { p_email: 'rosa@example.com', p_phone: '07700900123 ' + '.'.repeat(40) }),
+    (e) => { assert.ok(!JSON.stringify({ m: e.message, d: e.detail }).includes('PRIVATE NOTE')); assert.match(e.message, /invalid_phone/); return true; });
 });
 
 test('someone who booked before but never came still pays a deposit', async () => {
@@ -343,6 +381,11 @@ test('the form link works once, and only for a live appointment', async () => {
 
 test('only the first account becomes the owner; anyone else sees nothing', async () => {
   await db.query(`truncate public.owner`);
+  // settings.owner_email is set, so a stranger can't claim the diary first…
+  assert.equal((await asStranger(`select public.claim_owner() as ok`)).rows[0].ok, false);
+  // …nor can an anonymous session with the right email.
+  assert.equal((await as('authenticated', STRANGER, `select public.claim_owner() as ok`, [],
+    { email: 'owner@example.com', is_anonymous: true })).rows[0].ok, false);
   assert.equal((await asOwner(`select public.claim_owner() as ok`)).rows[0].ok, true);
   assert.equal((await asStranger(`select public.claim_owner() as ok`)).rows[0].ok, false);
   assert.equal((await asAnon(`select public.public_owner_exists() as e`)).rows[0].e, true);
@@ -534,4 +577,160 @@ test('booking references are short, unambiguous and unique', async () => {
   const refs = r.rows.map((x) => x.r);
   for (const ref of refs) assert.match(ref, /^[A-HJ-NP-Z2-9]{6}$/);
   assert.ok(new Set(refs).size > 1990);
+});
+
+// ---------------------------------------------------------------------------
+// Hardening found in review
+// ---------------------------------------------------------------------------
+
+test('flood brake: a handful of online bookings an hour, three per connection', async () => {
+  const svc = await addService('Gel', 30);
+  const who = (i) => ({ p_full_name: `Client ${'abcdefg'[i]}`, p_email: `c${i}@example.com`, p_phone: `0770090010${i}` });
+  // Per connection (the API gateway passes the caller's address in x-forwarded-for).
+  const fromIp = (i, ip) => as('anon', null,
+    `select public.public_create_booking($1, $2, $3, $4, $5) as r`,
+    [svc, null, who(i).p_full_name, who(i).p_email, who(i).p_phone], {}, { 'x-forwarded-for': `${ip}, 10.0.0.1` });
+  for (let i = 0; i < 3; i++) {
+    const at = await londonAt(3, `${10 + i}:00`);
+    await as('anon', null, `select public.public_create_booking($1, $2, $3, $4, $5) as r`,
+      [svc, at, who(i).p_full_name, who(i).p_email, who(i).p_phone], {}, { 'x-forwarded-for': '203.0.113.9, 10.0.0.1' });
+  }
+  await rejects(fromIp(3, '203.0.113.9'), 'busy_try_later');
+  void fromIp;
+  // Overall: six in an hour from anywhere.
+  for (let i = 3; i < 6; i++) await book(svc, await londonAt(3, `${10 + i}:00`), who(i));
+  await rejects(book(svc, await londonAt(4, '10:00'), { p_full_name: 'Late Comer', p_email: 'late@example.com', p_phone: '07700900200' }), 'busy_try_later');
+});
+
+test('names must look like names: no links, emails or markup', async () => {
+  const svc = await addService();
+  const at = await londonAt(3, '10:00');
+  for (const bad of ['Win £££ at spam.com', 'Visit www.evil.test', 'https://x.test', 'Jess <b>Bold</b>', 'Agent 47', 'a@b.c']) {
+    await rejects(book(svc, at, { p_full_name: bad }), 'invalid_name');
+  }
+  let n = 0;
+  for (const good of ["Siobhán O'Brien", 'Anne-Marie Smith-Jones', 'J. Smith']) {
+    await book(svc, await londonAt(3 + n, '14:00'), { p_full_name: good, p_email: `ok${n}@example.com`, p_phone: `0770090030${n}` });
+    n++;
+  }
+});
+
+test('raising the clean-up gap later does not break updates to existing appointments', async () => {
+  const svc = await addService('Gel', 45);
+  await db.query(`update public.settings set slot_interval_min = 5 where id = 1`);
+  const a1 = await book(svc, await londonAt(3, '10:00'));
+  const a2 = await book(svc, await londonAt(3, '10:55'), { p_email: 'b@example.com', p_phone: '07700900222' });
+  await db.query(`update public.settings set buffer_min = 30 where id = 1`);
+  const second = await appt(a2.reference);
+  await asOwner(`update public.appointments set whatsapp_reminder_sent_at = now(), owner_notes = 'x' where id = $1`, [second.id]);
+  await asOwner(`select public.owner_mark_deposit_paid($1, 'cash')`, [(await appt(a1.reference)).id]);
+  assert.equal((await appt(a1.reference)).status, 'confirmed');
+});
+
+test('moving an appointment resets its reminders so the new time gets one', async () => {
+  const c = (await db.query(`insert into public.clients (full_name, email) values ('Rem Ind', 'rem@example.com') returning id`)).rows[0];
+  const soon = new Date(Date.now() + 20 * 3600e3); soon.setUTCMinutes(0, 0, 0);
+  const a = (await db.query(
+    `insert into public.appointments (client_id, service_name, duration_min, starts_at, ends_at, busy_until, reference, status, created_at)
+     values ($1, 'Gel', 45, $2, $2, $2, '', 'confirmed', now() - interval '7 days') returning *`, [c.id, soon])).rows[0];
+  const claim = (await asAnon(`select public.email_jobs_claim($1) as j`, [SECRET])).rows[0].j;
+  await asAnon(`select public.email_jobs_report($1, $2)`, [SECRET, JSON.stringify(claim.jobs.map((j) => ({ id: j.id, ok: true })))]);
+  await db.query(`update public.appointments set whatsapp_reminder_sent_at = now() where id = $1`, [a.id]);
+
+  const later = new Date(soon.getTime() + 2 * 3600e3);
+  await asOwner(`update public.appointments set starts_at = $2 where id = $1`, [a.id, later]);
+  const moved = (await db.query(`select * from public.appointments where id = $1`, [a.id])).rows[0];
+  assert.equal(moved.reminder_email_sent_at, null);
+  assert.equal(moved.whatsapp_reminder_sent_at, null);
+  const again = (await asAnon(`select public.email_jobs_claim($1) as j`, [SECRET])).rows[0].j;
+  assert.equal(again.jobs.filter((j) => j.kind === 'reminder').length, 1);
+});
+
+test('a regular moved over from another system is never asked for a deposit', async () => {
+  const svc = await addService();
+  await db.query(`insert into public.clients (full_name, email, is_regular) values ('Old Regular', 'jess@example.com', true)`);
+  const r = await book(svc, await londonAt(3, '10:00'));
+  const a = await appt(r.reference);
+  assert.equal(a.status, 'confirmed');
+  assert.equal(a.is_new_client, false);
+});
+
+test('health consent is recorded with the form, and can be withdrawn on its own', async () => {
+  const svc = await addService();
+  const r = await book(svc, await londonAt(3, '10:00'));
+  const a = await appt(r.reference);
+  await asAnon(`select public.public_submit_form($1, '{"allergies":"no"}', true, 'Jess Example')`, [a.public_token]);
+  const form = (await db.query(`select consent_version from public.consultation_forms`)).rows[0];
+  assert.equal(form.consent_version, 'v2-2026-10', 'the database stamps the consent wording, not the browser');
+  let c = (await db.query(`select * from public.clients where id = $1`, [a.client_id])).rows[0];
+  assert.ok(c.health_consent_at);
+  await db.query(`update public.clients set allergies = 'HEMA' where id = $1`, [c.id]);
+  await db.query(`insert into public.patch_tests (client_id, tested_on) values ($1, current_date)`, [c.id]);
+
+  await rejects(asStranger(`select public.owner_delete_health_data($1)`, [c.id]), 'not_allowed');
+  await asOwner(`select public.owner_delete_health_data($1)`, [c.id]);
+  c = (await db.query(`select * from public.clients where id = $1`, [c.id])).rows[0];
+  assert.equal(c.allergies, null);
+  assert.equal(c.health_consent_at, null);
+  assert.equal(c.full_name, 'Jess Example', 'still a client');
+  for (const t of ['consultation_forms', 'patch_tests']) {
+    assert.equal((await db.query(`select count(*)::int n from public.${t}`)).rows[0].n, 0, t);
+  }
+  assert.equal((await appt(r.reference)).status, 'pending_deposit', 'the booking is untouched');
+});
+
+test('one consultation form per appointment, even if two arrive at once', async () => {
+  const svc = await addService();
+  const r = await book(svc, await londonAt(3, '10:00'));
+  const a = await appt(r.reference);
+  await db.query(`insert into public.consultation_forms (client_id, appointment_id, answers, health_consent, signed_name)
+                  values ($1, $2, '{}', true, 'Jess')`, [a.client_id, a.id]);
+  await assert.rejects(db.query(`insert into public.consultation_forms (client_id, appointment_id, answers, health_consent, signed_name)
+                  values ($1, $2, '{}', true, 'Jess')`, [a.client_id, a.id]), /consultation_forms_one_per_appt/);
+});
+
+test('optional: unpaid online bookings are released after the deadline', async () => {
+  const svc = await addService();
+  const r = await book(svc, await londonAt(3, '10:00'));
+  await db.query(`update public.appointments set deposit_due_at = now() - interval '1 minute' where reference = $1`, [r.reference]);
+  await asAnon(`select public.email_jobs_claim($1)`, [SECRET]);
+  assert.equal((await appt(r.reference)).status, 'pending_deposit', 'off by default: the owner decides');
+  await db.query(`update public.settings set auto_cancel_unpaid = true where id = 1`);
+  const claim = (await asAnon(`select public.email_jobs_claim($1) as j`, [SECRET])).rows[0].j;
+  assert.equal((await appt(r.reference)).status, 'cancelled');
+  assert.deepEqual(claim.jobs.map((j) => j.kind), ['cancelled']);
+  assert.match(claim.jobs[0].cancel_reason, /deposit didn't arrive/);
+});
+
+test('the sender takes no more than it can send today', async () => {
+  const svc = await addService();
+  await book(svc, await londonAt(3, '10:00'));
+  const one = (await asAnon(`select public.email_jobs_claim($1, 1) as j`, [SECRET])).rows[0].j;
+  assert.equal(one.jobs.length, 1);
+  const none = (await asAnon(`select public.email_jobs_claim($1, 0) as j`, [SECRET])).rows[0].j;
+  assert.equal(none.jobs.length, 0);
+});
+
+test('stuck emails are marked failed, and a re-send never resets one going out', async () => {
+  const svc = await addService();
+  const r = await book(svc, await londonAt(3, '10:00'));
+  const a = await appt(r.reference);
+  await db.query(`update public.email_outbox set status = 'sending', attempts = 5, claimed_at = now() - interval '1 hour'`);
+  await asAnon(`select public.email_jobs_claim($1)`, [SECRET]);
+  assert.deepEqual((await db.query(`select distinct status from public.email_outbox`)).rows, [{ status: 'failed' }]);
+
+  await db.query(`update public.email_outbox set status = 'sending', attempts = 1, claimed_at = now() where kind = 'booking_received'`);
+  await asOwner(`select public.owner_queue_email($1, 'booking_received')`, [a.id]);
+  assert.equal((await db.query(`select status from public.email_outbox where kind = 'booking_received'`)).rows[0].status, 'sending');
+});
+
+test('the public can only see busy times from now on; the owner can look back', async () => {
+  await rejects(asAnon(`select * from public.public_busy_times(now() - interval '30 days', now())`), 'invalid_range');
+  const r = await asOwner(`select * from public.public_busy_times(now() - interval '30 days', now())`);
+  assert.equal(r.rows.length, 0);
+});
+
+test('signed-in strangers cannot call the email sender functions either', async () => {
+  await rejects(asStranger(`select public.email_jobs_claim($1)`, [SECRET]), 'permission denied');
+  await rejects(asStranger(`select public.email_secret_ok($1)`, [SECRET]), 'permission denied');
 });

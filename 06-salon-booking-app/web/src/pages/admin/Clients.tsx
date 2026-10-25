@@ -11,8 +11,15 @@ export function Clients() {
   const { data, error, loading } = useLoad(() => api.listClients(), []);
   const [q, setQ] = useState('');
   const [adding, setAdding] = useState(false);
+  const [stale, setStale] = useState(false);
   const needle = q.trim().toLowerCase();
-  const list = (data ?? []).filter((c) => !needle
+  // Clients not seen for 3+ years (or never, and added 6+ months ago) are due for deletion under the privacy notice.
+  const isStale = (c: { last_visit: string | null; created_at: string }) => {
+    const cutoff = (iso: string, days: number) => Date.now() - new Date(iso).getTime() > days * 86400e3;
+    return c.last_visit ? cutoff(c.last_visit, 3 * 365) : cutoff(c.created_at, 183);
+  };
+  const staleCount = (data ?? []).filter(isStale).length;
+  const list = (data ?? []).filter((c) => !stale || isStale(c)).filter((c) => !needle
     || c.full_name.toLowerCase().includes(needle)
     || (c.phone ?? '').replace(/\s/g, '').includes(needle.replace(/\s/g, ''))
     || (c.email ?? '').includes(needle));
@@ -21,6 +28,13 @@ export function Clients() {
     <div className="page">
       <TopBar title="Clients" right={<button className="icon-btn" aria-label="Add client" onClick={() => setAdding(true)}><Icon name="plus" /></button>} />
       <input type="search" placeholder={`Search ${data?.length ?? ''} clients`} value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search clients" />
+      {staleCount > 0 && (
+        <label className="check">
+          <input type="checkbox" checked={stale} onChange={(e) => setStale(e.target.checked)} />
+          <span>Show only the {staleCount} client{staleCount === 1 ? '' : 's'} due for deletion<br />
+            <span className="sub">Not seen for 3 years, or never visited and added over 6 months ago — your privacy notice says these are deleted.</span></span>
+        </label>
+      )}
       <ErrorBox error={error} />
       {loading && !data ? <Spinner /> : (
         <div className="card tight" style={{ marginTop: 12 }}>
