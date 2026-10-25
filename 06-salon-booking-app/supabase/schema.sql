@@ -1,0 +1,910 @@
+-- =============================================================================
+-- Salon booking app — database schema (Supabase / PostgreSQL 15+)
+--
+-- Run this once in the Supabase SQL editor (Dashboard → SQL Editor → New query),
+-- then run storage.sql. It is safe to re-run: every object is created with
+-- "if not exists" or "create or replace".
+--
+-- Security model, in one paragraph:
+--   * Every table has Row Level Security switched on and only one policy:
+--     "the signed-in owner can do everything". Nobody else can read a row.
+--   * The public booking page never touches a table. It calls a small set of
+--     functions (public_*) that check every input and only ever return what a
+--     client needs to see: services, prices, opening hours and which times are
+--     taken (never who took them).
+--   * The email sender (a Google Apps Script in the owner's own Gmail) calls
+--     two functions (email_jobs_*) that refuse to run without a secret whose
+--     hash is stored in settings.
+-- =============================================================================
+
+-- ---------------------------------------------------------------------------
+-- Tables
+-- ---------------------------------------------------------------------------
+
+-- Exactly one owner (the person whose business this is). Claimed once, on
+-- first sign-in, by claim_owner().
+create table if not exists public.owner (
+  id         int primary key default 1 check (id = 1),
+  user_id    uuid not null unique,
+  created_at timestamptz not null default now()
+);
+
+-- One row of settings (id = 1). Everything the owner can change lives here.
+create table if not exists public.settings (
+  id                     int primary key default 1 check (id = 1),
+  business_name          text not null default 'My Nail Studio' check (length(business_name) between 1 and 80),
+  booking_intro          text check (length(booking_intro) <= 1000),
+  -- Shown publicly on the booking page, e.g. "South Woodham Ferrers — full address in your confirmation".
+  location_note          text check (length(location_note) <= 200),
+  -- Full address: only ever sent in confirmation emails, never shown publicly.
+  address                text check (length(address) <= 300),
+  owner_email            text check (length(owner_email) <= 254),
+  owner_phone            text check (length(owner_phone) <= 30),
+  public_site_url        text check (length(public_site_url) <= 200),
+  timezone               text not null default 'Europe/London',
+  slot_interval_min      int  not null default 15 check (slot_interval_min between 5 and 120),
+  buffer_min             int  not null default 10 check (buffer_min between 0 and 120),
+  min_notice_hours       int  not null default 12 check (min_notice_hours between 0 and 336),
+  max_days_ahead         int  not null default 60 check (max_days_ahead between 1 and 365),
+  deposit_amount_pence   int  not null default 1000 check (deposit_amount_pence between 0 and 100000),
+  deposit_deadline_hours int  not null default 24 check (deposit_deadline_hours between 1 and 336),
+  bank_account_name      text check (length(bank_account_name) <= 80),
+  bank_sort_code         text check (length(bank_sort_code) <= 20),
+  bank_account_number    text check (length(bank_account_number) <= 20),
+  cancellation_policy    text check (length(cancellation_policy) <= 1000),
+  reminder_hours_before  int  not null default 24 check (reminder_hours_before between 2 and 168),
+  wa_template_reminder   text check (length(wa_template_reminder) <= 1000),
+  wa_template_deposit    text check (length(wa_template_deposit) <= 1000),
+  wa_template_confirmed  text check (length(wa_template_confirmed) <= 1000),
+  booking_enabled        boolean not null default true,
+  -- sha256 (hex) of the secret the email sender presents. The secret itself is never stored.
+  email_secret_hash      text check (email_secret_hash ~ '^[0-9a-f]{64}$'),
+  email_last_poll_at     timestamptz,
+  updated_at             timestamptz not null default now()
+);
+insert into public.settings (id) values (1) on conflict (id) do nothing;
+
+-- Opening hours per ISO weekday (1 = Monday … 7 = Sunday).
+create table if not exists public.opening_hours (
+  weekday     int primary key check (weekday between 1 and 7),
+  is_open     boolean not null default false,
+  open_time   time not null default '09:00',
+  close_time  time not null default '17:00',
+  break_start time,
+  break_end   time,
+  check (close_time > open_time),
+  check ((break_start is null) = (break_end is null)),
+  check (break_start is null or (break_end > break_start and break_start >= open_time and break_end <= close_time))
+);
+insert into public.opening_hours (weekday, is_open, open_time, close_time) values
+  (1, true,  '09:30', '17:30'),
+  (2, true,  '09:30', '17:30'),
+  (3, true,  '09:30', '17:30'),
+  (4, true,  '09:30', '19:00'),
+  (5, true,  '09:30', '17:30'),
+  (6, true,  '09:00', '15:00'),
+  (7, false, '10:00', '14:00')
+on conflict (weekday) do nothing;
+
+create table if not exists public.services (
+  id             uuid primary key default gen_random_uuid(),
+  name           text not null check (length(name) between 1 and 80),
+  description    text check (length(description) <= 500),
+  duration_min   int  not null check (duration_min between 5 and 600),
+  price_pence    int  not null check (price_pence between 0 and 1000000),
+  is_active      boolean not null default true,
+  online_bookable boolean not null default true,
+  sort_order     int  not null default 0,
+  created_at     timestamptz not null default now()
+);
+
+create table if not exists public.clients (
+  id          uuid primary key default gen_random_uuid(),
+  full_name   text not null check (length(full_name) between 1 and 100),
+  email       text check (length(email) <= 254),
+  phone       text check (length(phone) <= 30),
+  -- Digits only, international format without "+", e.g. 447700900123. Set by trigger.
+  phone_e164  text,
+  allergies   text check (length(allergies) <= 2000),
+  notes       text check (length(notes) <= 5000),
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now()
+);
+create unique index if not exists clients_email_unique on public.clients (lower(email)) where email is not null and email <> '';
+create index if not exists clients_phone_idx on public.clients (phone_e164);
+
+create table if not exists public.patch_tests (
+  id         uuid primary key default gen_random_uuid(),
+  client_id  uuid not null references public.clients(id) on delete cascade,
+  tested_on  date not null,
+  product    text check (length(product) <= 200),
+  result     text not null default 'pass' check (result in ('pass', 'reaction', 'pending')),
+  notes      text check (length(notes) <= 1000),
+  created_at timestamptz not null default now()
+);
+create index if not exists patch_tests_client_idx on public.patch_tests (client_id);
+
+create table if not exists public.appointments (
+  id                     uuid primary key default gen_random_uuid(),
+  client_id              uuid not null references public.clients(id) on delete cascade,
+  service_id             uuid references public.services(id) on delete set null,
+  -- Snapshots, so changing a service later never rewrites history.
+  service_name           text not null check (length(service_name) between 1 and 80),
+  price_pence            int  not null default 0 check (price_pence >= 0),
+  duration_min           int  not null check (duration_min between 5 and 600),
+  starts_at              timestamptz not null,
+  ends_at                timestamptz not null,
+  -- ends_at plus the clean-up buffer. Set by trigger; used to stop double booking.
+  busy_until             timestamptz not null,
+  status                 text not null default 'confirmed'
+                         check (status in ('pending_deposit', 'confirmed', 'completed', 'cancelled', 'no_show')),
+  source                 text not null default 'owner' check (source in ('online', 'owner')),
+  booking_name           text check (length(booking_name) <= 100),
+  is_new_client          boolean not null default false,
+  deposit_required_pence int  not null default 0 check (deposit_required_pence >= 0),
+  deposit_due_at         timestamptz,
+  deposit_paid_at        timestamptz,
+  reference              text not null unique,
+  public_token           uuid not null unique default gen_random_uuid(),
+  client_notes           text check (length(client_notes) <= 1000),
+  owner_notes            text check (length(owner_notes) <= 2000),
+  reminder_email_sent_at timestamptz,
+  whatsapp_reminder_sent_at timestamptz,
+  cancelled_at           timestamptz,
+  cancel_reason          text check (length(cancel_reason) <= 500),
+  created_at             timestamptz not null default now(),
+  updated_at             timestamptz not null default now(),
+  check (ends_at > starts_at),
+  check (busy_until >= ends_at),
+  -- The database itself refuses two live appointments whose busy times overlap.
+  constraint appointments_no_overlap exclude using gist (tstzrange(starts_at, busy_until, '[)') with &&)
+    where (status in ('pending_deposit', 'confirmed', 'completed'))
+);
+create index if not exists appointments_starts_idx on public.appointments (starts_at);
+create index if not exists appointments_client_idx on public.appointments (client_id);
+
+create table if not exists public.consultation_forms (
+  id             uuid primary key default gen_random_uuid(),
+  client_id      uuid not null references public.clients(id) on delete cascade,
+  appointment_id uuid references public.appointments(id) on delete set null,
+  answers        jsonb not null check (jsonb_typeof(answers) = 'object' and pg_column_size(answers) < 20000),
+  health_consent boolean not null check (health_consent),
+  signed_name    text not null check (length(signed_name) between 2 and 100),
+  submitted_at   timestamptz not null default now()
+);
+create index if not exists consultation_forms_client_idx on public.consultation_forms (client_id);
+
+create table if not exists public.time_off (
+  id         uuid primary key default gen_random_uuid(),
+  starts_at  timestamptz not null,
+  ends_at    timestamptz not null,
+  note       text check (length(note) <= 200),
+  created_at timestamptz not null default now(),
+  check (ends_at > starts_at)
+);
+create index if not exists time_off_starts_idx on public.time_off (starts_at);
+
+-- Money actually received. Cash and bank transfer only. Refunds are negative.
+-- client_name / description are snapshots so the tax record survives a client
+-- being deleted (UK records must be kept for 5 years after the 31 January
+-- filing deadline).
+create table if not exists public.payments (
+  id             uuid primary key default gen_random_uuid(),
+  appointment_id uuid references public.appointments(id) on delete set null,
+  client_id      uuid references public.clients(id) on delete set null,
+  client_name    text check (length(client_name) <= 100),
+  description    text check (length(description) <= 200),
+  amount_pence   int  not null check (amount_pence <> 0 and abs(amount_pence) <= 10000000),
+  method         text not null check (method in ('cash', 'bank_transfer')),
+  kind           text not null default 'payment' check (kind in ('deposit', 'payment', 'tip', 'refund', 'other')),
+  paid_on        date not null,
+  note           text check (length(note) <= 500),
+  created_at     timestamptz not null default now()
+);
+create index if not exists payments_paid_on_idx on public.payments (paid_on);
+
+create table if not exists public.client_photos (
+  id             uuid primary key default gen_random_uuid(),
+  client_id      uuid not null references public.clients(id) on delete cascade,
+  appointment_id uuid references public.appointments(id) on delete set null,
+  storage_path   text not null unique check (length(storage_path) <= 300),
+  caption        text check (length(caption) <= 200),
+  taken_on       date not null default current_date,
+  created_at     timestamptz not null default now()
+);
+create index if not exists client_photos_client_idx on public.client_photos (client_id);
+
+-- Emails waiting to be sent by the Apps Script sender.
+create table if not exists public.email_outbox (
+  id             bigint generated always as identity primary key,
+  kind           text not null check (kind in ('booking_received', 'deposit_received', 'reminder', 'cancelled', 'owner_new_booking')),
+  appointment_id uuid not null references public.appointments(id) on delete cascade,
+  to_email       text not null check (length(to_email) <= 254),
+  status         text not null default 'pending' check (status in ('pending', 'sending', 'sent', 'failed', 'skipped')),
+  attempts       int  not null default 0,
+  claimed_at     timestamptz,
+  sent_at        timestamptz,
+  last_error     text,
+  created_at     timestamptz not null default now(),
+  unique (appointment_id, kind)
+);
+create index if not exists email_outbox_status_idx on public.email_outbox (status);
+
+-- ---------------------------------------------------------------------------
+-- Helper functions
+-- ---------------------------------------------------------------------------
+
+-- UK-first phone normalisation: "07700 900123" → "447700900123".
+create or replace function public.normalize_uk_phone(p text)
+returns text language plpgsql immutable as $$
+declare d text;
+begin
+  if p is null then return null; end if;
+  d := regexp_replace(p, '\D', '', 'g');
+  if d = '' then return null; end if;
+  if left(d, 2) = '00' then d := substr(d, 3); end if;
+  if left(d, 3) = '440' then d := '44' || substr(d, 4); end if;   -- "+44 (0)7700…"
+  if left(d, 1) = '0' then d := '44' || substr(d, 2);
+  elsif length(d) = 10 and left(d, 1) = '7' then d := '44' || d;
+  end if;
+  return d;
+end $$;
+
+-- Short booking reference used on bank transfers, e.g. "K3Q7XP".
+-- No 0/O/1/I so it can be read out over the phone.
+create or replace function public.gen_reference()
+returns text language sql volatile as $$
+  -- The first 6 bytes of a v4 UUID are fully random; 256 is a multiple of 32,
+  -- so "% 32" picks every character with equal probability.
+  select string_agg(substr('ABCDEFGHJKLMNPQRSTUVWXYZ23456789', 1 + (get_byte(b, i) % 32), 1), '' order by i)
+  from (select uuid_send(gen_random_uuid()) as b) x, generate_series(0, 5) as i
+$$;
+
+create or replace function public.is_owner()
+returns boolean language sql stable security definer set search_path = public as $$
+  select exists (select 1 from public.owner where user_id = auth.uid())
+$$;
+
+create or replace function public.set_updated_at()
+returns trigger language plpgsql as $$
+begin
+  new.updated_at := now();
+  return new;
+end $$;
+
+create or replace function public.clients_before_write()
+returns trigger language plpgsql as $$
+begin
+  new.email := nullif(lower(btrim(new.email)), '');
+  new.phone := nullif(btrim(new.phone), '');
+  new.phone_e164 := public.normalize_uk_phone(new.phone);
+  new.full_name := btrim(new.full_name);
+  new.updated_at := now();
+  return new;
+end $$;
+
+-- Fill in ends_at / busy_until / reference so the owner's app can insert an
+-- appointment with just a start time and a duration.
+create or replace function public.appointments_before_write()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare v_buffer int;
+begin
+  if tg_op = 'INSERT' or new.starts_at is distinct from old.starts_at
+     or new.duration_min is distinct from old.duration_min then
+    new.ends_at := new.starts_at + make_interval(mins => new.duration_min);
+  end if;
+  select buffer_min into v_buffer from public.settings where id = 1;
+  new.busy_until := new.ends_at + make_interval(mins => coalesce(v_buffer, 0));
+  if new.reference is null or new.reference = '' then
+    new.reference := public.gen_reference();
+  end if;
+  if new.status = 'cancelled' and new.cancelled_at is null then
+    new.cancelled_at := now();
+  end if;
+  new.updated_at := now();
+  return new;
+end $$;
+
+drop trigger if exists clients_before_write on public.clients;
+create trigger clients_before_write before insert or update on public.clients
+  for each row execute function public.clients_before_write();
+
+drop trigger if exists appointments_before_write on public.appointments;
+create trigger appointments_before_write before insert or update on public.appointments
+  for each row execute function public.appointments_before_write();
+
+drop trigger if exists settings_updated_at on public.settings;
+create trigger settings_updated_at before update on public.settings
+  for each row execute function public.set_updated_at();
+
+-- ---------------------------------------------------------------------------
+-- Owner set-up
+-- ---------------------------------------------------------------------------
+
+-- The first signed-in user becomes the owner. Everyone after that gets false.
+create or replace function public.claim_owner()
+returns boolean language plpgsql security definer set search_path = public as $$
+begin
+  if auth.uid() is null then
+    raise exception 'not_signed_in';
+  end if;
+  insert into public.owner (id, user_id) values (1, auth.uid()) on conflict (id) do nothing;
+  return exists (select 1 from public.owner where user_id = auth.uid());
+end $$;
+
+-- Lets the sign-in screen decide whether to offer "create the owner account".
+create or replace function public.public_owner_exists()
+returns boolean language sql stable security definer set search_path = public as $$
+  select exists (select 1 from public.owner)
+$$;
+
+-- ---------------------------------------------------------------------------
+-- Public booking functions (callable by anyone with the public key)
+-- ---------------------------------------------------------------------------
+
+create or replace function public.public_booking_info()
+returns jsonb language sql stable security definer set search_path = public as $$
+  select jsonb_build_object(
+    'business_name',          s.business_name,
+    'booking_intro',          s.booking_intro,
+    'location_note',          s.location_note,
+    'cancellation_policy',    s.cancellation_policy,
+    'timezone',               s.timezone,
+    'slot_interval_min',      s.slot_interval_min,
+    'buffer_min',             s.buffer_min,
+    'min_notice_hours',       s.min_notice_hours,
+    'max_days_ahead',         s.max_days_ahead,
+    'deposit_amount_pence',   s.deposit_amount_pence,
+    'deposit_deadline_hours', s.deposit_deadline_hours,
+    'booking_enabled',        s.booking_enabled,
+    'hours', (select coalesce(jsonb_agg(jsonb_build_object(
+                'weekday', h.weekday, 'is_open', h.is_open,
+                'open_time', to_char(h.open_time, 'HH24:MI'), 'close_time', to_char(h.close_time, 'HH24:MI'),
+                'break_start', to_char(h.break_start, 'HH24:MI'), 'break_end', to_char(h.break_end, 'HH24:MI'))
+              order by h.weekday), '[]'::jsonb) from public.opening_hours h),
+    'services', (select coalesce(jsonb_agg(jsonb_build_object(
+                'id', v.id, 'name', v.name, 'description', v.description,
+                'duration_min', v.duration_min, 'price_pence', v.price_pence)
+              order by v.sort_order, v.name), '[]'::jsonb)
+              from public.services v where v.is_active and v.online_bookable)
+  )
+  from public.settings s where s.id = 1
+$$;
+
+-- Busy time ranges between two instants: appointments (including the clean-up
+-- buffer) and time off. No names, no services, nothing personal.
+create or replace function public.public_busy_times(p_from timestamptz, p_to timestamptz)
+returns table (starts_at timestamptz, ends_at timestamptz)
+language plpgsql stable security definer set search_path = public as $$
+begin
+  if p_from is null or p_to is null or p_to <= p_from or p_to - p_from > interval '70 days' then
+    raise exception 'invalid_range';
+  end if;
+  return query
+    select a.starts_at, a.busy_until
+      from public.appointments a
+     where a.status in ('pending_deposit', 'confirmed', 'completed')
+       and tstzrange(a.starts_at, a.busy_until, '[)') && tstzrange(p_from, p_to, '[)')
+    union all
+    select t.starts_at, t.ends_at
+      from public.time_off t
+     where tstzrange(t.starts_at, t.ends_at, '[)') && tstzrange(p_from, p_to, '[)')
+    order by 1;
+end $$;
+
+-- Validate a requested start time against the rules a client must follow.
+-- Raises a short machine-readable error the booking page translates.
+create or replace function public.check_bookable_time(p_starts_at timestamptz, p_duration_min int)
+returns void language plpgsql stable security definer set search_path = public as $$
+declare
+  s        public.settings;
+  h        public.opening_hours;
+  v_local  timestamp;
+  v_day    date;
+  v_end    timestamp;
+begin
+  select * into s from public.settings where id = 1;
+  if p_starts_at is null or date_trunc('minute', p_starts_at) <> p_starts_at then
+    raise exception 'invalid_time';
+  end if;
+  if p_starts_at < now() + make_interval(hours => s.min_notice_hours) then
+    raise exception 'too_soon';
+  end if;
+  if p_starts_at > now() + make_interval(days => s.max_days_ahead) then
+    raise exception 'too_far';
+  end if;
+  v_local := p_starts_at at time zone s.timezone;
+  v_day   := v_local::date;
+  v_end   := v_local + make_interval(mins => p_duration_min);
+  select * into h from public.opening_hours where weekday = extract(isodow from v_local)::int;
+  if not found or not h.is_open then
+    raise exception 'closed';
+  end if;
+  if v_local < v_day + h.open_time or v_end > v_day + h.close_time then
+    raise exception 'outside_hours';
+  end if;
+  if (extract(epoch from (v_local - (v_day + h.open_time)))::int / 60) % s.slot_interval_min <> 0 then
+    raise exception 'invalid_time';
+  end if;
+  if h.break_start is not null and v_local < v_day + h.break_end and v_end > v_day + h.break_start then
+    raise exception 'outside_hours';
+  end if;
+  if exists (select 1 from public.time_off t
+              where tstzrange(t.starts_at, t.ends_at, '[)')
+                 && tstzrange(p_starts_at, p_starts_at + make_interval(mins => p_duration_min), '[)')) then
+    raise exception 'slot_taken';
+  end if;
+end $$;
+
+create or replace function public.public_create_booking(
+  p_service_id     uuid,
+  p_starts_at      timestamptz,
+  p_full_name      text,
+  p_email          text,
+  p_phone          text,
+  p_notes          text    default null,
+  p_consultation   jsonb   default null,
+  p_health_consent boolean default false,
+  p_signed_name    text    default null
+)
+returns jsonb language plpgsql volatile security definer set search_path = public as $$
+declare
+  s         public.settings;
+  v_service public.services;
+  v_client  public.clients;
+  v_appt    public.appointments;
+  v_name    text := btrim(coalesce(p_full_name, ''));
+  v_email   text := lower(btrim(coalesce(p_email, '')));
+  v_phone   text := public.normalize_uk_phone(p_phone);
+  v_is_new  boolean;
+  v_deposit int;
+begin
+  select * into s from public.settings where id = 1;
+  if not s.booking_enabled then raise exception 'booking_disabled'; end if;
+
+  if length(v_name) < 2 or length(v_name) > 100 then raise exception 'invalid_name'; end if;
+  if length(v_email) > 254 or v_email !~ '^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$' then
+    raise exception 'invalid_email';
+  end if;
+  if v_phone is null or length(v_phone) not between 10 and 15 then raise exception 'invalid_phone'; end if;
+  if length(coalesce(p_notes, '')) > 1000 then raise exception 'invalid_notes'; end if;
+
+  select * into v_service from public.services
+   where id = p_service_id and is_active and online_bookable;
+  if not found then raise exception 'invalid_service'; end if;
+
+  perform public.check_bookable_time(p_starts_at, v_service.duration_min);
+
+  -- Match an existing client by email first, then by phone.
+  select * into v_client from public.clients where lower(email) = v_email limit 1;
+  if not found then
+    select * into v_client from public.clients where phone_e164 = v_phone order by created_at limit 1;
+  end if;
+
+  if not found then
+    begin
+      insert into public.clients (full_name, email, phone)
+      values (v_name, v_email, btrim(p_phone))
+      returning * into v_client;
+    exception when unique_violation then
+      -- Two bookings with the same new email arrived at the same moment.
+      select * into v_client from public.clients where lower(email) = v_email;
+    end;
+  else
+    update public.clients
+       set email = coalesce(email, v_email),
+           phone = coalesce(phone, btrim(p_phone))
+     where id = v_client.id
+    returning * into v_client;
+  end if;
+
+  -- "New" means: has never had a completed appointment. Someone who booked
+  -- before but never turned up still pays a deposit.
+  v_is_new := not exists (select 1 from public.appointments
+                           where client_id = v_client.id and status = 'completed');
+
+  -- A light brake on spam: three upcoming online bookings per client at most.
+  if (select count(*) from public.appointments
+       where client_id = v_client.id and starts_at > now()
+         and status in ('pending_deposit', 'confirmed')) >= 3 then
+    raise exception 'too_many_bookings';
+  end if;
+
+  v_deposit := case when v_is_new then s.deposit_amount_pence else 0 end;
+
+  begin
+    insert into public.appointments (
+      client_id, service_id, service_name, price_pence, duration_min, starts_at, ends_at, busy_until,
+      status, source, booking_name, is_new_client, deposit_required_pence, deposit_due_at,
+      reference, client_notes)
+    values (
+      v_client.id, v_service.id, v_service.name, v_service.price_pence, v_service.duration_min,
+      p_starts_at, p_starts_at, p_starts_at,             -- ends_at / busy_until recomputed by trigger
+      case when v_deposit > 0 then 'pending_deposit' else 'confirmed' end,
+      'online', v_name, v_is_new, v_deposit,
+      case when v_deposit > 0 then least(now() + make_interval(hours => s.deposit_deadline_hours), p_starts_at) end,
+      '', nullif(btrim(coalesce(p_notes, '')), ''))
+    returning * into v_appt;
+  exception when exclusion_violation then
+    raise exception 'slot_taken';
+  end;
+
+  if p_consultation is not null then
+    if jsonb_typeof(p_consultation) <> 'object' or pg_column_size(p_consultation) >= 20000 then
+      raise exception 'invalid_form';
+    end if;
+    if not coalesce(p_health_consent, false) then raise exception 'consent_required'; end if;
+    if length(btrim(coalesce(p_signed_name, ''))) < 2 then raise exception 'signature_required'; end if;
+    insert into public.consultation_forms (client_id, appointment_id, answers, health_consent, signed_name)
+    values (v_client.id, v_appt.id, p_consultation, true, left(btrim(p_signed_name), 100));
+  end if;
+
+  insert into public.email_outbox (kind, appointment_id, to_email)
+  values ('booking_received', v_appt.id, v_email)
+  on conflict do nothing;
+
+  if coalesce(s.owner_email, '') <> '' then
+    insert into public.email_outbox (kind, appointment_id, to_email)
+    values ('owner_new_booking', v_appt.id, s.owner_email)
+    on conflict do nothing;
+  end if;
+
+  -- Deliberately does not say whether the person was recognised as an
+  -- existing client: that would let anyone test whether someone is a client.
+  return jsonb_build_object('reference', v_appt.reference, 'starts_at', v_appt.starts_at);
+end $$;
+
+-- Consultation form link sent by email to new clients who did not fill it in
+-- while booking.
+create or replace function public.public_get_form(p_token uuid)
+returns jsonb language sql stable security definer set search_path = public as $$
+  select jsonb_build_object(
+    'business_name', s.business_name,
+    'first_name',    split_part(c.full_name, ' ', 1),
+    'service_name',  a.service_name,
+    'starts_at',     a.starts_at,
+    'submitted',     exists (select 1 from public.consultation_forms f where f.appointment_id = a.id))
+  from public.appointments a
+  join public.clients c on c.id = a.client_id
+  cross join public.settings s
+  where a.public_token = p_token
+    and s.id = 1
+    and a.status in ('pending_deposit', 'confirmed')
+    and a.starts_at > now() - interval '1 day'
+$$;
+
+create or replace function public.public_submit_form(
+  p_token uuid, p_answers jsonb, p_health_consent boolean, p_signed_name text)
+returns boolean language plpgsql volatile security definer set search_path = public as $$
+declare v_appt public.appointments;
+begin
+  select * into v_appt from public.appointments
+   where public_token = p_token
+     and status in ('pending_deposit', 'confirmed')
+     and starts_at > now() - interval '1 day';
+  if not found then raise exception 'not_found'; end if;
+  if exists (select 1 from public.consultation_forms where appointment_id = v_appt.id) then
+    raise exception 'already_submitted';
+  end if;
+  if p_answers is null or jsonb_typeof(p_answers) <> 'object' or pg_column_size(p_answers) >= 20000 then
+    raise exception 'invalid_form';
+  end if;
+  if not coalesce(p_health_consent, false) then raise exception 'consent_required'; end if;
+  if length(btrim(coalesce(p_signed_name, ''))) < 2 then raise exception 'signature_required'; end if;
+  insert into public.consultation_forms (client_id, appointment_id, answers, health_consent, signed_name)
+  values (v_appt.client_id, v_appt.id, p_answers, true, left(btrim(p_signed_name), 100));
+  return true;
+end $$;
+
+-- ---------------------------------------------------------------------------
+-- Owner actions that must happen together (all-or-nothing)
+-- ---------------------------------------------------------------------------
+
+create or replace function public.owner_mark_deposit_paid(p_appointment_id uuid, p_method text)
+returns public.appointments language plpgsql volatile security definer set search_path = public as $$
+declare
+  v_appt   public.appointments;
+  v_client public.clients;
+  s        public.settings;
+begin
+  if not public.is_owner() then raise exception 'not_allowed'; end if;
+  if p_method not in ('cash', 'bank_transfer') then raise exception 'invalid_method'; end if;
+  select * into s from public.settings where id = 1;
+  select * into v_appt from public.appointments where id = p_appointment_id for update;
+  if not found then raise exception 'not_found'; end if;
+  if v_appt.status <> 'pending_deposit' then raise exception 'not_pending_deposit'; end if;
+  select * into v_client from public.clients where id = v_appt.client_id;
+
+  update public.appointments
+     set status = 'confirmed', deposit_paid_at = now()
+   where id = v_appt.id
+  returning * into v_appt;
+
+  if v_appt.deposit_required_pence > 0 then
+    insert into public.payments (appointment_id, client_id, client_name, description, amount_pence, method, kind, paid_on)
+    values (v_appt.id, v_client.id, v_client.full_name, 'Deposit · ' || v_appt.service_name,
+            v_appt.deposit_required_pence, p_method, 'deposit', (now() at time zone s.timezone)::date);
+  end if;
+
+  if coalesce(v_client.email, '') <> '' then
+    insert into public.email_outbox (kind, appointment_id, to_email)
+    values ('deposit_received', v_appt.id, v_client.email)
+    on conflict do nothing;
+  end if;
+  return v_appt;
+end $$;
+
+-- Finish an appointment and record what was paid on the day (the deposit, if
+-- any, was recorded when it arrived, so only pass the balance here).
+create or replace function public.owner_complete_appointment(
+  p_appointment_id uuid, p_amount_pence int, p_method text, p_tip_pence int default 0, p_note text default null)
+returns public.appointments language plpgsql volatile security definer set search_path = public as $$
+declare
+  v_appt   public.appointments;
+  v_client public.clients;
+  s        public.settings;
+  v_today  date;
+begin
+  if not public.is_owner() then raise exception 'not_allowed'; end if;
+  if p_method not in ('cash', 'bank_transfer') then raise exception 'invalid_method'; end if;
+  if coalesce(p_amount_pence, 0) < 0 or coalesce(p_tip_pence, 0) < 0 then raise exception 'invalid_amount'; end if;
+  select * into s from public.settings where id = 1;
+  v_today := (now() at time zone s.timezone)::date;
+  select * into v_appt from public.appointments where id = p_appointment_id for update;
+  if not found then raise exception 'not_found'; end if;
+  if v_appt.status not in ('confirmed', 'pending_deposit') then raise exception 'not_completable'; end if;
+  select * into v_client from public.clients where id = v_appt.client_id;
+
+  update public.appointments set status = 'completed' where id = v_appt.id returning * into v_appt;
+
+  if coalesce(p_amount_pence, 0) > 0 then
+    insert into public.payments (appointment_id, client_id, client_name, description, amount_pence, method, kind, paid_on, note)
+    values (v_appt.id, v_client.id, v_client.full_name, v_appt.service_name, p_amount_pence, p_method, 'payment', v_today,
+            nullif(btrim(coalesce(p_note, '')), ''));
+  end if;
+  if coalesce(p_tip_pence, 0) > 0 then
+    insert into public.payments (appointment_id, client_id, client_name, description, amount_pence, method, kind, paid_on)
+    values (v_appt.id, v_client.id, v_client.full_name, 'Tip · ' || v_appt.service_name, p_tip_pence, p_method, 'tip', v_today);
+  end if;
+  return v_appt;
+end $$;
+
+create or replace function public.owner_cancel_appointment(
+  p_appointment_id uuid, p_reason text default null, p_notify boolean default true)
+returns public.appointments language plpgsql volatile security definer set search_path = public as $$
+declare
+  v_appt   public.appointments;
+  v_client public.clients;
+begin
+  if not public.is_owner() then raise exception 'not_allowed'; end if;
+  select * into v_appt from public.appointments where id = p_appointment_id for update;
+  if not found then raise exception 'not_found'; end if;
+  if v_appt.status not in ('pending_deposit', 'confirmed') then raise exception 'not_cancellable'; end if;
+  select * into v_client from public.clients where id = v_appt.client_id;
+
+  update public.appointments
+     set status = 'cancelled', cancelled_at = now(), cancel_reason = nullif(btrim(coalesce(p_reason, '')), '')
+   where id = v_appt.id
+  returning * into v_appt;
+
+  -- Any reminder still waiting is no longer wanted.
+  update public.email_outbox set status = 'skipped'
+   where appointment_id = v_appt.id and status = 'pending' and kind <> 'cancelled';
+
+  if p_notify and coalesce(v_client.email, '') <> '' then
+    insert into public.email_outbox (kind, appointment_id, to_email)
+    values ('cancelled', v_appt.id, v_client.email)
+    on conflict do nothing;
+  end if;
+  return v_appt;
+end $$;
+
+-- Queue (or re-queue) a confirmation email for an appointment the owner made.
+create or replace function public.owner_queue_email(p_appointment_id uuid, p_kind text)
+returns boolean language plpgsql volatile security definer set search_path = public as $$
+declare v_email text;
+begin
+  if not public.is_owner() then raise exception 'not_allowed'; end if;
+  if p_kind not in ('booking_received', 'deposit_received', 'reminder') then raise exception 'invalid_kind'; end if;
+  select c.email into v_email
+    from public.appointments a join public.clients c on c.id = a.client_id
+   where a.id = p_appointment_id and a.status in ('pending_deposit', 'confirmed');
+  if coalesce(v_email, '') = '' then raise exception 'no_email'; end if;
+  insert into public.email_outbox (kind, appointment_id, to_email)
+  values (p_kind, p_appointment_id, v_email)
+  on conflict (appointment_id, kind) do update
+     set status = 'pending', attempts = 0, last_error = null, to_email = excluded.to_email,
+         claimed_at = null, sent_at = null;
+  return true;
+end $$;
+
+-- ---------------------------------------------------------------------------
+-- Email sender (Apps Script) functions — protected by a shared secret
+-- ---------------------------------------------------------------------------
+
+create or replace function public.email_secret_ok(p_secret text)
+returns boolean language sql stable security definer set search_path = public as $$
+  select coalesce(p_secret, '') <> ''
+     and exists (select 1 from public.settings
+                  where id = 1
+                    and email_secret_hash = encode(sha256(convert_to(p_secret, 'UTF8')), 'hex'))
+$$;
+
+-- Queue any reminders that are now due, then hand over up to 50 emails to send.
+create or replace function public.email_jobs_claim(p_secret text)
+returns jsonb language plpgsql volatile security definer set search_path = public as $$
+declare
+  s      public.settings;
+  v_jobs jsonb;
+begin
+  if not public.email_secret_ok(p_secret) then raise exception 'unauthorized'; end if;
+  update public.settings set email_last_poll_at = now() where id = 1 returning * into s;
+
+  -- Reminders: confirmed appointments starting within the reminder window,
+  -- booked before that window opened (a last-minute booking has only just had
+  -- its confirmation), and at least two hours away.
+  insert into public.email_outbox (kind, appointment_id, to_email)
+  select 'reminder', a.id, c.email
+    from public.appointments a
+    join public.clients c on c.id = a.client_id
+   where a.status = 'confirmed'
+     and coalesce(c.email, '') <> ''
+     and a.starts_at >  now() + interval '2 hours'
+     and a.starts_at <= now() + make_interval(hours => s.reminder_hours_before)
+     and a.created_at < a.starts_at - make_interval(hours => s.reminder_hours_before)
+  on conflict (appointment_id, kind) do nothing;
+
+  -- Anything about an appointment that has since been cancelled is dropped
+  -- (except the cancellation notice itself).
+  update public.email_outbox o set status = 'skipped'
+    from public.appointments a
+   where a.id = o.appointment_id
+     and o.status in ('pending', 'sending')
+     and o.kind <> 'cancelled'
+     and a.status in ('cancelled', 'no_show');
+
+  with claimed as (
+    update public.email_outbox o
+       set status = 'sending', claimed_at = now(), attempts = o.attempts + 1
+     where o.id in (
+       select id from public.email_outbox
+        where (status = 'pending' or (status = 'sending' and claimed_at < now() - interval '15 minutes'))
+          and attempts < 5
+        order by id
+        limit 50
+        for update skip locked)
+    returning o.*
+  )
+  select coalesce(jsonb_agg(jsonb_build_object(
+           'id',                     cl.id,
+           'kind',                   cl.kind,
+           'to',                     cl.to_email,
+           'reference',              a.reference,
+           'status',                 a.status,
+           'client_name',            c.full_name,
+           'first_name',             split_part(c.full_name, ' ', 1),
+           'service_name',           a.service_name,
+           'price_pence',            a.price_pence,
+           'starts_at',              a.starts_at,
+           'ends_at',                a.ends_at,
+           'is_new_client',          a.is_new_client,
+           'deposit_required_pence', a.deposit_required_pence,
+           'deposit_due_at',         a.deposit_due_at,
+           'client_notes',           a.client_notes,
+           'client_phone',           c.phone,
+           'client_email',           c.email,
+           'form_needed',            a.is_new_client and not exists (
+                                       select 1 from public.consultation_forms f where f.client_id = a.client_id),
+           'form_url',               case when coalesce(s.public_site_url, '') <> ''
+                                          then rtrim(s.public_site_url, '/') || '/form/' || a.public_token end,
+           'cancel_reason',          a.cancel_reason
+         ) order by cl.id), '[]'::jsonb)
+    into v_jobs
+    from claimed cl
+    join public.appointments a on a.id = cl.appointment_id
+    join public.clients c on c.id = a.client_id;
+
+  return jsonb_build_object(
+    'settings', jsonb_build_object(
+      'business_name',       s.business_name,
+      'owner_email',         s.owner_email,
+      'owner_phone',         s.owner_phone,
+      'address',             s.address,
+      'timezone',            s.timezone,
+      'cancellation_policy', s.cancellation_policy,
+      'bank_account_name',   s.bank_account_name,
+      'bank_sort_code',      s.bank_sort_code,
+      'bank_account_number', s.bank_account_number,
+      'public_site_url',     s.public_site_url),
+    'jobs', v_jobs);
+end $$;
+
+-- p_results: [{"id": 12, "ok": true}, {"id": 13, "ok": false, "error": "…"}]
+create or replace function public.email_jobs_report(p_secret text, p_results jsonb)
+returns int language plpgsql volatile security definer set search_path = public as $$
+declare
+  r       jsonb;
+  v_count int := 0;
+  v_row   public.email_outbox;
+  v_hit   boolean;
+begin
+  if not public.email_secret_ok(p_secret) then raise exception 'unauthorized'; end if;
+  if p_results is null or jsonb_typeof(p_results) <> 'array' then raise exception 'invalid_results'; end if;
+  for r in select * from jsonb_array_elements(p_results) loop
+    if coalesce((r->>'ok')::boolean, false) then
+      update public.email_outbox
+         set status = 'sent', sent_at = now(), last_error = null
+       where id = (r->>'id')::bigint and status = 'sending'
+      returning * into v_row;
+      v_hit := found;
+      if v_hit and v_row.kind = 'reminder' then
+        update public.appointments set reminder_email_sent_at = now() where id = v_row.appointment_id;
+      end if;
+    else
+      update public.email_outbox
+         set status = case when attempts >= 5 then 'failed' else 'pending' end,
+             last_error = left(coalesce(r->>'error', 'unknown error'), 500)
+       where id = (r->>'id')::bigint and status = 'sending'
+      returning * into v_row;
+      v_hit := found;
+    end if;
+    if v_hit then v_count := v_count + 1; end if;
+  end loop;
+  return v_count;
+end $$;
+
+-- ---------------------------------------------------------------------------
+-- Row Level Security: the owner, and only the owner, can touch the tables
+-- ---------------------------------------------------------------------------
+
+do $$
+declare t text;
+begin
+  foreach t in array array['owner', 'settings', 'opening_hours', 'services', 'clients', 'patch_tests',
+                           'appointments', 'consultation_forms', 'time_off', 'payments',
+                           'client_photos', 'email_outbox']
+  loop
+    execute format('alter table public.%I enable row level security', t);
+    execute format('drop policy if exists owner_all on public.%I', t);
+    execute format('create policy owner_all on public.%I for all to authenticated
+                      using (public.is_owner()) with check (public.is_owner())', t);
+    -- Belt and braces: the public key gets no table access at all.
+    execute format('revoke all on public.%I from anon', t);
+  end loop;
+end $$;
+
+-- Explicit grants. Newer Supabase projects no longer grant table access to the
+-- API roles automatically, so say it out loud: the signed-in owner gets table
+-- access (still filtered by the policies above); the public key gets none.
+grant usage on schema public to anon, authenticated;
+grant select, insert, update, delete on all tables in schema public to authenticated;
+grant usage, select on all sequences in schema public to authenticated;
+
+-- The owner row itself is read-only from the app (claim_owner() writes it).
+revoke insert, update, delete on public.owner from authenticated;
+
+-- ---------------------------------------------------------------------------
+-- Who may call which function
+-- ---------------------------------------------------------------------------
+
+revoke execute on all functions in schema public from public;
+revoke execute on all functions in schema public from anon;
+
+grant execute on function public.public_owner_exists()                       to anon, authenticated;
+grant execute on function public.public_booking_info()                       to anon, authenticated;
+grant execute on function public.public_busy_times(timestamptz, timestamptz) to anon, authenticated;
+grant execute on function public.public_create_booking(uuid, timestamptz, text, text, text, text, jsonb, boolean, text)
+                                                                              to anon, authenticated;
+grant execute on function public.public_get_form(uuid)                       to anon, authenticated;
+grant execute on function public.public_submit_form(uuid, jsonb, boolean, text) to anon, authenticated;
+grant execute on function public.email_jobs_claim(text)                      to anon;
+grant execute on function public.email_jobs_report(text, jsonb)              to anon;
+
+grant execute on function public.is_owner()                                  to authenticated;
+grant execute on function public.claim_owner()                               to authenticated;
+grant execute on function public.normalize_uk_phone(text)                    to authenticated;
+grant execute on function public.gen_reference()                             to authenticated;
+grant execute on function public.owner_mark_deposit_paid(uuid, text)         to authenticated;
+grant execute on function public.owner_complete_appointment(uuid, int, text, int, text) to authenticated;
+grant execute on function public.owner_cancel_appointment(uuid, text, boolean) to authenticated;
+grant execute on function public.owner_queue_email(uuid, text)               to authenticated;

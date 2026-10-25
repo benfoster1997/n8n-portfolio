@@ -1,0 +1,165 @@
+// Small text helpers: phone numbers, money, WhatsApp links and message templates.
+import type { Appointment, Settings } from './types';
+import { fmtDayLong, fmtTime } from './time';
+
+/** "07700 900123" → "447700900123". Same rules as public.normalize_uk_phone(). */
+export function normalizeUkPhone(p: string | null | undefined): string | null {
+  if (!p) return null;
+  let d = p.replace(/\D/g, '');
+  if (!d) return null;
+  if (d.startsWith('00')) d = d.slice(2);
+  if (d.startsWith('440')) d = '44' + d.slice(3);
+  if (d.startsWith('0')) d = '44' + d.slice(1);
+  else if (d.length === 10 && d.startsWith('7')) d = '44' + d;
+  return d;
+}
+
+export function isPlausiblePhone(p: string): boolean {
+  const n = normalizeUkPhone(p);
+  return !!n && n.length >= 10 && n.length <= 15;
+}
+
+export function isPlausibleEmail(e: string): boolean {
+  return e.length <= 254 && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e.trim());
+}
+
+/** 2500 → "£25", 2550 → "£25.50" */
+export function money(pence: number): string {
+  const neg = pence < 0;
+  const abs = Math.abs(pence);
+  const s = abs % 100 === 0 ? `£${(abs / 100).toLocaleString('en-GB')}` : `£${(abs / 100).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return neg ? `−${s}` : s;
+}
+
+/** Always two decimals, for reports: 2500 → "25.00" */
+export function moneyPlain(pence: number): string {
+  return (pence / 100).toFixed(2);
+}
+
+/** "25", "25.5", "£25.50" → 2550. Returns null if it isn't a sensible amount. */
+export function parsePounds(input: string): number | null {
+  const t = input.replace(/[£,\s]/g, '');
+  if (!/^\d+(\.\d{1,2})?$/.test(t)) return null;
+  const pence = Math.round(parseFloat(t) * 100);
+  return Number.isFinite(pence) ? pence : null;
+}
+
+/** A link that opens WhatsApp with the message ready to send. */
+export function whatsappLink(phoneE164: string, text: string): string {
+  return `https://wa.me/${phoneE164.replace(/\D/g, '')}?text=${encodeURIComponent(text)}`;
+}
+
+export function firstName(fullName: string | null | undefined): string {
+  return (fullName ?? '').trim().split(/\s+/)[0] ?? '';
+}
+
+export const DEFAULT_TEMPLATES = {
+  reminder:
+    'Hi {first_name}! Just a reminder of your {service} appointment on {date} at {time}. See you then! 💅\n{business}',
+  deposit:
+    'Hi {first_name}, thanks for booking {service} on {date} at {time}. To secure your appointment please send the {deposit} deposit by bank transfer:\n\n' +
+    'Name: {bank_name}\nSort code: {sort_code}\nAccount: {account_number}\nReference: {reference}\n\n' +
+    'Thank you! {business}',
+  confirmed:
+    "Hi {first_name}, you're booked in for {service} on {date} at {time}. See you soon!\n{business}",
+} as const;
+
+export type TemplateKind = keyof typeof DEFAULT_TEMPLATES;
+
+export function templateFor(kind: TemplateKind, s: Settings): string {
+  const custom = kind === 'reminder' ? s.wa_template_reminder : kind === 'deposit' ? s.wa_template_deposit : s.wa_template_confirmed;
+  return custom && custom.trim() ? custom : DEFAULT_TEMPLATES[kind];
+}
+
+/** Fill {placeholders} in a message template for one appointment. Unknown placeholders are left as typed. */
+export function fillTemplate(template: string, a: Appointment, s: Settings): string {
+  const values: Record<string, string> = {
+    first_name: firstName(a.client?.full_name ?? a.booking_name),
+    name: a.client?.full_name ?? a.booking_name ?? '',
+    service: a.service_name,
+    date: fmtDayLong(a.starts_at, s.timezone),
+    time: fmtTime(a.starts_at, s.timezone),
+    business: s.business_name,
+    deposit: money(a.deposit_required_pence || s.deposit_amount_pence),
+    price: money(a.price_pence),
+    reference: a.reference,
+    bank_name: s.bank_account_name ?? '',
+    sort_code: s.bank_sort_code ?? '',
+    account_number: s.bank_account_number ?? '',
+  };
+  return template.replace(/\{(\w+)\}/g, (whole, key: string) => (key in values ? values[key] : whole));
+}
+
+export const TEMPLATE_PLACEHOLDERS = [
+  '{first_name}', '{name}', '{service}', '{date}', '{time}', '{price}', '{deposit}',
+  '{reference}', '{bank_name}', '{sort_code}', '{account_number}', '{business}',
+];
+
+/** Turn rows into a CSV that Excel and Google Sheets open cleanly (UTF-8 with BOM). */
+export function toCsv(rows: (string | number | null | undefined)[][]): string {
+  const esc = (v: string | number | null | undefined) => {
+    const s = v === null || v === undefined ? '' : String(v);
+    // Guard against spreadsheet formula injection from client-entered text.
+    const safe = /^[=+\-@\t\r]/.test(s) && !/^-?\d+(\.\d+)?$/.test(s) ? `'${s}` : s;
+    return /[",\n\r]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
+  };
+  return '﻿' + rows.map((r) => r.map(esc).join(',')).join('\r\n') + '\r\n';
+}
+
+export function downloadText(filename: string, text: string, type = 'text/csv;charset=utf-8') {
+  const blob = new Blob([text], { type });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/** UK tax year containing a date: 6 April to 5 April. */
+export function taxYearOf(dateStr: string): { label: string; from: string; to: string } {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const startYear = m > 4 || (m === 4 && d >= 6) ? y : y - 1;
+  return {
+    label: `${startYear}–${String((startYear + 1) % 100).padStart(2, '0')}`,
+    from: `${startYear}-04-06`,
+    to: `${startYear + 1}-04-05`,
+  };
+}
+
+/** Friendly wording for the short error codes the database raises. */
+export function friendlyError(e: unknown): string {
+  const msg = e instanceof Error ? e.message : typeof e === 'object' && e && 'message' in e ? String((e as { message: unknown }).message) : String(e);
+  const known: Record<string, string> = {
+    slot_taken: 'Sorry, that time has just been taken. Please pick another.',
+    too_soon: 'That time is too soon to book online. Please pick a later time.',
+    too_far: 'That date is too far ahead to book yet.',
+    closed: "Sorry, we're closed that day.",
+    outside_hours: "That time is outside opening hours.",
+    invalid_time: 'Please pick one of the times shown.',
+    invalid_name: 'Please enter your full name.',
+    invalid_email: 'Please check your email address.',
+    invalid_phone: 'Please check your mobile number.',
+    invalid_notes: 'Your note is too long — please shorten it.',
+    invalid_service: "That treatment isn't available to book online any more.",
+    too_many_bookings: 'You already have three upcoming bookings. Please get in touch to book more.',
+    booking_disabled: 'Online booking is paused at the moment. Please get in touch directly.',
+    consent_required: 'Please tick the box to agree to your health information being stored.',
+    signature_required: 'Please type your full name to sign the form.',
+    already_submitted: 'This form has already been filled in. Thank you!',
+    not_found: "This link has expired or isn't valid.",
+    not_allowed: "You're not signed in as the owner.",
+    not_pending_deposit: 'That booking is not waiting for a deposit.',
+    not_cancellable: 'Only upcoming bookings can be cancelled.',
+    not_completable: 'That appointment is already finished or cancelled.',
+    no_email: "This client doesn't have an email address saved.",
+    appointments_no_overlap: 'That clashes with another appointment (including the clean-up time).',
+    clients_email_unique: 'A client with that email address already exists — search for them instead.',
+    'Invalid login credentials': 'That email and password don’t match.',
+    'Failed to fetch': "Can't reach the server — check your internet connection.",
+  };
+  for (const [code, text] of Object.entries(known)) if (msg.includes(code)) return text;
+  return msg || 'Something went wrong. Please try again.';
+}
