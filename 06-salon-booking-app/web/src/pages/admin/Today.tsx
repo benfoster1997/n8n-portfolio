@@ -43,7 +43,9 @@ export function Today() {
     try {
       if (navigator.share) await navigator.share({ title: s.business_name, text: 'Book your appointment online', url: bookingUrl });
       else { await navigator.clipboard.writeText(bookingUrl); toast('Booking link copied'); }
-    } catch { /* share sheet closed */ }
+    } catch (e) {
+      if (!(e instanceof DOMException && e.name === 'AbortError')) window.prompt('Copy your booking link:', bookingUrl);
+    }
   }
 
   return (

@@ -7,7 +7,7 @@ import { ErrorBox, Field, Icon, Seg, Sheet, Spinner, TopBar, useAction, useLoad,
 import { describeAnswers } from '../../lib/consultation';
 import { shrinkImage } from '../../lib/image';
 import { fmtDay, fmtDayTime, todayInZone } from '../../lib/time';
-import { money, whatsappLink, firstName } from '../../lib/text';
+import { firstName, friendlyError, money, whatsappLink } from '../../lib/text';
 import type { ClientPhoto, ConsultationForm, PatchTest } from '../../lib/types';
 import { ClientSheet } from './Clients';
 
@@ -57,7 +57,8 @@ export function ClientView() {
       for (const f of Array.from(files)) await api.uploadPhoto(c!.id, await shrinkImage(f), null, todayInZone(tz));
     });
     if (fileRef.current) fileRef.current.value = '';
-    if (ok) { toast(files.length > 1 ? `${files.length} photos added` : 'Photo added'); reload(); }
+    if (ok) toast(files.length > 1 ? `${files.length} photos added` : 'Photo added');
+    reload(); // show whatever did upload, even if one failed
   }
 
   return (
@@ -238,6 +239,7 @@ export function ClientView() {
 }
 
 function PatchRow({ t, onDeleted }: { t: PatchTest; onDeleted: () => void }) {
+  const toast = useToast();
   const label = t.result === 'pass' ? 'No reaction' : t.result === 'reaction' ? 'Reaction' : 'Waiting for result';
   return (
     <li className="row spread" style={{ padding: '8px 0' }}>
@@ -246,7 +248,10 @@ function PatchRow({ t, onDeleted }: { t: PatchTest; onDeleted: () => void }) {
         <div className="sub">{[t.product, t.notes].filter(Boolean).join(' · ')}</div>
       </div>
       <button className="icon-btn" aria-label="Delete patch test"
-        onClick={async () => { if (window.confirm('Delete this patch test record?')) { await api.deletePatchTest(t.id); onDeleted(); } }}>
+        onClick={async () => {
+          if (!window.confirm('Delete this patch test record?')) return;
+          try { await api.deletePatchTest(t.id); onDeleted(); } catch (e) { toast(friendlyError(e)); }
+        }}>
         <Icon name="trash" size={20} />
       </button>
     </li>

@@ -30,8 +30,10 @@ no card processor, no SMS and no paid WhatsApp.
   notice periods and time off. It also holds the security model. Every table is owner-only under
   Row Level Security. The public booking page can only call a handful of `public_*` functions, and
   they never reveal who has booked or whether someone is an existing client.
-- **`web/`** is the app: Vite, React and TypeScript, installable from the home screen. With no
-  Supabase configured it runs a **demo** on invented data kept in the browser.
+- **`web/`** is the app: Vite, React and TypeScript, installable from the home screen. In
+  development, or with `VITE_DEMO=1`, it runs a **demo** on invented data kept in the browser. A
+  production build with no database settings refuses to start, so it can't quietly take
+  bookings that go nowhere.
 - **`apps-script/Code.gs`** sends email from the owner's own Gmail using `MailApp`, which can
   send mail but not read it.
 

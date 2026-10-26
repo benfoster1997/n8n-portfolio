@@ -5,7 +5,7 @@ import { resetDemo } from '../../api/demoApi';
 import { useOwner } from '../../components/owner';
 import { BlockTimeSheet } from './Diary';
 import { ErrorBox, Field, Icon, Sheet, Spinner, TopBar, useAction, useLoad, useToast } from '../../components/ui';
-import { DEFAULT_TEMPLATES, TEMPLATE_PLACEHOLDERS, downloadText, isPlausibleEmail, money, parsePounds } from '../../lib/text';
+import { DEFAULT_TEMPLATES, TEMPLATE_PLACEHOLDERS, downloadText, friendlyError, isPlausibleEmail, money, parsePounds } from '../../lib/text';
 import { WEEKDAY_NAMES, fmtDayTime, minutesLabel, todayInZone } from '../../lib/time';
 import type { OpeningHours, Service, Settings as S } from '../../lib/types';
 
@@ -269,6 +269,7 @@ function ServiceSheet({ initial, onClose, onSaved }: { initial: Partial<Service>
 
 export function TimeOffSettings() {
   const { settings: s } = useOwner();
+  const toast = useToast();
   const tz = s.timezone;
   const { data, error, loading, reload } = useLoad(() => api.listTimeOff(new Date().toISOString()), []);
   const [adding, setAdding] = useState(false);
@@ -282,7 +283,10 @@ export function TimeOffSettings() {
           <ul className="list">{(data ?? []).map((t) => (
             <li key={t.id} className="list-row">
               <div className="grow"><div className="title">{t.note || 'Time off'}</div><div className="meta">{fmtDayTime(t.starts_at, tz)} → {fmtDayTime(t.ends_at, tz)}</div></div>
-              <button className="icon-btn" aria-label="Remove" onClick={async () => { if (window.confirm('Remove this time off? Clients will be able to book it.')) { await api.deleteTimeOff(t.id); reload(); } }}><Icon name="trash" size={20} /></button>
+              <button className="icon-btn" aria-label="Remove" onClick={async () => {
+                if (!window.confirm('Remove this time off? Clients will be able to book it.')) return;
+                try { await api.deleteTimeOff(t.id); reload(); } catch (e) { toast(friendlyError(e)); }
+              }}><Icon name="trash" size={20} /></button>
             </li>
           ))}</ul>
         )}
@@ -333,7 +337,9 @@ export function EmailSettings() {
   const toast = useToast();
   const url = import.meta.env.VITE_SUPABASE_URL as string | undefined;
   const key = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
-  const copy = async (t: string, what: string) => { await navigator.clipboard?.writeText(t); toast(`${what} copied`); };
+  const copy = async (t: string, what: string) => {
+    try { await navigator.clipboard.writeText(t); toast(`${what} copied`); } catch { window.prompt(`Copy the ${what.toLowerCase()}:`, t); }
+  };
 
   async function makeSecret() {
     if (s.email_secret_hash && !window.confirm('Make a new secret? The old one stops working, so you’ll need to paste the new one into the email script.')) return;

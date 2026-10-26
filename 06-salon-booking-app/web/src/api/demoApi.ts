@@ -361,6 +361,8 @@ export function demoApi(): Api {
         next.starts_at = new Date(next.starts_at).toISOString();
         next.ends_at = new Date(new Date(next.starts_at).getTime() + next.duration_min * 60e3).toISOString();
         if (ACTIVE.has(next.status) && clash(next.starts_at, next.duration_min, id)) fail('appointments_no_overlap');
+        if (next.starts_at !== cur.starts_at) { next.reminder_email_sent_at = null; next.whatsapp_reminder_sent_at = null; }
+        if (next.deposit_due_at && next.deposit_due_at > next.starts_at) next.deposit_due_at = next.starts_at;
       }
       db.appointments[i] = withBusy(next);
       commit();

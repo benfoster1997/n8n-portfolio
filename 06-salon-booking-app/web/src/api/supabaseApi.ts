@@ -10,10 +10,18 @@ const APPT_SELECT = '*, client:clients(id, full_name, email, phone, phone_e164, 
 
 type ApptRow = Appointment & { client: (Appointment['client'] & { consultation_forms?: { count: number }[] }) | null };
 
+// The database returns times as "2026-10-27T10:00:00+00:00"; the app compares
+// times as ISO strings ("…T10:00:00.000Z"), so convert once, here.
+const iso = (v: string | null) => (v ? new Date(v).toISOString() : v);
+
 function shapeAppt(r: ApptRow): Appointment {
   const forms = r.client?.consultation_forms?.[0]?.count ?? 0;
   const client = r.client ? { id: r.client.id, full_name: r.client.full_name, email: r.client.email, phone: r.client.phone, phone_e164: r.client.phone_e164 } : undefined;
-  return { ...r, client, has_form: forms > 0 };
+  return {
+    ...r, client, has_form: forms > 0,
+    starts_at: iso(r.starts_at)!, ends_at: iso(r.ends_at)!, created_at: iso(r.created_at)!,
+    deposit_due_at: iso(r.deposit_due_at), deposit_paid_at: iso(r.deposit_paid_at),
+  };
 }
 
 function check<T>(res: { data: T; error: { message: string } | null }): T {
@@ -49,7 +57,8 @@ export function supabaseApi(url: string, anonKey: string): Api {
       return check(await sb.rpc('public_booking_info')) as BookingInfo;
     },
     async getBusyTimes(from, to) {
-      return check(await sb.rpc('public_busy_times', { p_from: from.toISOString(), p_to: to.toISOString() })) as BusyRange[];
+      const rows = check(await sb.rpc('public_busy_times', { p_from: from.toISOString(), p_to: to.toISOString() })) as BusyRange[];
+      return rows.map((b) => ({ starts_at: iso(b.starts_at)!, ends_at: iso(b.ends_at)! }));
     },
     async createBooking(r) {
       return check(await sb.rpc('public_create_booking', {
@@ -127,7 +136,8 @@ export function supabaseApi(url: string, anonKey: string): Api {
       return check(await q.select('*').single()) as Service;
     },
     async listTimeOff(fromIso) {
-      return check(await sb.from('time_off').select('*').gte('ends_at', fromIso).order('starts_at')) as TimeOff[];
+      const rows = check(await sb.from('time_off').select('*').gte('ends_at', fromIso).order('starts_at')) as TimeOff[];
+      return rows.map((t) => ({ ...t, starts_at: iso(t.starts_at)!, ends_at: iso(t.ends_at)! }));
     },
     async addTimeOff(t) {
       check(await sb.from('time_off').insert(t));

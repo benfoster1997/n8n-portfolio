@@ -337,6 +337,9 @@ begin
     new.whatsapp_reminder_sent_at := null;
     delete from public.email_outbox where appointment_id = new.id and kind = 'reminder' and status <> 'sending';
   end if;
+  if new.deposit_due_at is not null and new.deposit_due_at > new.starts_at then
+    new.deposit_due_at := new.starts_at;   -- moved earlier: the deposit is due by the new time
+  end if;
   if new.reference is null or new.reference = '' then
     new.reference := public.gen_reference();
   end if;
@@ -437,7 +440,7 @@ create or replace function public.public_busy_times(p_from timestamptz, p_to tim
 returns table (starts_at timestamptz, ends_at timestamptz)
 language plpgsql stable security definer set search_path = public as $$
 begin
-  if p_from is null or p_to is null or p_to <= p_from or p_to - p_from > interval '70 days'
+  if p_from is null or p_to is null or p_to <= p_from or p_to > p_from + interval '400 days'
      or (p_from < now() - interval '2 days' and not public.is_owner()) then
     raise exception 'invalid_range';
   end if;
@@ -490,9 +493,10 @@ begin
   if h.break_start is not null and v_local < v_day + h.break_end and v_end > v_day + h.break_start then
     raise exception 'outside_hours';
   end if;
+  -- Time off keeps the same clean-up gap in front of it as an appointment would.
   if exists (select 1 from public.time_off t
               where tstzrange(t.starts_at, t.ends_at, '[)')
-                 && tstzrange(p_starts_at, p_starts_at + make_interval(mins => p_duration_min), '[)')) then
+                 && tstzrange(p_starts_at, p_starts_at + make_interval(mins => p_duration_min + s.buffer_min), '[)')) then
     raise exception 'slot_taken';
   end if;
 end $$;
@@ -543,7 +547,7 @@ begin
      or v_name ~* '(www\.|https?|\.(com|net|org|co|uk|io|ru|xyz|info|biz|top|link|site)\M)' then
     raise exception 'invalid_name';
   end if;
-  if length(v_email) > 254 or v_email !~ '^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$' then
+  if length(v_email) > 254 or v_email !~ '^[^@[:space:]?&#%]+@[^@[:space:]?&#%]+\.[^@[:space:]?&#%]+$' then
     raise exception 'invalid_email';
   end if;
   if v_phone is null or length(v_phone) not between 10 and 15 or length(btrim(p_phone)) > 30 then raise exception 'invalid_phone'; end if;

@@ -99,6 +99,10 @@ describe('phones, money and links', () => {
     expect(money(123456)).toBe('£1,234.56');
     expect(parsePounds('£25.5')).toBe(2550);
     expect(parsePounds('1,250')).toBe(125000);
+    expect(parsePounds('25,50')).toBe(2550);
+    expect(parsePounds('7,5')).toBe(750);
+    expect(parsePounds('1,250.50')).toBe(125050);
+    expect(parsePounds('12,34,5')).toBeNull();
     expect(parsePounds('12.345')).toBeNull();
     expect(parsePounds('abc')).toBeNull();
   });

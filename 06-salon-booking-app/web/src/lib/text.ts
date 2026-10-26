@@ -20,7 +20,8 @@ export function isPlausiblePhone(p: string): boolean {
 }
 
 export function isPlausibleEmail(e: string): boolean {
-  return e.length <= 254 && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e.trim());
+  // No ? & # %: they could smuggle extra fields (cc, body) into a mailto: link.
+  return e.length <= 254 && /^[^@\s?&#%]+@[^@\s?&#%]+\.[^@\s?&#%]+$/.test(e.trim());
 }
 
 /** 2500 → "£25", 2550 → "£25.50" */
@@ -36,9 +37,12 @@ export function moneyPlain(pence: number): string {
   return (pence / 100).toFixed(2);
 }
 
-/** "25", "25.5", "£25.50" → 2550. Returns null if it isn't a sensible amount. */
+/** "25", "25.5", "£25.50", "25,50", "1,250" → pence. Returns null if it isn't a sensible amount. */
 export function parsePounds(input: string): number | null {
-  const t = input.replace(/[£,\s]/g, '');
+  let t = input.replace(/[£\s]/g, '');
+  // Phones set to a European region type a decimal comma: "25,50" means £25.50, not £2,550.
+  if (/^\d+,\d{1,2}$/.test(t)) t = t.replace(',', '.');
+  else if (/^\d{1,3}(,\d{3})+(\.\d{1,2})?$/.test(t)) t = t.replace(/,/g, '');
   if (!/^\d+(\.\d{1,2})?$/.test(t)) return null;
   const pence = Math.round(parseFloat(t) * 100);
   return Number.isFinite(pence) ? pence : null;
@@ -115,7 +119,8 @@ export function downloadText(filename: string, text: string, type = 'text/csv;ch
   document.body.appendChild(a);
   a.click();
   a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  // iOS asks where to save before reading the file, so keep the link alive a while.
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
 /** UK tax year containing a date: 6 April to 5 April. */

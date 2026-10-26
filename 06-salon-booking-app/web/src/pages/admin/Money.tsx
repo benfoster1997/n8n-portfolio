@@ -3,7 +3,7 @@ import { api } from '../../api';
 import { useOwner } from '../../components/owner';
 import { ErrorBox, Field, Icon, Seg, Sheet, Spinner, TopBar, useAction, useLoad, useToast } from '../../components/ui';
 import { fmt, todayInZone } from '../../lib/time';
-import { downloadText, money, moneyPlain, parsePounds, taxYearOf, toCsv } from '../../lib/text';
+import { downloadText, friendlyError, money, moneyPlain, parsePounds, taxYearOf, toCsv } from '../../lib/text';
 import type { PayKind, PayMethod, Payment } from '../../lib/types';
 
 const KIND_LABEL: Record<PayKind, string> = { deposit: 'Deposit', payment: 'Payment', tip: 'Tip', refund: 'Refund', other: 'Other income' };
@@ -32,9 +32,12 @@ export function Money() {
 
   const ty = taxYearOf(yearOf);
   const range = view === 'month' ? monthRange(month) : { from: ty.from, to: ty.to };
-  const { data, error, loading, reload } = useLoad(() => api.listPayments(range.from, range.to), [range.from, range.to]);
-
-  const rows = data ?? [];
+  const { data, error, loading, reload } = useLoad(
+    async () => ({ key: `${range.from}/${range.to}`, rows: await api.listPayments(range.from, range.to) }),
+    [range.from, range.to]);
+  // While the next period loads, never show (or export) the previous period's figures under the new heading.
+  const current = data && data.key === `${range.from}/${range.to}`;
+  const rows = current ? data.rows : [];
   const sum = (f: (p: Payment) => boolean) => rows.filter(f).reduce((n, p) => n + p.amount_pence, 0);
   const total = sum(() => true);
   const cash = sum((p) => p.method === 'cash');
@@ -67,7 +70,7 @@ export function Money() {
         <button className="icon-btn" aria-label="Next" onClick={() => (view === 'month' ? setMonth(shiftMonth(month, 1)) : setYearOf(`${Number(ty.from.slice(0, 4)) + 1}-06-01`))}><Icon name="right" /></button>
       </div>
       <ErrorBox error={error} />
-      {loading && !data ? <Spinner /> : (
+      {!current ? <Spinner /> : (
         <>
           <div className="stat-grid">
             <div className="stat" style={{ gridColumn: '1 / -1' }}><div className="label">Money received</div><div className="value">{money(total)}</div></div>
@@ -76,7 +79,7 @@ export function Money() {
             <div className="stat"><div className="label">Tips</div><div className="value">{money(tips)}</div></div>
             <div className="stat"><div className="label">Refunds</div><div className="value">{money(refunds)}</div></div>
           </div>
-          <button className="btn block" style={{ marginTop: 12 }} disabled={!rows.length} onClick={exportCsv}>Download spreadsheet (CSV)</button>
+          <button className="btn block" style={{ marginTop: 12 }} disabled={!rows.length || loading} onClick={exportCsv}>Download spreadsheet (CSV)</button>
           <p className="sub" style={{ marginTop: 8 }}>
             This is your record of money received, for your Self Assessment. Keep receipts for your expenses (products, training, insurance) separately — they reduce your tax bill.
           </p>
@@ -92,7 +95,10 @@ export function Money() {
                     </div>
                     <strong style={{ fontVariantNumeric: 'tabular-nums' }}>{money(p.amount_pence)}</strong>
                     <button className="icon-btn" aria-label="Delete entry"
-                      onClick={async () => { if (window.confirm('Delete this entry from your takings?')) { await api.deletePayment(p.id); reload(); } }}>
+                      onClick={async () => {
+                        if (!window.confirm('Delete this entry from your takings?')) return;
+                        try { await api.deletePayment(p.id); reload(); } catch (e) { toast(friendlyError(e)); }
+                      }}>
                       <Icon name="trash" size={18} />
                     </button>
                   </li>

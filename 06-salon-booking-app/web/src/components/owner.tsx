@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import { api } from '../api';
 import type { Session, Settings } from '../lib/types';
@@ -29,17 +29,23 @@ type GateState =
 /** Shows the sign-in screen until the owner is signed in, then the app. */
 export function OwnerGate({ children }: { children: ReactNode }) {
   const [state, setState] = useState<GateState>({ kind: 'loading' });
+  const stateRef = useRef(state);
+  stateRef.current = state;
+  const seq = useRef(0);
 
   const resolve = useCallback(async (session: Session | null) => {
+    const my = ++seq.current; // a slower, older check must never overwrite a newer one
     if (!session) { setState({ kind: 'signed-out' }); return; }
     try {
       // The first account to sign in claims the app; everyone else is refused.
       const isOwner = await api.claimOwner();
+      if (my !== seq.current) return;
       if (!isOwner) { setState({ kind: 'not-owner', session }); return; }
       const settings = await api.getSettings();
+      if (my !== seq.current) return;
       setState({ kind: 'ready', session, settings });
     } catch (error) {
-      setState({ kind: 'error', error });
+      if (my === seq.current) setState({ kind: 'error', error });
     }
   }, []);
 
@@ -48,7 +54,11 @@ export function OwnerGate({ children }: { children: ReactNode }) {
     api.getSession().then((s) => { if (live) void resolve(s); });
     const off = api.onAuthChange((s) => {
       if (!live) return;
-      setState((cur) => (cur.kind === 'ready' && s && cur.session.userId === s.userId ? cur : { kind: 'loading' }));
+      const cur = stateRef.current;
+      // Supabase re-announces the same sign-in whenever the app comes back to
+      // the screen (e.g. after sending a WhatsApp). Nothing has changed: ignore it.
+      if (s && cur.kind === 'ready' && cur.session.userId === s.userId) return;
+      if (!s && cur.kind === 'signed-out') return;
       void resolve(s);
     });
     return () => { live = false; off(); };
@@ -78,8 +88,11 @@ export function OwnerGate({ children }: { children: ReactNode }) {
   const value: OwnerCtx = {
     session: state.session,
     settings: state.settings,
-    setSettings: (settings) => setState({ ...state, settings }),
-    refreshSettings: async () => setState({ ...state, settings: await api.getSettings() }),
+    setSettings: (settings) => setState((cur) => (cur.kind === 'ready' ? { ...cur, settings } : cur)),
+    refreshSettings: async () => {
+      const settings = await api.getSettings();
+      setState((cur) => (cur.kind === 'ready' ? { ...cur, settings } : cur));
+    },
   };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

@@ -68,7 +68,7 @@ function BookingFlow({ info }: { info: BookingInfo }) {
 
   async function submit() {
     setError(null);
-    if (website) return; // a bot filled the hidden field
+    if (website) return setError(new Error('booking_failed')); // a bot filled the hidden field
     if (details.full_name.trim().length < 2) return setError(new Error('invalid_name'));
     if (!isPlausibleEmail(details.email)) return setError(new Error('invalid_email'));
     if (!isPlausiblePhone(details.phone)) return setError(new Error('invalid_phone'));
@@ -95,6 +95,8 @@ function BookingFlow({ info }: { info: BookingInfo }) {
   const stepIndex = { service: 0, time: 1, details: 2, done: 3 }[step];
 
   return (
+    <>
+    {api.mode === 'demo' && <div className="demo-banner">Demo — bookings here aren’t real and go nowhere</div>}
     <div className="page page-public stack" ref={topRef}>
       <div className="hero">
         <h1>{info.business_name}</h1>
@@ -218,5 +220,6 @@ function BookingFlow({ info }: { info: BookingInfo }) {
         </div>
       )}
     </div>
+    </>
   );
 }

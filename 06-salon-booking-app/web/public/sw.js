@@ -1,7 +1,7 @@
 // Service worker: cache the app shell so it opens from the home screen even
 // with a poor signal. Never caches API calls or anything with client data —
 // those go straight to the network.
-const CACHE = 'bookings-shell-v1';
+const CACHE = 'bookings-shell-v2';
 const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/apple-touch-icon.png'];
 
 self.addEventListener('install', (event) => {
@@ -27,8 +27,11 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(
       fetch(req)
         .then((res) => {
-          const copy = res.clone();
-          caches.open(CACHE).then((c) => c.put('/index.html', copy));
+          // Only a good, same-site page becomes the offline copy — never an error page.
+          if (res.ok && res.type === 'basic') {
+            const copy = res.clone();
+            event.waitUntil(caches.open(CACHE).then((c) => c.put('/index.html', copy)));
+          }
           return res;
         })
         .catch(() => caches.match('/index.html')),
@@ -40,7 +43,10 @@ self.addEventListener('fetch', (event) => {
   if (url.pathname.startsWith('/assets/') || url.pathname.startsWith('/icons/')) {
     event.respondWith(
       caches.match(req).then((hit) => hit || fetch(req).then((res) => {
-        if (res.ok) { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(req, copy)); }
+        if (res.ok && res.type === 'basic') {
+          const copy = res.clone();
+          event.waitUntil(caches.open(CACHE).then((c) => c.put(req, copy)));
+        }
         return res;
       })),
     );

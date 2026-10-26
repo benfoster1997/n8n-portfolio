@@ -1,4 +1,5 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
+import { configMissing } from './api';
 import { AdminLayout, OwnerGate } from './components/owner';
 import { ToastProvider } from './components/ui';
 import { AppointmentNew } from './pages/admin/AppointmentNew';
@@ -18,6 +19,16 @@ import { FormPage } from './pages/public/FormPage';
 import { Privacy } from './pages/public/Privacy';
 
 export function App() {
+  if (configMissing) {
+    return (
+      <div className="page stack">
+        <h1>Not set up yet</h1>
+        <p>This booking app isn’t connected to its database. If you run it, add <code>VITE_SUPABASE_URL</code> and{' '}
+          <code>VITE_SUPABASE_ANON_KEY</code> in Netlify’s environment variables and deploy again (SETUP.md step 2), or set{' '}
+          <code>VITE_DEMO=1</code> to show the demo.</p>
+      </div>
+    );
+  }
   return (
     <BrowserRouter>
       <ToastProvider>

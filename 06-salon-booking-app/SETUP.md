@@ -69,8 +69,9 @@ everything belongs to the business owner rather than to whoever sets it up. Turn
 
    This makes the "reset password" link open the app.
 
-> If you skip the environment variables, the site still works, but in **demo mode** with
-> invented data. That's a handy way to look around first.
+> If the two environment variables are missing, the site shows *Not set up yet* rather than
+> quietly running without a database. To look around first, add `VITE_DEMO=1` instead to get
+> the **demo**, with invented data kept only in your browser. Then remove it when you add the real values.
 
 ---
 

@@ -340,7 +340,7 @@ test('busy times list ranges only — no names, no services', async () => {
     [await londonAt(0, '00:00'), await londonAt(10, '00:00')]);
   assert.equal(r.rows.length, 1);
   assert.deepEqual(Object.keys(r.rows[0]).sort(), ['ends_at', 'starts_at']);
-  await rejects(asAnon(`select * from public.public_busy_times(now(), now() + interval '100 days')`), 'invalid_range');
+  await rejects(asAnon(`select * from public.public_busy_times(now(), now() + interval '500 days')`), 'invalid_range');
 });
 
 // ---------------------------------------------------------------------------
@@ -733,4 +733,33 @@ test('the public can only see busy times from now on; the owner can look back', 
 test('signed-in strangers cannot call the email sender functions either', async () => {
   await rejects(asStranger(`select public.email_jobs_claim($1)`, [SECRET]), 'permission denied');
   await rejects(asStranger(`select public.email_secret_ok($1)`, [SECRET]), 'permission denied');
+});
+
+test('the booking page can ask for busy times across a long booking horizon, even over a clock change', async () => {
+  const r = await asAnon(`select * from public.public_busy_times(now(), now() + interval '366 days 1 hour')`);
+  assert.equal(r.rows.length, 0);
+  await rejects(asAnon(`select * from public.public_busy_times(now(), now() + interval '500 days')`), 'invalid_range');
+});
+
+test('time off keeps the clean-up gap in front of it, matching the booking page', async () => {
+  const svc = await addService('Gel', 60);
+  await db.query(`insert into public.time_off (starts_at, ends_at) values ($1, $2)`, [await londonAt(3, '14:00'), await londonAt(3, '18:00')]);
+  await rejects(book(svc, await londonAt(3, '13:00')), 'slot_taken');           // 13:00–14:00 + 10 min gap
+  await book(svc, await londonAt(3, '12:45'), { p_email: 'b@example.com', p_phone: '07700900222' }); // ends 13:45 + 10 = 13:55
+});
+
+test('moving an appointment earlier brings the deposit deadline with it', async () => {
+  const svc = await addService();
+  await db.query(`update public.settings set deposit_deadline_hours = 200 where id = 1`);
+  const r = await book(svc, await londonAt(10, '10:00'));
+  const a = await appt(r.reference);
+  const earlier = await londonAt(2, '10:00');
+  await asOwner(`update public.appointments set starts_at = $2 where id = $1`, [a.id, earlier]);
+  const moved = await appt(r.reference);
+  assert.ok(moved.deposit_due_at <= moved.starts_at);
+});
+
+test('email addresses that could smuggle extra fields into a mail link are refused', async () => {
+  const svc = await addService();
+  await rejects(book(svc, await londonAt(3, '10:00'), { p_email: 'a@b.com?cc=x%40evil.com' }), 'invalid_email');
 });

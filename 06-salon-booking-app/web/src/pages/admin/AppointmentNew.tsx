@@ -48,8 +48,10 @@ export function AppointmentNew() {
   }, [data, serviceId]);
 
   useEffect(() => {
+    let live = true; // ignore a late answer for a client who has since been swapped
     setVisits(null);
-    if (clientId) api.countCompletedVisits(clientId).then(setVisits).catch(() => setVisits(0));
+    if (clientId) api.countCompletedVisits(clientId).then((n) => live && setVisits(n)).catch(() => live && setVisits(0));
+    return () => { live = false; };
   }, [clientId]);
 
   const isNew = newClient || (visits === 0 && !client?.is_regular);
@@ -82,11 +84,18 @@ export function AppointmentNew() {
       if (nc.phone && !isPlausiblePhone(nc.phone)) return setError(new Error('Check the mobile number.'));
       if (nc.email && !isPlausibleEmail(nc.email)) return setError(new Error('Check the email address.'));
     } else if (!clientId) return setError(new Error('Choose a client, or add a new one.'));
+    else if (visits === null) return setError(new Error('One moment — still checking this client’s history.'));
 
     await run(async () => {
-      const c = newClient
-        ? await api.createClient({ full_name: nc.full_name.trim(), phone: nc.phone.trim() || null, email: nc.email.trim() || null })
-        : client!;
+      let c = client!;
+      if (newClient) {
+        c = await api.createClient({ full_name: nc.full_name.trim(), phone: nc.phone.trim() || null, email: nc.email.trim() || null });
+        // From here on she's an existing client, so a retry (say after a clash) won't add her twice.
+        setNewClient(false);
+        setClientId(c.id);
+        setVisits(0);
+        if (data) data.clients.push({ ...c, last_visit: null, visits: 0 });
+      }
       const starts = zonedToInstant(day, time, tz);
       const deposit = depositOn ? s.deposit_amount_pence : 0;
       const a = await api.createAppointment({

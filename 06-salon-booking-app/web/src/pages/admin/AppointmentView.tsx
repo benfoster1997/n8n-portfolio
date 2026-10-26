@@ -110,7 +110,9 @@ export function AppointmentView() {
                 <Icon name="whatsapp" size={20} /> Send form link
               </a>
             )}
-            <button className="btn" onClick={async () => { await navigator.clipboard?.writeText(formUrl); toast('Form link copied'); }}><Icon name="link" size={20} /> Copy link</button>
+            <button className="btn" onClick={async () => {
+              try { await navigator.clipboard.writeText(formUrl); toast('Form link copied'); } catch { window.prompt('Copy this link:', formUrl); }
+            }}><Icon name="link" size={20} /> Copy link</button>
           </div>
         </div>
       )}
@@ -219,16 +221,20 @@ function MoveSheet({ a, tz, onClose, onDone }: { a: Appointment; tz: string; onC
   const [time, setTime] = useState(fmtTime(a.starts_at, tz));
   const [duration, setDuration] = useState(String(a.duration_min));
   const { data } = useLoad(async () => {
-    const [busy, hours] = await Promise.all([
-      api.getBusyTimes(startOfDayInstant(day, tz), startOfDayInstant(addDays(day, 1), tz)), api.listOpeningHours()]);
+    const from = startOfDayInstant(day, tz).toISOString();
+    const to = startOfDayInstant(addDays(day, 1), tz).toISOString();
+    const [appts, off, hours] = await Promise.all([api.listAppointments(from, to), api.listTimeOff(from), api.listOpeningHours()]);
+    // Everything that blocks the day, except this appointment itself.
+    const busy = [
+      ...appts.filter((x) => x.id !== a.id && ['pending_deposit', 'confirmed', 'completed'].includes(x.status))
+        .map((x) => ({ starts_at: x.starts_at, ends_at: new Date(new Date(x.ends_at).getTime() + s.buffer_min * 60e3).toISOString() })),
+      ...off.filter((t) => t.starts_at < to).map((t) => ({ starts_at: t.starts_at, ends_at: t.ends_at })),
+    ];
     return { busy, hours };
   }, [day]);
   const slots = useMemo(() => {
     if (!data) return [];
-    // Ignore this appointment's own busy time when looking for free slots.
-    const own = new Date(a.starts_at).getTime();
-    const busy = data.busy.filter((b) => new Date(b.starts_at).getTime() !== own);
-    return availableSlots(day, Number(duration) || a.duration_min, { ...s, hours: data.hours }, busy, new Date(), { ignoreNotice: true });
+    return availableSlots(day, Number(duration) || a.duration_min, { ...s, hours: data.hours }, data.busy, new Date(), { ignoreNotice: true });
   }, [data, day, duration, a, s]);
   const { busy, error, run, setError } = useAction();
   async function save() {
