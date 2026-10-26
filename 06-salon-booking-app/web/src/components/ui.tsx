@@ -53,6 +53,10 @@ export function StatusChip({ status }: { status: ApptStatus }) {
   return <span className={`chip ${s.cls}`}>{s.label}</span>;
 }
 export const statusLabel = (s: ApptStatus) => STATUS[s].label;
+/** Red chip for a change or cancellation made inside the cancellation notice period. */
+export function LateChip({ children = 'Late' }: { children?: ReactNode }) {
+  return <span className="chip danger">{children}</span>;
+}
 
 // ---------------------------------------------------------------------------
 // Page chrome

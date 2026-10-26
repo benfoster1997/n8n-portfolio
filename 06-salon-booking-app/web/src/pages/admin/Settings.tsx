@@ -15,7 +15,7 @@ const SECTIONS = [
   { to: 'services', label: 'Treatments & prices', sub: 'What clients can book' },
   { to: 'time-off', label: 'Time off', sub: 'Holidays and blocked time' },
   { to: 'rules', label: 'Booking rules', sub: 'Notice, gaps, how far ahead' },
-  { to: 'deposits', label: 'Deposits & bank details', sub: 'For new clients, by bank transfer' },
+  { to: 'deposits', label: 'Deposits & cancellations', sub: 'Deposits, bank details, cancellation policy' },
   { to: 'messages', label: 'WhatsApp messages', sub: 'Wording of reminders' },
   { to: 'email', label: 'Email confirmations & reminders', sub: 'Free, sent from your Gmail' },
   { to: 'backup', label: 'Back up your data', sub: 'Download everything' },
@@ -111,7 +111,7 @@ export function RulesSettings() {
       {num('buffer_min', 'Gap after each appointment (minutes)', 'Time to clean up and set up for the next client.', 0, 120, 5)}
       {num('min_notice_hours', 'Minimum notice (hours)', 'How soon before an appointment clients can book online.', 0, 336)}
       {num('max_days_ahead', 'Book up to (days ahead)', 'How far into the future clients can book.', 1, 365)}
-      {num('reminder_hours_before', 'Reminder email (hours before)', 'When the automatic reminder email goes out.', 2, 168)}
+      {num('reminder_hours_before', 'Reminders (hours before)', 'When the reminder email goes out. WhatsApp reminders show up in your list from this many days ahead (72 hours = 3 days).', 2, 168)}
       <ErrorBox error={f.error} />
       <button className="btn primary block" disabled={f.busy} onClick={() => f.save()}>{f.busy ? 'Saving…' : 'Save'}</button>
     </Page>
@@ -119,17 +119,22 @@ export function RulesSettings() {
 }
 
 export function DepositSettings() {
-  const f = useSettingsForm(['deposit_amount_pence', 'deposit_deadline_hours', 'auto_cancel_unpaid', 'bank_account_name', 'bank_sort_code', 'bank_account_number', 'cancellation_policy']);
+  const f = useSettingsForm(['deposit_amount_pence', 'deposit_deadline_hours', 'auto_cancel_unpaid', 'bank_account_name', 'bank_sort_code',
+    'bank_account_number', 'cancellation_policy', 'cancel_notice_hours', 'client_self_service']);
   const d = f.draft;
   const [amount, setAmount] = useState((d.deposit_amount_pence / 100).toFixed(2));
+  // The policy is free text: flag it if its hours don't match the notice the app checks.
+  const policyHours = Number(/(\d+)\s*(?:hours|hrs)/i.exec(d.cancellation_policy ?? '')?.[1] ?? NaN);
   async function submit() {
     const pence = parsePounds(amount || '0');
     if (pence === null) return f.setError(new Error('Check the deposit amount.'));
     if (pence > 0 && (!d.bank_account_name || !d.bank_sort_code || !d.bank_account_number)) return f.setError(new Error('Add your bank details so new clients know where to pay.'));
+    if (!Number.isInteger(d.cancel_notice_hours) || d.cancel_notice_hours < 0 || d.cancel_notice_hours > 336)
+      return f.setError(new Error('Notice needed to cancel must be a whole number of hours, from 0 to 336.'));
     await f.save({ ...d, deposit_amount_pence: pence });
   }
   return (
-    <Page title="Deposits & bank details">
+    <Page title="Deposits & cancellations">
       <p className="sub">New clients (anyone who hasn’t had a completed appointment) are asked for this deposit by bank transfer. Returning clients aren’t. Set £0 to switch deposits off.</p>
       <Field label="Deposit (£)"><input type="text" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} /></Field>
       <Field label="Pay within (hours)" hint="Shown to the client."><input type="number" inputMode="numeric" min={1} max={336} value={d.deposit_deadline_hours} onChange={(e) => f.set('deposit_deadline_hours', Number(e.target.value))} /></Field>
@@ -144,9 +149,21 @@ export function DepositSettings() {
         <Field label="Sort code"><input type="text" inputMode="numeric" value={txt(d.bank_sort_code)} maxLength={20} placeholder="00-00-00" onChange={(e) => f.set('bank_sort_code', e.target.value)} /></Field>
         <Field label="Account number"><input type="text" inputMode="numeric" value={txt(d.bank_account_number)} maxLength={20} onChange={(e) => f.set('bank_account_number', e.target.value)} /></Field>
       </div>
+      <div className="section-title">Cancellations</div>
       <Field label="Cancellation policy" hint="Shown at the top of your booking page and in every confirmation and reminder email. Clients must tick to agree to it before they can book, and each booking keeps a copy of the wording they agreed to.">
         <textarea value={txt(d.cancellation_policy)} maxLength={1000} style={{ minHeight: 110 }} onChange={(e) => f.set('cancellation_policy', e.target.value)} />
       </Field>
+      <Field label="Notice needed to cancel (hours)" hint="Clients can still change or cancel online after this, but it’s flagged as a late cancellation so you can charge under your policy. 0 = no notice needed.">
+        <input type="number" inputMode="numeric" min={0} max={336} value={d.cancel_notice_hours} onChange={(e) => f.set('cancel_notice_hours', Number(e.target.value))} />
+      </Field>
+      {Number.isFinite(policyHours) && policyHours !== d.cancel_notice_hours && (
+        <div className="notice warn">Your policy wording says {policyHours} hours, but the notice here is {d.cancel_notice_hours} hours. Make them match so clients aren’t confused.</div>
+      )}
+      <label className="check">
+        <input type="checkbox" checked={d.client_self_service} onChange={(e) => f.set('client_self_service', e.target.checked)} />
+        <span>Clients can change or cancel their booking online<br />
+          <span className="sub">Their confirmation and reminder emails include a private link to do it. Untick to have them get in touch with you instead.</span></span>
+      </label>
       <ErrorBox error={f.error} />
       <button className="btn primary block" disabled={f.busy} onClick={submit}>{f.busy ? 'Saving…' : 'Save'}</button>
     </Page>
@@ -311,6 +328,7 @@ export function MessageSettings() {
     <Page title="WhatsApp messages">
       <p className="sub">These fill in automatically when you tap a WhatsApp button. Words in curly brackets are swapped for the real details:</p>
       <p className="mono" style={{ fontSize: '0.82rem' }}>{TEMPLATE_PLACEHOLDERS.join(' ')}</p>
+      <p className="sub"><span className="mono">{'{manage_link}'}</span> is the client’s own link to change or cancel their booking. <span className="mono">{'{change_by}'}</span> is the last time they can do that before it counts as late (your notice period in Deposits &amp; cancellations).</p>
       {box('wa_template_reminder', 'Reminder', DEFAULT_TEMPLATES.reminder)}
       {box('wa_template_deposit', 'Deposit request', DEFAULT_TEMPLATES.deposit)}
       {box('wa_template_confirmed', 'Booking confirmed', DEFAULT_TEMPLATES.confirmed)}
@@ -365,9 +383,10 @@ export function EmailSettings() {
         <li>a booking confirmation (with bank details if they owe a deposit, and the consultation form link if they’re new)</li>
         <li>a “you’re confirmed” email when you mark their deposit received</li>
         <li>a reminder {s.reminder_hours_before} hours before</li>
-        <li>a cancellation notice if you cancel</li>
+        <li>a “your booking has changed” email when they change it online, or when you move it and tick the box to tell them</li>
+        <li>a cancellation email when they cancel online, or when you cancel and tick the box to tell them</li>
       </ul>
-      <p>You get an email for every new online booking{s.owner_email ? ` (to ${s.owner_email})` : ' — add your email in Business details'}.</p>
+      <p>You get an email for every new online booking, and whenever a client changes or cancels online{s.owner_email ? ` (to ${s.owner_email})` : ' — add your email in Business details'}.</p>
       <div className="section-title">Set-up values for the script</div>
       <div className="card stack">
         <div><div className="sub">SUPABASE_URL</div><div className="mono" style={{ overflowWrap: 'anywhere' }}>{url || '— (demo mode)'}</div></div>

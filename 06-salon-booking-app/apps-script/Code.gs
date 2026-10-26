@@ -2,9 +2,10 @@
  * Booking emails, sent free from your own Gmail.
  *
  * Every 10 minutes this asks the booking database for emails that need
- * sending (confirmations, deposit requests, "you're confirmed", reminders,
- * cancellations and your new-booking alerts), sends them from this Gmail
- * account, and reports back which ones went.
+ * sending, sends them from this Gmail account, and reports back which ones went:
+ *   - to clients: confirmations, deposit requests, "you're confirmed",
+ *     reminders, "your booking has changed" and cancellations;
+ *   - to you: alerts when a client books, changes or cancels online.
  *
  * SET-UP (once) — full steps are in SETUP.md, section "Emails":
  *   1. script.google.com → New project → paste this whole file over Code.gs.
@@ -59,7 +60,8 @@ function processEmails() {
         var options = { htmlBody: msg.html, name: s.business_name || 'Bookings' };
         // Replies go to the owner. Only set Reply-To when it differs from this
         // Gmail account: a needless Reply-To to another free-mail address is a spam signal.
-        if (job.kind === 'owner_new_booking') {
+        // Her own alerts (owner_*) reply straight to the client instead.
+        if (/^owner_/.test(job.kind)) {
           if (job.client_email) options.replyTo = job.client_email;
         } else if (s.owner_email && s.owner_email.toLowerCase() !== me) {
           options.replyTo = s.owner_email;
@@ -99,16 +101,19 @@ function reportWithRetry_(cfg, results) {
 /** Sends you a sample deposit-request email so you can see what clients get. */
 function sendTestEmail() {
   var me = Session.getActiveUser().getEmail();
-  var start = new Date(Date.now() + 3 * 86400000);
+  var start = new Date(Date.now() + 5 * 86400000);
   var msg = render_({
     kind: 'booking_received', status: 'pending_deposit', first_name: 'Jess', client_name: 'Jess Example',
     service_name: 'BIAB new set', price_pence: 3500, starts_at: start.toISOString(), reference: 'K3Q7XP',
     deposit_required_pence: 1000, deposit_due_at: new Date(Date.now() + 86400000).toISOString(),
-    form_needed: true, form_url: 'https://example.com/form/test',
+    form_needed: true, form_url: 'https://example.com/form/test', manage_url: 'https://example.com/manage/test',
+    free_until: new Date(start.getTime() - 48 * 3600000).toISOString(),
   }, {
     business_name: 'Your Nail Studio', timezone: 'Europe/London', bank_account_name: 'Your Name',
     bank_sort_code: '00-00-00', bank_account_number: '12345678', address: '1 Example Road',
-    cancellation_policy: 'Please give 24 hours’ notice to cancel.', public_site_url: 'https://example.com',
+    cancellation_policy: 'Please give at least 48 hours’ notice if you need to cancel or move your appointment. ' +
+      'If you cancel with less than 48 hours’ notice, or don’t turn up, the full price of your treatment is payable.',
+    cancel_notice_hours: 48, client_self_service: true, public_site_url: 'https://example.com',
   });
   MailApp.sendEmail(me, '[TEST] ' + msg.subject, msg.text, { htmlBody: msg.html });
   Logger.log('Test email sent to ' + me);
@@ -169,37 +174,77 @@ function render_(job, s) {
     ? box_('<b>Before your first visit</b><br>Please fill in this quick health and allergy form (2 minutes): <br>' + link_(job.form_url, 'Open the consultation form'))
     : '';
   var address = s.address ? ['Where', s.address] : null;
+  // The notice the cancellation policy asks for: "48 hours" / "48 hours’ notice".
+  var noticeHours = s.cancel_notice_hours === null || s.cancel_notice_hours === undefined ? 48 : Number(s.cancel_notice_hours);
+  var hrs = noticeHours === 1 ? '1 hour' : noticeHours + ' hours';
+  var notice = noticeHours === 1 ? '1 hour’s notice' : noticeHours + ' hours’ notice';
+  // Only ever in emails to the client: the link is the key to their booking.
+  var manage = manageBlock_(job, s, tz);
+  var diary = site ? p_(link_(site + '/', 'Open your diary')) : '';
+
+  // --- Alerts to the owner (never the client's change/cancel link) ----------
 
   if (job.kind === 'owner_new_booking') {
-    var rows = [['Client', job.client_name]];
-    if (job.booking_name && job.booking_name !== job.client_name) rows.push(['Booked as', job.booking_name]);
-    rows = rows.concat([
-      ['Mobile', job.client_phone || '—'], ['Email', job.client_email || '—'],
+    var rows = clientRows_(job).concat([
       ['Treatment', job.service_name], ['When', when], ['Reference', job.reference],
       ['Status', job.status === 'pending_deposit' ? 'New client — waiting for ' + money_(job.deposit_required_pence) + ' deposit' : 'Confirmed (returning client)'],
     ]);
     if (job.client_notes) rows.push(['Their note', job.client_notes]);
     return msg_('New booking: ' + job.client_name + ' — ' + job.service_name + ', ' + fmt_(job.starts_at, tz, 'EEE d MMM HH:mm'),
-      'New online booking', [table_(rows), site ? p_(link_(site + '/', 'Open your diary')) : ''], biz);
+      'New online booking', [table_(rows), diary], biz);
   }
 
+  if (job.kind === 'owner_changed') {
+    var changes = job.changes || [];
+    var anyLate = changes.some(function (x) { return x.late; });
+    var now = clientRows_(job).concat([
+      ['Treatment', job.service_name], ['When', when], ['Price', money_(job.price_pence)], ['Reference', job.reference],
+      ['Status', job.status === 'pending_deposit' ? 'Waiting for ' + money_(job.deposit_required_pence) + ' deposit' : 'Confirmed'],
+    ]);
+    return msg_('Booking changed: ' + job.client_name + ' — ' + job.service_name + ', ' + fmt_(job.starts_at, tz, 'EEE d MMM HH:mm'),
+      'A client changed their booking',
+      [
+        p_(esc_(job.client_name) + ' changed their booking online. It’s now:'),
+        table_(now),
+        anyLate ? box_('<b>Moved with less than ' + esc_(notice) + '.</b>') : '',
+        changes.length ? p_('<b>What changed</b>') : '',
+        changes.length ? changeList_(changes, tz, notice) : '',
+        diary,
+      ], biz);
+  }
+
+  if (job.kind === 'owner_cancelled') {
+    var late = !!job.cancelled_late;
+    var deposit = job.deposit_required_pence > 0
+      ? money_(job.deposit_required_pence) + (job.deposit_paid ? ' — paid' : ' — not paid')
+      : 'None';
+    var gone = clientRows_(job).concat([
+      ['Treatment', job.service_name], ['Was', when], ['Price', money_(job.price_pence)], ['Reference', job.reference],
+      ['Deposit', deposit],
+    ]);
+    if (job.cancel_reason) gone.push(['Their reason', job.cancel_reason]);
+    // A late move followed by a cancellation in good time still deserves a mention.
+    var movedLate = (job.changes || []).some(function (x) { return x.late && x.action !== 'cancelled'; });
+    var full = job.price_pence > 0 ? 'the full ' + money_(job.price_pence) : 'the full price';
+    return msg_((late ? 'Late cancellation: ' : 'Cancelled: ') + job.client_name + ' — ' + job.service_name + ', ' + fmt_(job.starts_at, tz, 'EEE d MMM HH:mm'),
+      late ? 'Late cancellation' : 'A client cancelled',
+      [
+        p_(esc_(job.client_name) + ' cancelled their booking online. The time is free again in your diary.'),
+        table_(gone),
+        late ? box_('<b>Cancelled with less than ' + esc_(notice) + '.</b> Under your cancellation policy ' + full +
+          ' is payable — this is for you to arrange with the client; the app doesn’t take payments.') : '',
+        !late && movedLate ? box_('Earlier, they moved this booking with less than ' + esc_(notice) + '.') : '',
+        job.deposit_paid ? p_('They paid a ' + money_(job.deposit_required_pence) + ' deposit. Whether you keep it or refund it is your call.') : '',
+        diary,
+      ], biz);
+  }
+
+  // --- Emails to the client --------------------------------------------------
+
   if (job.kind === 'booking_received' && job.status === 'pending_deposit') {
-    var bank = [
-      ['Amount', money_(job.deposit_required_pence)],
-      ['Account name', s.bank_account_name || ''],
-      ['Sort code', s.bank_sort_code || ''],
-      ['Account number', s.bank_account_number || ''],
-      ['Reference', job.reference],
-    ];
-    var due = job.deposit_due_at ? 'by ' + fmt_(job.deposit_due_at, tz, "HH:mm 'on' EEEE d MMMM") : 'as soon as you can';
     return msg_('Please pay your deposit to secure your booking — ' + biz,
       'Thanks for booking, ' + esc_(job.first_name) + '!',
-      [
-        p_('Your appointment is reserved. As a new client, please pay a <b>' + money_(job.deposit_required_pence) + ' deposit</b> by bank transfer ' + esc_(due) + ' to secure it. It comes off your bill on the day.'),
-        box_(table_(bank)),
-        p_('Please use the reference <b>' + esc_(job.reference) + '</b> so your payment can be matched. You’ll get another email once it has arrived.'),
-        table_(details), formBlock, policy, contact,
-      ], biz);
+      depositBlocks_(job, s, tz, 'Your appointment is reserved. ').concat([table_(details), formBlock, manage, policy, contact]), biz);
   }
 
   if (job.kind === 'booking_received' || job.kind === 'deposit_received') {
@@ -208,25 +253,101 @@ function render_(job, s) {
       ? 'Your deposit has arrived — thank you! Your appointment is confirmed.'
       : 'You’re booked in. Here are your details:';
     return msg_((job.kind === 'deposit_received' ? 'Deposit received — you’re confirmed' : 'You’re booked in') + ': ' + job.service_name + ', ' + fmt_(job.starts_at, tz, 'EEE d MMM'),
-      'See you soon, ' + esc_(job.first_name) + '!', [p_(intro), table_(confirmed), formBlock, policy, contact], biz);
+      'See you soon, ' + esc_(job.first_name) + '!', [p_(intro), table_(confirmed), formBlock, manage, policy, contact], biz);
   }
 
   if (job.kind === 'reminder') {
     var r = address ? details.concat([address]) : details;
     return msg_('Reminder: ' + job.service_name + ' on ' + fmt_(job.starts_at, tz, "EEEE 'at' HH:mm"),
       'See you soon, ' + esc_(job.first_name) + '!',
-      [p_('Just a reminder of your appointment:'), table_(r), formBlock, policy, contact], biz);
+      [p_('Just a reminder of your appointment:'), table_(r), formBlock, manage, policy, contact], biz);
+  }
+
+  if (job.kind === 'changed') {
+    var owing = job.status === 'pending_deposit' && !job.deposit_paid;
+    // The address only goes to confirmed bookings, as in the confirmation itself.
+    var updated = address && job.status === 'confirmed' ? details.concat([address]) : details;
+    return msg_('Your booking has changed: ' + job.service_name + ', ' + fmt_(job.starts_at, tz, 'EEE d MMM'),
+      'Your booking has changed',
+      [p_('Hi ' + esc_(job.first_name) + ', here are your new booking details:'), table_(updated)]
+        .concat(owing ? depositBlocks_(job, s, tz, 'Your appointment is still reserved. ') : [])
+        .concat([formBlock, manage, policy, contact]), biz);
   }
 
   if (job.kind === 'cancelled') {
     var c = [['Treatment', job.service_name], ['Was', when], ['Reference', job.reference]];
-    if (job.cancel_reason) c.push(['Reason', job.cancel_reason]);
+    var blocks;
+    if (job.cancelled_by === 'client') {
+      // They wrote the reason themselves, so it isn't repeated back to them.
+      blocks = [p_('Hi ' + esc_(job.first_name) + ', as you asked, your appointment below has been cancelled.'), table_(c)];
+      if (job.cancelled_late) {
+        blocks.push(p_('As this was less than ' + esc_(hrs) + ' before your appointment, our cancellation policy applies' +
+          (s.cancellation_policy ? ': ' + esc_(s.cancellation_policy) : '.')));
+      }
+    } else {
+      if (job.cancel_reason) c.push(['Reason', job.cancel_reason]);
+      blocks = [p_('Hi ' + esc_(job.first_name) + ', your appointment below has been cancelled.'), table_(c)];
+    }
     return msg_('Your appointment has been cancelled — ' + biz, 'Appointment cancelled',
-      [p_('Hi ' + esc_(job.first_name) + ', your appointment below has been cancelled.'), table_(c),
-        site ? p_('To book a new time: ' + link_(site + '/book', site + '/book')) : '', contact], biz);
+      blocks.concat([site ? p_('To book a new time: ' + link_(site + '/book', site + '/book')) : '', contact]), biz);
   }
 
   throw new Error('Unknown email kind: ' + job.kind);
+}
+
+/** Client, (booked as), mobile and email rows for the owner's alerts. */
+function clientRows_(job) {
+  var rows = [['Client', job.client_name]];
+  if (job.booking_name && job.booking_name !== job.client_name) rows.push(['Booked as', job.booking_name]);
+  return rows.concat([['Mobile', job.client_phone || '—'], ['Email', job.client_email || '—']]);
+}
+
+/** The deposit request and bank details, for a booking still waiting for its deposit. */
+function depositBlocks_(job, s, tz, lead) {
+  var bank = [
+    ['Amount', money_(job.deposit_required_pence)],
+    ['Account name', s.bank_account_name || ''],
+    ['Sort code', s.bank_sort_code || ''],
+    ['Account number', s.bank_account_number || ''],
+    ['Reference', job.reference],
+  ];
+  // A deadline that has already passed (a re-sent email) isn't repeated back.
+  var due = job.deposit_due_at && new Date(job.deposit_due_at).getTime() > Date.now()
+    ? 'by ' + fmt_(job.deposit_due_at, tz, "HH:mm 'on' EEEE d MMMM") : 'as soon as you can';
+  return [
+    p_(lead + 'As a new client, please pay a <b>' + money_(job.deposit_required_pence) + ' deposit</b> by bank transfer ' + esc_(due) + ' to secure it. It comes off your bill on the day.'),
+    box_(table_(bank)),
+    p_('Please use the reference <b>' + esc_(job.reference) + '</b> so your payment can be matched. You’ll get another email once it has arrived.'),
+  ];
+}
+
+/**
+ * "Need to change or cancel?" with the client's own link, and the time after
+ * which the cancellation policy applies. Only for emails to the client.
+ */
+function manageBlock_(job, s, tz) {
+  var online = s.client_self_service !== false && /^https:\/\//i.test(job.manage_url || '');
+  var by = job.free_until && new Date(job.free_until).getTime() > Date.now()
+    ? 'Please let us know by ' + fmt_(job.free_until, tz, "EEEE d MMMM 'at' HH:mm") + ' — after that, the cancellation policy applies.'
+    : '';
+  if (!online && !by) return '';
+  return p_('Need to change or cancel? ' +
+    (online ? 'You can do it online: ' + link_(job.manage_url, 'Change or cancel your booking') : 'Just get in touch.') +
+    (by ? '<br>' + esc_(by) : ''));
+}
+
+/** The client's recent online changes, oldest first, for the owner. */
+function changeList_(changes, tz, notice) {
+  var moved = function (x) { return 'from ' + fmt_(x.old_starts_at, tz, 'EEE d MMM HH:mm') + ' to ' + fmt_(x.new_starts_at, tz, 'EEE d MMM HH:mm'); };
+  var switched = function (x) { return 'from ' + x.old_service_name + ' to ' + x.new_service_name; };
+  return '<ul style="margin:6px 0;padding-left:20px">' + changes.map(function (x) {
+    var what = x.action === 'moved' ? 'Moved ' + moved(x)
+      : x.action === 'treatment' ? 'Switched ' + switched(x)
+      : x.action === 'moved_treatment' ? 'Moved ' + moved(x) + ', and switched ' + switched(x)
+      : 'Cancelled';
+    return '<li style="margin:3px 0">' + esc_(what) + (x.late ? ' <b>(less than ' + esc_(notice) + ')</b>' : '') +
+      ' <span style="color:#76676b">· changed ' + esc_(fmt_(x.at, tz, "EEE d MMM 'at' HH:mm")) + '</span></li>';
+  }).join('') + '</ul>';
 }
 
 // ---------------------------------------------------------------------------
@@ -263,6 +384,7 @@ function esc_(v) {
 function stripHtml_(html) {
   return String(html)
     .replace(/<br\s*\/?>/gi, '\n').replace(/<\/tr>/gi, '\n').replace(/<\/td><td[^>]*>/gi, ': ')
+    .replace(/<li[^>]*>/gi, '- ').replace(/<\/li>/gi, '\n')
     .replace(/<a [^>]*href="([^"]+)"[^>]*>([^<]*)<\/a>/gi, '$2 ($1)')
     .replace(/<[^>]+>/g, '')
     .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&')

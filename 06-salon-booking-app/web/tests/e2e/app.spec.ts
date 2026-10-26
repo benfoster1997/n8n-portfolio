@@ -98,12 +98,16 @@ test('a returning client is not asked for a deposit', async ({ page }) => {
 
 test('WhatsApp reminders open WhatsApp with the message written', async ({ page }) => {
   await signIn(page);
-  await page.getByRole('link', { name: /WhatsApp reminder/ }).click();
+  // 72 hours ahead: Chloe and Sophie tomorrow, Ruby in three days.
+  await page.getByRole('link', { name: 'Send 3 WhatsApp reminders' }).click();
   await expect(page.getByRole('heading', { name: 'WhatsApp reminders' })).toBeVisible();
   const remind = page.getByRole('link', { name: 'Send reminder' }).first();
   const href = await remind.getAttribute('href');
   expect(href).toMatch(/^https:\/\/wa\.me\/447700900105\?text=/);
-  expect(decodeURIComponent(href!.split('text=')[1])).toContain('Just a reminder of your Gel polish — hands appointment');
+  const text = decodeURIComponent(href!.split('text=')[1]);
+  expect(text).toContain('Just a reminder of your Gel polish — hands appointment');
+  // The client's own change/cancel link, and the time to do it by.
+  expect(text).toMatch(/Please do it by \w+ \d+ \w+ at \d\d:\d\d: http:\/\/localhost:\d+\/manage\/[0-9a-f-]{36}/);
   const deposit = page.getByRole('link', { name: 'Ask for deposit' }).first();
   expect(decodeURIComponent((await deposit.getAttribute('href'))!)).toContain('Sort code: 00-00-00');
   await shot(page, '07-reminders');

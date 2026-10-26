@@ -182,8 +182,9 @@ create table if not exists public.appointments (
   client_change_count    int not null default 0,
   client_changed_at      timestamptz,
   -- When the client was last sent their full booking details after booking (a
-  -- "your booking has changed" email or a re-sent confirmation). A reminder
-  -- isn't sent on top of one that went out inside the reminder window.
+  -- "your booking has changed" or "deposit received" email, or a re-sent
+  -- confirmation). A reminder isn't sent on top of one that went out inside
+  -- the reminder window.
   details_sent_at        timestamptz,
   created_at             timestamptz not null default now(),
   updated_at             timestamptz not null default now(),
@@ -921,12 +922,16 @@ begin
 
   v_late := v_moved and s.cancel_notice_hours > 0
             and now() > v_old.starts_at - make_interval(hours => s.cancel_notice_hours);
+  select email into v_email from public.clients where id = v_old.client_id;
 
   begin
     update public.appointments
        set service_id = v_service_id, service_name = v_name, price_pence = v_price, duration_min = v_duration,
            starts_at = v_start,           -- ends_at / busy_until / reminders follow in the trigger
-           client_change_count = client_change_count + 1, client_changed_at = now(), details_sent_at = now()
+           client_change_count = client_change_count + 1, client_changed_at = now(),
+           -- Only when an email will actually carry the new details (a client with
+           -- no email, using the link from a WhatsApp, still gets a reminder later).
+           details_sent_at = case when coalesce(btrim(v_email), '') <> '' then now() else details_sent_at end
      where id = v_old.id
     returning * into v_appt;
   exception when exclusion_violation then
@@ -942,7 +947,6 @@ begin
 
   -- Tell the client and the owner. A confirmation or new-booking alert that
   -- hasn't gone yet will carry the new details anyway, so it isn't doubled up.
-  select email into v_email from public.clients where id = v_appt.client_id;
   if not exists (select 1 from public.email_outbox
                   where appointment_id = v_appt.id and kind = 'booking_received' and status = 'pending') then
     perform public.queue_email(v_appt.id, 'changed', v_email, true);
@@ -973,7 +977,9 @@ declare
   v_appt   public.appointments;
   v_late   boolean;
   v_email  text;
-  v_reason text := nullif(left(btrim(regexp_replace(coalesce(p_reason, ''), '[[:cntrl:]]+', ' ', 'g')), 300), '');
+  -- One line of plain text: newlines, tabs and runs of spaces become one space,
+  -- trimmed again after the cut so it never ends in a space.
+  v_reason text := nullif(btrim(left(btrim(regexp_replace(coalesce(p_reason, ''), '[[:space:][:cntrl:]]+', ' ', 'g')), 300)), '');
 begin
   select * into s from public.settings where id = 1;
   select * into v_appt from public.appointments where public_token = p_token for update;
@@ -1026,8 +1032,11 @@ begin
   if v_appt.status <> 'pending_deposit' then raise exception 'not_pending_deposit'; end if;
   select * into v_client from public.clients where id = v_appt.client_id;
 
+  -- The "you're confirmed" email carries the full details, so when it goes out
+  -- inside the reminder window a reminder isn't sent straight after it.
   update public.appointments
-     set status = 'confirmed', deposit_paid_at = now()
+     set status = 'confirmed', deposit_paid_at = now(),
+         details_sent_at = case when coalesce(v_client.email, '') <> '' then now() else details_sent_at end
    where id = v_appt.id
   returning * into v_appt;
 

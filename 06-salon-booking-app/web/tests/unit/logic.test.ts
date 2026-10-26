@@ -5,6 +5,7 @@ import {
   fillTemplate, friendlyError, money, normalizeUkPhone, parsePounds, taxYearOf, toCsv, whatsappLink, DEFAULT_TEMPLATES,
 } from '../../src/lib/text';
 import { blankAnswers, describeAnswers, validateAnswers } from '../../src/lib/consultation';
+import { dueWhatsAppReminders, reminderDates, reminderDays, reminderRange } from '../../src/lib/reminders';
 import type { Appointment, OpeningHours, Settings } from '../../src/lib/types';
 
 const allWeek = (open = '09:00', close = '17:00', extra: Partial<OpeningHours> = {}): OpeningHours[] =>
@@ -156,6 +157,77 @@ describe('message templates', () => {
 
   it('leaves unknown placeholders as typed', () => {
     expect(fillTemplate('Hi {first_name} {nonsense}', a, s)).toBe('Hi Jess {nonsense}');
+  });
+});
+
+describe('WhatsApp reminders', () => {
+  const rules = (hours = 72) => ({ timezone: 'Europe/London', reminder_hours_before: hours });
+  let n = 0;
+  type Over = Partial<Pick<Appointment, 'status' | 'whatsapp_reminder_sent_at'>> & { client?: { phone_e164: string | null } | null };
+  const appt = (starts_at: string, over: Over = {}) => ({
+    id: `a${++n}`, starts_at, status: 'confirmed' as Appointment['status'], whatsapp_reminder_sent_at: null as string | null,
+    client: { phone_e164: '447700900101' } as { phone_e164: string | null } | null, ...over,
+  });
+  const ids = (list: { id: string }[]) => list.map((a) => a.id);
+
+  it('counts the reminder setting in whole days, never less than tomorrow', () => {
+    expect(reminderDays(72)).toBe(3);
+    expect(reminderDays(48)).toBe(2);
+    expect(reminderDays(25)).toBe(2);
+    expect(reminderDays(24)).toBe(1);
+    expect(reminderDays(2)).toBe(1);
+    expect(reminderDays(0)).toBe(1);
+    expect(reminderDays(168)).toBe(7);
+  });
+
+  it('covers tomorrow up to three days ahead for 72 hours, up to the last minute of the last day', () => {
+    const now = new Date('2026-06-10T09:00:00Z'); // Wed 10:00 BST
+    expect(reminderDates(rules(), now)).toEqual(['2026-06-11', '2026-06-12', '2026-06-13']);
+    const today = appt('2026-06-10T15:00:00Z');
+    const firstThing = appt('2026-06-10T23:00:00Z'); // 00:00 BST Thursday: tomorrow
+    const lastDay = appt('2026-06-13T22:59:00Z'); // 23:59 BST Saturday
+    const tooFar = appt('2026-06-13T23:00:00Z'); // 00:00 BST Sunday
+    expect(ids(dueWhatsAppReminders([tooFar, lastDay, today, firstThing], rules(), now))).toEqual([firstThing.id, lastDay.id]);
+    // 24 hours means tomorrow only.
+    expect(ids(dueWhatsAppReminders([tooFar, lastDay, today, firstThing], rules(24), now))).toEqual([firstThing.id]);
+  });
+
+  it('uses London calendar days when the clocks go back', () => {
+    // Saturday 24 Oct 2026, 23:30 BST. The clocks go back at 02:00 on Sunday.
+    const now = new Date('2026-10-24T22:30:00Z');
+    expect(reminderDates(rules(), now)).toEqual(['2026-10-25', '2026-10-26', '2026-10-27']);
+    const lateTonight = appt('2026-10-24T22:45:00Z'); // 23:45 BST Saturday: still today
+    const afterMidnight = appt('2026-10-24T23:30:00Z'); // 00:30 BST Sunday (still the 24th in UTC)
+    const lastEvening = appt('2026-10-27T23:30:00Z'); // 23:30 GMT Tuesday
+    const wednesday = appt('2026-10-28T00:15:00Z'); // 00:15 GMT Wednesday
+    expect(ids(dueWhatsAppReminders([lateTonight, afterMidnight, lastEvening, wednesday], rules(), now)))
+      .toEqual([afterMidnight.id, lastEvening.id]);
+    // The list loads from midnight BST today to midnight GMT after the last day.
+    expect(reminderRange(rules(), now)).toEqual({ fromIso: '2026-10-23T23:00:00.000Z', toIso: '2026-10-28T00:00:00.000Z' });
+  });
+
+  it('uses London calendar days when the clocks go forward', () => {
+    const now = new Date('2026-03-28T23:30:00Z'); // Saturday 23:30 GMT
+    const tuesdayNight = appt('2026-03-31T22:30:00Z'); // 23:30 BST Tuesday 31 March
+    const wednesday = appt('2026-03-31T23:30:00Z'); // 00:30 BST Wednesday 1 April (31 March in UTC)
+    expect(ids(dueWhatsAppReminders([tuesdayNight, wednesday], rules(), now))).toEqual([tuesdayNight.id]);
+  });
+
+  it('leaves out ones already sent, cancelled or finished, and clients without a mobile', () => {
+    const now = new Date('2026-06-10T09:00:00Z');
+    const at = '2026-06-11T10:00:00Z';
+    const due = appt(at);
+    const deposit = appt('2026-06-12T10:00:00Z', { status: 'pending_deposit' });
+    const list = [
+      due, deposit,
+      appt(at, { whatsapp_reminder_sent_at: '2026-06-10T08:00:00Z' }),
+      appt(at, { status: 'cancelled' }),
+      appt(at, { status: 'completed' }),
+      appt(at, { status: 'no_show' }),
+      appt(at, { client: { phone_e164: null } }),
+      appt(at, { client: null }),
+    ];
+    expect(ids(dueWhatsAppReminders(list, rules(), now))).toEqual([due.id, deposit.id]);
   });
 });
 
