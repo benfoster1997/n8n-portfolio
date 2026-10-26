@@ -294,7 +294,7 @@ function ManageBooking({ m, token, reload, setData }: {
             <div className="sub">{when(result.starts_at)}</div>
             <div className="sub">Reference <b className="mono">{result.reference}</b></div>
           </div>
-          <p>We’ve emailed you the new details.</p>
+          {b.has_email && <p>We’ve emailed you the new details.</p>}
           <button className="btn" onClick={() => setMode('view')}>Back to my booking</button>
         </div>
       )}

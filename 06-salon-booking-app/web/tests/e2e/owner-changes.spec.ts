@@ -176,3 +176,19 @@ test('cancellation settings and the reminder window save', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Change time' })).toBeVisible();
   await expect(page.getByText('Change or cancel link')).toHaveCount(0);
 });
+
+test('a client who cancels late by WhatsApp: the owner cancels it and marks it late', async ({ page }) => {
+  await signIn(page);
+  // Chloe is booked for tomorrow at 11:00, inside the 48-hour notice period.
+  await page.getByRole('link', { name: /Chloe Bennett/ }).first().click();
+  await expect(page.getByRole('heading', { name: 'Chloe Bennett' })).toBeVisible();
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await page.getByLabel('Reason (optional)').fill('Messaged me this morning');
+  await page.getByLabel(/Chloe cancelled with less than 48 hours’ notice/).check();
+  await page.getByRole('button', { name: 'Cancel appointment' }).click();
+
+  await expect(page.getByText('Cancelled by you')).toBeVisible();
+  await expect(page.locator('.card.attention', { hasText: 'Late cancellation' })).toContainText('the full £25 is payable');
+  await page.getByRole('link', { name: 'Today' }).click();
+  await expect(page.locator('.card.attention', { hasText: 'Late cancellations' })).toContainText('Chloe Bennett');
+});

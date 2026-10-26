@@ -198,8 +198,8 @@ export function supabaseApi(url: string, anonKey: string): Api {
         p_appointment_id: id, p_amount_pence: amountPence, p_method: method, p_tip_pence: tipPence, p_note: note,
       }));
     },
-    async cancelAppointment(id, reason, notify) {
-      check(await sb.rpc('owner_cancel_appointment', { p_appointment_id: id, p_reason: reason, p_notify: notify }));
+    async cancelAppointment(id, reason, notify, late = false) {
+      check(await sb.rpc('owner_cancel_appointment', { p_appointment_id: id, p_reason: reason, p_notify: notify, p_late: late }));
     },
     async queueEmail(id, kind) {
       check(await sb.rpc('owner_queue_email', { p_appointment_id: id, p_kind: kind }));

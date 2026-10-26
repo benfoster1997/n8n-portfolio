@@ -832,6 +832,9 @@ begin
       'cancelled_by',           a.cancelled_by,
       'cancelled_late',         a.cancelled_late,
       'changes_left',           greatest(0, public.max_client_changes() - a.client_change_count),
+      -- Whether a change or cancellation will be confirmed by email (not the address itself).
+      'has_email',              exists (select 1 from public.clients c
+                                         where c.id = a.client_id and coalesce(c.email, '') <> ''),
       'form_needed',            a.is_new_client and not exists (
                                   select 1 from public.consultation_forms f where f.client_id = a.client_id),
       -- Changes or cancellations after this time are inside the notice period.
@@ -1089,8 +1092,12 @@ begin
   return v_appt;
 end $$;
 
+-- p_late: the client cancelled with too little notice (told her by phone or
+-- WhatsApp), so the booking is flagged like a late online cancellation.
+drop function if exists public.owner_cancel_appointment(uuid, text, boolean);
+
 create or replace function public.owner_cancel_appointment(
-  p_appointment_id uuid, p_reason text default null, p_notify boolean default true)
+  p_appointment_id uuid, p_reason text default null, p_notify boolean default true, p_late boolean default false)
 returns public.appointments language plpgsql volatile security definer set search_path = public as $$
 declare
   v_appt   public.appointments;
@@ -1103,7 +1110,7 @@ begin
   select * into v_client from public.clients where id = v_appt.client_id;
 
   update public.appointments
-     set status = 'cancelled', cancelled_at = now(), cancelled_by = 'owner',
+     set status = 'cancelled', cancelled_at = now(), cancelled_by = 'owner', cancelled_late = coalesce(p_late, false),
          cancel_reason = nullif(btrim(coalesce(p_reason, '')), '')
    where id = v_appt.id
   returning * into v_appt;
@@ -1418,6 +1425,6 @@ grant execute on function public.normalize_uk_phone(text)                    to 
 grant execute on function public.gen_reference()                             to authenticated;
 grant execute on function public.owner_mark_deposit_paid(uuid, text)         to authenticated;
 grant execute on function public.owner_complete_appointment(uuid, int, text, int, text) to authenticated;
-grant execute on function public.owner_cancel_appointment(uuid, text, boolean) to authenticated;
+grant execute on function public.owner_cancel_appointment(uuid, text, boolean, boolean) to authenticated;
 grant execute on function public.owner_queue_email(uuid, text)               to authenticated;
 grant execute on function public.owner_delete_health_data(uuid)               to authenticated;

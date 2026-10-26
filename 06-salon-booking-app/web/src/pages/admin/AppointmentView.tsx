@@ -6,7 +6,7 @@ import { useOwner } from '../../components/owner';
 import { ErrorBox, Field, Icon, LateChip, Seg, Sheet, Spinner, StatusChip, TopBar, useAction, useLoad, useToast } from '../../components/ui';
 import { availableSlots } from '../../lib/slots';
 import { addDays, dateInZone, fmtDay, fmtDayLong, fmtDayTime, fmtTime, minutesLabel, startOfDayInstant, todayInZone, zonedToInstant } from '../../lib/time';
-import { fillTemplate, firstName, manageLink, money, parsePounds, whatsappLink } from '../../lib/text';
+import { fillTemplate, firstName, freeChangeDeadline, manageLink, money, parsePounds, whatsappLink } from '../../lib/text';
 import type { Appointment, CancelledBy, ClientChange, EmailKind, PayMethod, Settings } from '../../lib/types';
 
 const EMAIL_LABEL: Record<EmailKind, string> = {
@@ -449,9 +449,13 @@ function MoveSheet({ a, tz, onClose, onDone }: { a: Appointment; tz: string; onC
 }
 
 function CancelSheet({ a, onClose, onDone }: { a: Appointment; onClose: () => void; onDone: () => void }) {
+  const { settings: s } = useOwner();
   const [reason, setReason] = useState('');
   const [notify, setNotify] = useState(!!a.client?.email);
+  const [late, setLate] = useState(false);
   const { busy, error, run } = useAction();
+  // Inside the notice period: if the client is the one cancelling, it's a late cancellation.
+  const inNotice = s.cancel_notice_hours > 0 && Date.now() > freeChangeDeadline(a.starts_at, s.cancel_notice_hours).getTime();
   return (
     <Sheet title="Cancel appointment" onClose={onClose}>
       <div className="stack">
@@ -461,10 +465,16 @@ function CancelSheet({ a, onClose, onDone }: { a: Appointment; onClose: () => vo
         {a.client?.email && (
           <label className="check"><input type="checkbox" checked={notify} onChange={(e) => setNotify(e.target.checked)} /><span>Email the client to let them know</span></label>
         )}
+        {inNotice && (
+          <label className="check">
+            <input type="checkbox" checked={late} onChange={(e) => setLate(e.target.checked)} />
+            <span>{firstName(a.client?.full_name) || 'The client'} cancelled with less than {s.cancel_notice_hours} hours’ notice — mark it as a late cancellation</span>
+          </label>
+        )}
         {a.deposit_paid_at && <div className="notice warn">A {money(a.deposit_required_pence)} deposit was paid. If you’re refunding it, add a refund in Money.</div>}
         <ErrorBox error={error} />
         <button className="btn danger solid block" disabled={busy}
-          onClick={async () => { if (await run(() => api.cancelAppointment(a.id, reason.trim() || null, notify))) onDone(); }}>
+          onClick={async () => { if (await run(() => api.cancelAppointment(a.id, reason.trim() || null, notify, inNotice && late))) onDone(); }}>
           {busy ? 'Cancelling…' : 'Cancel appointment'}
         </button>
       </div>

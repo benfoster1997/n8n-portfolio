@@ -197,7 +197,7 @@ function render_(job, s) {
   if (job.kind === 'owner_changed') {
     var changes = job.changes || [];
     var anyLate = changes.some(function (x) { return x.late; });
-    var now = clientRows_(job).concat([
+    var current = clientRows_(job).concat([
       ['Treatment', job.service_name], ['When', when], ['Price', money_(job.price_pence)], ['Reference', job.reference],
       ['Status', job.status === 'pending_deposit' ? 'Waiting for ' + money_(job.deposit_required_pence) + ' deposit' : 'Confirmed'],
     ]);
@@ -205,7 +205,7 @@ function render_(job, s) {
       'A client changed their booking',
       [
         p_(esc_(job.client_name) + ' changed their booking online. It’s now:'),
-        table_(now),
+        table_(current),
         anyLate ? box_('<b>Moved with less than ' + esc_(notice) + '.</b>') : '',
         changes.length ? p_('<b>What changed</b>') : '',
         changes.length ? changeList_(changes, tz, notice) : '',
@@ -287,6 +287,11 @@ function render_(job, s) {
     } else {
       if (job.cancel_reason) c.push(['Reason', job.cancel_reason]);
       blocks = [p_('Hi ' + esc_(job.first_name) + ', your appointment below has been cancelled.'), table_(c)];
+      // The owner cancelled on the client's behalf and marked it late.
+      if (job.cancelled_by === 'owner' && job.cancelled_late) {
+        blocks.push(p_('As this was less than ' + esc_(hrs) + ' before your appointment, our cancellation policy applies' +
+          (s.cancellation_policy ? ': ' + esc_(s.cancellation_policy) : '.')));
+      }
     }
     return msg_('Your appointment has been cancelled — ' + biz, 'Appointment cancelled',
       blocks.concat([site ? p_('To book a new time: ' + link_(site + '/book', site + '/book')) : '', contact]), biz);

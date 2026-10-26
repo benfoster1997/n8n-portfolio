@@ -47,14 +47,15 @@ after(async () => {
 beforeEach(async () => {
   await db.query(`
     truncate public.email_outbox, public.payments, public.client_photos, public.consultation_forms,
-             public.appointments, public.patch_tests, public.clients, public.services, public.time_off,
-             public.owner restart identity cascade;
+             public.client_changes, public.appointments, public.patch_tests, public.clients, public.services,
+             public.time_off, public.owner restart identity cascade;
     update public.settings set
       business_name = 'Test Studio', timezone = 'Europe/London', slot_interval_min = 15, buffer_min = 10,
       min_notice_hours = 12, max_days_ahead = 60, deposit_amount_pence = 1000, deposit_deadline_hours = 24,
       bank_account_name = 'T Studio', bank_sort_code = '00-00-00', bank_account_number = '12345678',
       owner_email = 'owner@example.com', public_site_url = 'https://book.example.com',
-      reminder_hours_before = 24, booking_enabled = true,
+      reminder_hours_before = 24, booking_enabled = true, auto_cancel_unpaid = false,
+      cancel_notice_hours = 48, client_self_service = true,
       cancellation_policy = '48 hours notice or the full price is payable',
       email_secret_hash = '${createHash('sha256').update(SECRET).digest('hex')}'
      where id = 1;
@@ -802,4 +803,656 @@ test('a fresh install starts with the 48-hour, full-price cancellation policy', 
     await c.end();
     await admin.query(`drop database if exists ${fresh}`);
   }
+});
+
+test('a fresh install reminds 72 hours ahead, and the schema can be run again over it', async () => {
+  // The column default itself (beforeEach sets 24 on the shared row).
+  const d = (await db.query(`select column_default from information_schema.columns
+                              where table_schema = 'public' and table_name = 'settings' and column_name = 'reminder_hours_before'`)).rows[0];
+  assert.equal(d.column_default, '72');
+
+  const fresh = `booking_rerun_${process.pid}`;
+  await admin.query(`drop database if exists ${fresh}`);
+  await admin.query(`create database ${fresh}`);
+  const c = new pg.Client({ host: PGHOST, user: PGUSER, database: fresh });
+  await c.connect();
+  try {
+    await c.query(SHIM);
+    await c.query(SCHEMA);
+    const s = (await c.query(`select reminder_hours_before, cancel_notice_hours, client_self_service from public.settings`)).rows[0];
+    assert.deepEqual(s, { reminder_hours_before: 72, cancel_notice_hours: 48, client_self_service: true });
+    await c.query(`update public.settings set reminder_hours_before = 48 where id = 1`);
+    // Running it a second time is clean, keeps her settings and keeps the locks on.
+    await c.query(SCHEMA);
+    assert.equal((await c.query(`select reminder_hours_before from public.settings`)).rows[0].reminder_hours_before, 48);
+    const p = (await c.query(`select
+        has_function_privilege('anon', 'public.public_change_booking(uuid, uuid, timestamptz)', 'execute') as change,
+        has_function_privilege('anon', 'public.public_get_booking(uuid)', 'execute') as get,
+        has_function_privilege('anon', 'public.queue_email(uuid, text, text, boolean)', 'execute') as queue,
+        has_function_privilege('authenticated', 'public.queue_email(uuid, text, text, boolean)', 'execute') as queue_auth,
+        has_table_privilege('anon', 'public.client_changes', 'select') as changes_anon,
+        (select relrowsecurity from pg_class where oid = 'public.client_changes'::regclass) as rls`)).rows[0];
+    assert.deepEqual(p, { change: true, get: true, queue: false, queue_auth: false, changes_anon: false, rls: true });
+  } finally {
+    await c.end();
+    await admin.query(`drop database if exists ${fresh}`);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// A client managing their own booking (/manage/<token>)
+// ---------------------------------------------------------------------------
+
+const getBooking = async (token) => (await asAnon(`select public.public_get_booking($1) as m`, [token])).rows[0].m;
+const changeBooking = async (token, serviceId, startsAt) =>
+  (await asAnon(`select public.public_change_booking($1, $2, $3) as r`, [token, serviceId, startsAt])).rows[0].r;
+const cancelBooking = async (token, reason = null) =>
+  (await asAnon(`select public.public_cancel_booking($1, $2) as r`, [token, reason])).rows[0].r;
+const claimJobs = async () => (await asAnon(`select public.email_jobs_claim($1) as j`, [SECRET])).rows[0].j;
+const reportSent = (jobs) =>
+  asAnon(`select public.email_jobs_report($1, $2)`, [SECRET, JSON.stringify(jobs.map((j) => ({ id: j.id, ok: true })))]);
+/** Claim everything waiting and report it sent, as the email script would. */
+async function sendAll() { const c = await claimJobs(); await reportSent(c.jobs); return c; }
+const outbox = async () => (await db.query(`select kind, status, to_email from public.email_outbox order by kind`)).rows;
+const changesOf = async (apptId) =>
+  (await db.query(`select * from public.client_changes where appointment_id = $1 order by id`, [apptId])).rows;
+const iso = (t) => new Date(t).toISOString();
+
+/** An appointment put straight into the diary, as the owner's app can: any time, any status. */
+async function diaryAppt(startsAt, { email = 'dana@example.com', status = 'confirmed', createdAt = null, serviceId = null,
+                                     serviceName = 'Gel polish', duration = 45, price = 2500 } = {}) {
+  let c = email && (await db.query(`select id from public.clients where email = $1`, [email])).rows[0];
+  if (!c) {
+    c = (await db.query(`insert into public.clients (full_name, email, phone) values ('Dana Example', $1, '07700 900456') returning id`,
+      [email])).rows[0];
+  }
+  return (await db.query(
+    `insert into public.appointments (client_id, service_id, service_name, price_pence, duration_min, starts_at, ends_at,
+                                      busy_until, reference, status, created_at)
+     values ($1, $2, $3, $4, $5, $6, $6, $6, '', $7, coalesce($8::timestamptz, now())) returning *`,
+    [c.id, serviceId, serviceName, price, duration, startsAt, status, createdAt])).rows[0];
+}
+const weekAgo = () => new Date(Date.now() - 7 * 86400e3);
+
+// Tomorrow at 14:00 is always 14–38 hours away: inside the 48-hour notice
+// period, but past the 12-hour minimum notice for a new time.
+const insideNotice = () => londonAt(1, '14:00');
+
+test('the manage link shows that one booking, and only what the page needs', async () => {
+  const svc = await addService('Gel polish', 45, 2500);
+  await db.query(`update public.settings set owner_phone = '07700 900000', address = '1 Secret Street' where id = 1`);
+  const r = await book(svc, await londonAt(4, '10:00'), { p_notes: 'PRIVATE NOTE' });
+  const other = await book(svc, await londonAt(5, '10:00'),
+    { p_full_name: 'Olive Other', p_email: 'olive@example.com', p_phone: '07700900777' });
+  const a = await appt(r.reference);
+
+  const m = await getBooking(a.public_token);
+  assert.deepEqual(Object.keys(m).sort(), ['bank', 'booking', 'cancel_notice_hours', 'client_self_service', 'contact_phone', 'info']);
+  assert.deepEqual(Object.keys(m.booking).sort(), [
+    'cancelled_at', 'cancelled_by', 'cancelled_late', 'changes_left', 'deposit_due_at', 'deposit_paid',
+    'deposit_required_pence', 'duration_min', 'ends_at', 'first_name', 'form_needed', 'free_until', 'has_email', 'price_pence',
+    'reference', 'service_id', 'service_name', 'starts_at', 'status']);
+  assert.equal(m.booking.reference, r.reference);
+  assert.equal(m.booking.first_name, 'Jess');
+  assert.equal(m.booking.service_id, svc);
+  assert.equal(m.booking.status, 'pending_deposit');
+  assert.equal(m.booking.deposit_paid, false);
+  assert.equal(m.booking.form_needed, true);
+  assert.equal(m.booking.changes_left, 6);
+  assert.equal(new Date(m.booking.free_until).getTime(), a.starts_at.getTime() - 48 * 3600e3);
+  assert.deepEqual([m.contact_phone, m.cancel_notice_hours, m.client_self_service], ['07700 900000', 48, true]);
+  assert.equal(m.info.business_name, 'Test Studio');
+  // The bank details, because a deposit is owed.
+  assert.deepEqual(m.bank, { account_name: 'T Studio', sort_code: '00-00-00', account_number: '12345678' });
+
+  // Nobody else's booking, and nothing private: not even her own contact details or the link itself.
+  const text = JSON.stringify(m);
+  for (const secret of ['Olive', 'olive@example.com', other.reference, 'jess@example.com', '900123', 'PRIVATE NOTE',
+                        'Secret Street', a.public_token, 'email_secret']) {
+    assert.ok(!text.includes(secret), `leaked ${secret}`);
+  }
+
+  // Once the deposit is in, the bank details go.
+  await asOwner(`select public.owner_mark_deposit_paid($1, 'bank_transfer')`, [a.id]);
+  const paid = await getBooking(a.public_token);
+  assert.equal(paid.bank, null);
+  assert.deepEqual([paid.booking.status, paid.booking.deposit_paid], ['confirmed', true]);
+});
+
+test('the manage link: unknown, more than a day old, and no notice period', async () => {
+  assert.equal(await getBooking(randomUUID()), null);
+  const old = await diaryAppt(new Date(Date.now() - 25 * 3600e3), { status: 'completed' });
+  assert.equal(await getBooking(old.public_token), null, 'more than a day old');
+  const recent = await diaryAppt(new Date(Date.now() - 22 * 3600e3), { status: 'completed' });
+  assert.equal((await getBooking(recent.public_token)).booking.status, 'completed');
+  await db.query(`update public.settings set cancel_notice_hours = 0 where id = 1`);
+  const m = await getBooking(recent.public_token);
+  assert.equal(m.booking.free_until, null);
+  assert.equal(m.cancel_notice_hours, 0);
+});
+
+test('busy times for picking a new time leave out only the client’s own booking', async () => {
+  const svc = await addService();
+  const mine = await book(svc, await londonAt(3, '10:00'));
+  const theirs = await book(svc, await londonAt(3, '14:00'), { p_email: 'b@example.com', p_phone: '07700900222' });
+  await db.query(`insert into public.time_off (starts_at, ends_at) values ($1, $2)`, [await londonAt(3, '16:00'), await londonAt(3, '17:00')]);
+  const range = [await londonAt(0, '00:00'), await londonAt(10, '00:00')];
+  const token = (await appt(mine.reference)).public_token;
+
+  const all = (await asAnon(`select * from public.public_busy_times($1, $2)`, range)).rows;
+  const except = (await asAnon(`select * from public.public_busy_times_except($1, $2, $3)`, [token, ...range])).rows;
+  assert.equal(all.length, 3);
+  assert.deepEqual(except.map((b) => b.starts_at.toISOString()), [iso((await appt(theirs.reference)).starts_at), iso(await londonAt(3, '16:00'))]);
+  assert.deepEqual(Object.keys(except[0]).sort(), ['ends_at', 'starts_at']);
+
+  await rejects(asAnon(`select * from public.public_busy_times_except($1, $2, $3)`, [randomUUID(), ...range]), 'not_found');
+  await rejects(asAnon(`select * from public.public_busy_times_except($1, now(), now() - interval '1 hour')`, [token]), 'invalid_range');
+  await rejects(asAnon(`select * from public.public_busy_times_except($1, now(), now() + interval '500 days')`, [token]), 'invalid_range');
+  await rejects(asAnon(`select * from public.public_busy_times_except($1, now() - interval '30 days', now())`, [token]), 'invalid_range');
+});
+
+test('a client can move their booking, switch treatment, or both', async () => {
+  const gel = await addService('Gel polish', 45, 2500);
+  const biab = await addService('BIAB infill', 75, 3500);
+  const r = await book(gel, await londonAt(4, '10:00'));
+  const { public_token: token, id } = await appt(r.reference);
+  await db.query(`update public.services set price_pence = 2800 where id = $1`, [gel]); // a price rise since she booked
+
+  // Move only: keeping the treatment keeps the price she booked at.
+  const res = await changeBooking(token, null, await londonAt(5, '11:00'));
+  assert.deepEqual(Object.keys(res).sort(), ['late', 'price_pence', 'reference', 'service_name', 'starts_at']);
+  assert.deepEqual([res.reference, res.service_name, res.price_pence, res.late], [r.reference, 'Gel polish', 2500, false]);
+  let a = await appt(r.reference);
+  assert.equal(iso(a.starts_at), iso(await londonAt(5, '11:00')));
+  assert.equal(a.price_pence, 2500);
+  assert.equal(a.ends_at - a.starts_at, 45 * 60e3);
+  assert.equal(a.busy_until - a.ends_at, 10 * 60e3);
+  // Picking the same treatment again still counts as keeping it.
+  await changeBooking(token, gel, await londonAt(5, '12:00'));
+  assert.equal((await appt(r.reference)).price_pence, 2500);
+
+  // Switch only: the new treatment's name, price and length, same time.
+  assert.equal((await changeBooking(token, biab, null)).service_name, 'BIAB infill');
+  a = await appt(r.reference);
+  assert.deepEqual([a.service_id, a.service_name, a.price_pence, a.duration_min], [biab, 'BIAB infill', 3500, 75]);
+  assert.equal(iso(a.starts_at), iso(await londonAt(5, '12:00')));
+  assert.equal(a.ends_at - a.starts_at, 75 * 60e3);
+
+  // Both at once. Switching back takes today's price.
+  await changeBooking(token, gel, await londonAt(6, '09:30'));
+  a = await appt(r.reference);
+  assert.deepEqual([a.service_name, a.price_pence, a.duration_min, iso(a.starts_at)], ['Gel polish', 2800, 45, iso(await londonAt(6, '09:30'))]);
+  assert.equal(a.client_change_count, 4);
+  assert.ok(a.client_changed_at);
+  assert.equal(a.status, 'pending_deposit', 'the deposit is still owed');
+
+  const log = await changesOf(id);
+  assert.deepEqual(log.map((c) => c.action), ['moved', 'moved', 'treatment', 'moved_treatment']);
+  assert.deepEqual(
+    [log[2].old_service_name, log[2].new_service_name, log[2].old_price_pence, log[2].new_price_pence, log[2].late],
+    ['Gel polish', 'BIAB infill', 2500, 3500, false]);
+  assert.deepEqual([iso(log[0].old_starts_at), iso(log[0].new_starts_at)], [iso(await londonAt(4, '10:00')), iso(await londonAt(5, '11:00'))]);
+  assert.equal((await getBooking(token)).booking.changes_left, 2);
+
+  // The old time is free for someone else.
+  await book(gel, await londonAt(4, '10:00'), { p_email: 'b@example.com', p_phone: '07700900222' });
+});
+
+test('a new time follows the same rules as a new booking', async () => {
+  const gel = await addService('Gel polish', 45);
+  const longer = await addService('BIAB new set', 75);
+  const mine = await book(gel, await londonAt(4, '09:00'));
+  await book(gel, await londonAt(4, '10:00'), { p_email: 'b@example.com', p_phone: '07700900222' });
+  const { public_token: token, id } = await appt(mine.reference);
+
+  // Another client and her clean-up gap (10:00–10:55), from either side.
+  for (const t of ['10:00', '10:45', '09:15']) await rejects(changeBooking(token, null, await londonAt(4, t)), 'slot_taken');
+  // A longer treatment at the same time would run into her too.
+  await rejects(changeBooking(token, longer, null), 'slot_taken');
+  // The error is a short code, with nothing about the other booking in it.
+  await assert.rejects(changeBooking(token, null, await londonAt(4, '10:00')),
+    (e) => { assert.equal(e.message, 'slot_taken'); assert.equal(e.detail, undefined); return true; });
+  // Time off keeps the same clean-up gap in front of it.
+  await db.query(`insert into public.time_off (starts_at, ends_at) values ($1, $2)`, [await londonAt(5, '13:00'), await londonAt(5, '15:00')]);
+  await rejects(changeBooking(token, null, await londonAt(5, '12:30')), 'slot_taken');
+
+  const inOneHour = new Date(Date.now() + 3600e3);
+  inOneHour.setUTCSeconds(0, 0);
+  await rejects(changeBooking(token, null, inOneHour.toISOString()), 'too_soon');
+  await rejects(changeBooking(token, null, await londonAt(90, '10:00')), 'too_far');
+  await rejects(changeBooking(token, null, await londonAt(5, '08:00')), 'outside_hours');
+  await rejects(changeBooking(token, null, await londonAt(5, '17:30')), 'outside_hours'); // would end 18:15
+  await rejects(changeBooking(token, null, await londonAt(5, '10:07')), 'invalid_time');
+  const dow = (await db.query(`select extract(isodow from (now() at time zone 'Europe/London')::date + 6)::int as d`)).rows[0].d;
+  await db.query(`update public.opening_hours set is_open = false where weekday = $1`, [dow]);
+  await rejects(changeBooking(token, null, await londonAt(6, '10:00')), 'closed');
+
+  await rejects(changeBooking(token, randomUUID(), null), 'invalid_service');
+  const old = (await db.query(`insert into public.services (name, duration_min, price_pence, is_active) values ('Old', 30, 100, false) returning id`)).rows[0].id;
+  const phoneOnly = (await db.query(`insert into public.services (name, duration_min, price_pence, online_bookable) values ('Phone only', 30, 100, false) returning id`)).rows[0].id;
+  await rejects(changeBooking(token, old, null), 'invalid_service');
+  await rejects(changeBooking(token, phoneOnly, null), 'invalid_service');
+
+  await rejects(changeBooking(token, null, null), 'no_change');
+  await rejects(changeBooking(token, gel, await londonAt(4, '09:00')), 'no_change');
+  await rejects(changeBooking(randomUUID(), null, await londonAt(5, '10:00')), 'not_found');
+
+  // None of the refusals changed or counted anything.
+  const a = await appt(mine.reference);
+  assert.deepEqual([iso(a.starts_at), a.client_change_count], [iso(await londonAt(4, '09:00')), 0]);
+  assert.equal((await changesOf(id)).length, 0);
+});
+
+test('a booking can be changed online six times at most; cancelling is still allowed', async () => {
+  const svc = await addService();
+  const r = await book(svc, await londonAt(4, '10:00'));
+  const { public_token: token } = await appt(r.reference);
+  for (let i = 0; i < 6; i++) await changeBooking(token, null, await londonAt(4, i % 2 ? '10:00' : '11:00'));
+  assert.equal((await getBooking(token)).booking.changes_left, 0);
+  await rejects(changeBooking(token, null, await londonAt(4, '12:00')), 'too_many_changes');
+  assert.equal((await appt(r.reference)).client_change_count, 6);
+  assert.equal((await cancelBooking(token)).cancelled, true);
+});
+
+test('the owner can switch online changes off, or pause booking', async () => {
+  const svc = await addService();
+  const r = await book(svc, await londonAt(4, '10:00'));
+  const { public_token: token } = await appt(r.reference);
+  await db.query(`update public.settings set client_self_service = false where id = 1`);
+  await rejects(changeBooking(token, null, await londonAt(5, '10:00')), 'changes_disabled');
+  await rejects(cancelBooking(token), 'changes_disabled');
+  assert.equal((await getBooking(token)).client_self_service, false, 'the booking can still be looked at');
+
+  await db.query(`update public.settings set client_self_service = true, booking_enabled = false where id = 1`);
+  await rejects(changeBooking(token, null, await londonAt(5, '10:00')), 'booking_disabled');
+  assert.equal((await cancelBooking(token)).cancelled, true, 'but she can always cancel');
+});
+
+test('nothing can be changed once the appointment has started, or once it is cancelled', async () => {
+  const started = await diaryAppt(new Date(Date.now() - 10 * 60e3));
+  await rejects(changeBooking(started.public_token, null, await londonAt(4, '10:00')), 'too_late');
+  await rejects(cancelBooking(started.public_token), 'too_late');
+
+  const byOwner = await diaryAppt(await londonAt(4, '10:00'));
+  await asOwner(`select public.owner_cancel_appointment($1, 'Ill', true)`, [byOwner.id]);
+  await rejects(changeBooking(byOwner.public_token, null, await londonAt(5, '10:00')), 'not_changeable');
+  await rejects(cancelBooking(byOwner.public_token), 'not_changeable');
+  await db.query(`update public.appointments set status = 'completed' where id = $1`, [started.id]);
+  await rejects(cancelBooking(started.public_token), 'not_changeable');
+});
+
+test('moving inside the notice period is flagged as late; switching treatment is not', async () => {
+  const gel = await addService('Gel polish', 45, 2500);
+  const biab = await addService('BIAB infill', 75, 3500);
+  const soon = await diaryAppt(await insideNotice(), { serviceId: gel });
+
+  assert.equal((await changeBooking(soon.public_token, biab, null)).late, false, 'same time, different treatment');
+  assert.equal((await changeBooking(soon.public_token, null, await londonAt(4, '10:00'))).late, true);
+  // Moved again, now with plenty of notice for the time she had: not late.
+  assert.equal((await changeBooking(soon.public_token, null, await londonAt(5, '10:00'))).late, false);
+  const log = await changesOf(soon.id);
+  assert.deepEqual(log.map((c) => [c.action, c.late]), [['treatment', false], ['moved', true], ['moved', false]]);
+  assert.equal(iso(log[1].old_starts_at), iso(await insideNotice()));
+
+  // With no notice period, nothing is ever late.
+  await db.query(`update public.settings set cancel_notice_hours = 0 where id = 1`);
+  const soon2 = await diaryAppt(await insideNotice(), { email: 'b@example.com', serviceId: gel });
+  assert.equal((await changeBooking(soon2.public_token, null, await londonAt(4, '14:00'))).late, false);
+});
+
+test('changes email the client and the owner, without doubling up', async () => {
+  const svc = await addService();
+  const r = await book(svc, await londonAt(4, '10:00'));
+  const { public_token: token } = await appt(r.reference);
+
+  // The confirmation and the new-booking alert haven't gone yet: they'll carry the new time anyway.
+  await changeBooking(token, null, await londonAt(4, '11:00'));
+  assert.deepEqual((await outbox()).map((e) => e.kind), ['booking_received', 'owner_new_booking']);
+
+  // Each side on its own: the client's confirmation went, the owner's alert is still waiting (a failed try).
+  const c = await claimJobs();
+  await asAnon(`select public.email_jobs_report($1, $2)`, [SECRET, JSON.stringify(c.jobs.map((j) =>
+    ({ id: j.id, ok: j.kind === 'booking_received', error: 'quota' })))]);
+  await changeBooking(token, null, await londonAt(4, '12:00'));
+  assert.deepEqual((await outbox()).filter((e) => e.status === 'pending').map((e) => e.kind), ['changed', 'owner_new_booking']);
+
+  // Once both have gone, a change is its own email to each.
+  await sendAll();
+  await changeBooking(token, null, await londonAt(4, '13:00'));
+  assert.deepEqual((await outbox()).filter((e) => e.status === 'pending'), [
+    { kind: 'changed', status: 'pending', to_email: 'jess@example.com' },
+    { kind: 'owner_changed', status: 'pending', to_email: 'owner@example.com' },
+  ]);
+
+  // Changed again after those went: both go again, as fresh emails with the latest time.
+  const first = await sendAll();
+  assert.deepEqual(first.jobs.map((j) => j.kind).sort(), ['changed', 'owner_changed']);
+  await changeBooking(token, null, await londonAt(4, '14:00'));
+  assert.deepEqual((await db.query(`select kind, status, attempts, claimed_at from public.email_outbox
+                                     where kind in ('changed', 'owner_changed') order by kind`)).rows, [
+    { kind: 'changed', status: 'pending', attempts: 0, claimed_at: null },
+    { kind: 'owner_changed', status: 'pending', attempts: 0, claimed_at: null },
+  ]);
+  const second = await claimJobs();
+  assert.deepEqual(second.jobs.map((j) => iso(j.starts_at)), [iso(await londonAt(4, '14:00')), iso(await londonAt(4, '14:00'))]);
+});
+
+test('a change made while its email is going out is sent again with the latest details', async () => {
+  const svc = await addService();
+  const r = await book(svc, await londonAt(4, '10:00'));
+  const { public_token: token } = await appt(r.reference);
+  await sendAll();
+  await changeBooking(token, null, await londonAt(4, '11:00'));
+  const going = await claimJobs();
+  assert.deepEqual(going.jobs.map((j) => j.kind).sort(), ['changed', 'owner_changed']);
+
+  // Changed again while the script is still sending: the rows can't be touched mid-send…
+  await changeBooking(token, null, await londonAt(4, '12:00'));
+  assert.deepEqual((await outbox()).filter((e) => e.kind.endsWith('changed')).map((e) => e.status), ['sending', 'sending']);
+  // …so when the script reports them sent, they're queued again.
+  await reportSent(going.jobs);
+  assert.deepEqual((await outbox()).filter((e) => e.kind.endsWith('changed')).map((e) => e.status), ['pending', 'pending']);
+  const again = await claimJobs();
+  assert.deepEqual(again.jobs.map((j) => iso(j.starts_at)), [iso(await londonAt(4, '12:00')), iso(await londonAt(4, '12:00'))]);
+  // Nothing changed since that claim: sent means sent.
+  await reportSent(again.jobs);
+  assert.deepEqual((await outbox()).filter((e) => e.kind.endsWith('changed')).map((e) => e.status), ['sent', 'sent']);
+});
+
+test('a client move resets both reminders for the new time', async () => {
+  await db.query(`update public.settings set reminder_hours_before = 48 where id = 1`);
+  const a = await diaryAppt(await insideNotice(), { createdAt: weekAgo() });
+  assert.deepEqual((await sendAll()).jobs.map((j) => j.kind), ['reminder']);
+  await db.query(`update public.appointments set whatsapp_reminder_sent_at = now() where id = $1`, [a.id]);
+  const before = await appt(a.reference);
+  assert.ok(before.reminder_email_sent_at && before.whatsapp_reminder_sent_at);
+
+  await changeBooking(a.public_token, null, await londonAt(5, '10:00'));
+  const after = await appt(a.reference);
+  assert.equal(after.reminder_email_sent_at, null);
+  assert.equal(after.whatsapp_reminder_sent_at, null);
+  assert.ok(!(await outbox()).some((e) => e.kind === 'reminder'), 'the old reminder is cleared, so the new time gets its own');
+});
+
+test('no reminder straight after a change email that went out inside the reminder window', async () => {
+  await db.query(`update public.settings set reminder_hours_before = 48, min_notice_hours = 0 where id = 1`);
+  const biab = await addService('BIAB infill', 75, 3500);
+  const byClient = await diaryAppt(await londonAt(5, '10:00'), { createdAt: weekAgo() });
+  const switcher = await diaryAppt(await londonAt(1, '09:00'), { email: 'b@example.com', createdAt: weekAgo() });
+  const byOwner = await diaryAppt(await londonAt(5, '14:00'), { email: 'c@example.com', createdAt: weekAgo() });
+
+  // Into the window: by the client (who is emailed the new details) and by the owner (who sends nothing).
+  await changeBooking(byClient.public_token, null, await londonAt(1, '14:00'));
+  await changeBooking(switcher.public_token, biab, null);
+  await asOwner(`update public.appointments set starts_at = $2 where id = $1`, [byOwner.id, await londonAt(1, '16:00')]);
+  assert.ok((await appt(byClient.reference)).details_sent_at);
+  assert.equal((await appt(byOwner.reference)).details_sent_at, null);
+
+  const jobs = (await claimJobs()).jobs.map((j) => `${j.kind} ${j.to}`).sort();
+  assert.deepEqual(jobs, [
+    'changed b@example.com', 'changed dana@example.com',
+    'owner_changed owner@example.com', 'owner_changed owner@example.com',
+    'reminder c@example.com',
+  ]);
+});
+
+test('a client with no email can still use the link, and still gets their reminder', async () => {
+  await db.query(`update public.settings set reminder_hours_before = 48 where id = 1`);
+  const a = await diaryAppt(await londonAt(5, '10:00'), { email: null, createdAt: weekAgo() });
+  await changeBooking(a.public_token, null, await insideNotice());
+  const moved = await appt(a.reference);
+  assert.equal(moved.client_change_count, 1);
+  assert.equal(moved.details_sent_at, null, 'no email went out, so nothing was sent to her');
+  assert.deepEqual((await outbox()).map((e) => e.kind), ['owner_changed']);
+});
+
+test('a "deposit received" email inside the reminder window is not followed by a reminder', async () => {
+  await db.query(`update public.settings set reminder_hours_before = 48 where id = 1`);
+  const svc = await addService();
+  const r = await book(svc, await insideNotice());
+  await db.query(`update public.appointments set created_at = now() - interval '7 days' where reference = $1`, [r.reference]);
+  await sendAll();
+  await asOwner(`select public.owner_mark_deposit_paid($1, 'bank_transfer')`, [(await appt(r.reference)).id]);
+  assert.ok((await appt(r.reference)).details_sent_at);
+  assert.deepEqual((await claimJobs()).jobs.map((j) => j.kind), ['deposit_received']);
+  // That is what holds the reminder back: without it, one would go now.
+  await db.query(`update public.appointments set details_sent_at = null where reference = $1`, [r.reference]);
+  assert.deepEqual((await claimJobs()).jobs.map((j) => j.kind), ['reminder']);
+});
+
+test('a client move earlier brings the deposit deadline with it', async () => {
+  const svc = await addService();
+  await db.query(`update public.settings set deposit_deadline_hours = 200 where id = 1`);
+  const r = await book(svc, await londonAt(10, '10:00'));
+  const before = await appt(r.reference);
+  assert.ok(before.deposit_due_at < before.starts_at);
+  await changeBooking(before.public_token, null, await londonAt(2, '10:00'));
+  const after = await appt(r.reference);
+  assert.equal(iso(after.deposit_due_at), iso(after.starts_at));
+  // Moving later again doesn't stretch it.
+  await changeBooking(before.public_token, null, await londonAt(9, '10:00'));
+  assert.equal(iso((await appt(r.reference)).deposit_due_at), iso(await londonAt(2, '10:00')));
+});
+
+test('times are London wall-clock time, and notice is counted in real hours across a clock change', async () => {
+  const svc = await addService();
+  await db.query(`update public.settings set max_days_ahead = 365 where id = 1`);
+  // Days from today to the next Sunday the clocks change (noon to noon isn't 24 hours).
+  const { days } = (await db.query(`
+    select (d::date - (now() at time zone 'Europe/London')::date) as days
+      from generate_series((now() at time zone 'Europe/London')::date + 2,
+                           (now() at time zone 'Europe/London')::date + 300, interval '1 day') d
+     where ((d::date + time '12:00') at time zone 'Europe/London')
+         - ((d::date - 1 + time '12:00') at time zone 'Europe/London') <> interval '24 hours'
+     order by d limit 1`)).rows[0];
+  const r = await book(svc, await londonAt(days + 1, '10:00'));
+  const { public_token: token } = await appt(r.reference);
+  // 09:00 on the Monday after is opening time in London, whatever the hour is in UTC.
+  await changeBooking(token, null, await londonAt(days + 1, '09:00'));
+  const a = await appt(r.reference);
+  const local = (await db.query(`select to_char($1::timestamptz at time zone 'Europe/London', 'HH24:MI') as t`, [a.starts_at])).rows[0].t;
+  assert.equal(local, '09:00');
+  // 48 hours' notice means 48 real hours, here and in the emails.
+  const m = await getBooking(token);
+  assert.equal(new Date(m.booking.free_until).getTime(), a.starts_at.getTime() - 48 * 3600e3);
+  const job = (await claimJobs()).jobs.find((j) => j.kind === 'booking_received');
+  assert.equal(new Date(job.free_until).getTime(), a.starts_at.getTime() - 48 * 3600e3);
+});
+
+test('a client can cancel; inside the notice period it is flagged as late', async () => {
+  const svc = await addService('Gel polish', 45, 2500);
+  const soon = await diaryAppt(await insideNotice(), { serviceId: svc });
+  const later = await diaryAppt(await londonAt(4, '10:00'), { email: 'b@example.com', serviceId: svc });
+
+  assert.deepEqual(await cancelBooking(soon.public_token, '  Car broke\n\tdown  '), { cancelled: true, late: true });
+  const a = await appt(soon.reference);
+  assert.deepEqual([a.status, a.cancelled_by, a.cancelled_late, a.cancel_reason, a.client_change_count],
+    ['cancelled', 'client', true, 'Car broke down', 0]);
+  assert.ok(a.cancelled_at && a.client_changed_at);
+  assert.deepEqual((await changesOf(soon.id)).map((c) =>
+    [c.action, c.late, c.note, iso(c.old_starts_at), c.new_starts_at, c.old_service_name, c.old_price_pence]),
+  [['cancelled', true, 'Car broke down', iso(soon.starts_at), null, 'Gel polish', 2500]]);
+
+  assert.deepEqual(await cancelBooking(later.public_token), { cancelled: true, late: false });
+  const b = await appt(later.reference);
+  assert.deepEqual([b.cancelled_by, b.cancelled_late, b.cancel_reason], ['client', false, null]);
+
+  // Once is enough, and the manage page shows what happened.
+  await rejects(cancelBooking(soon.public_token), 'not_changeable');
+  await rejects(changeBooking(soon.public_token, null, await londonAt(5, '10:00')), 'not_changeable');
+  const m = await getBooking(soon.public_token);
+  assert.deepEqual([m.booking.status, m.booking.cancelled_by, m.booking.cancelled_late], ['cancelled', 'client', true]);
+  await rejects(cancelBooking(randomUUID()), 'not_found');
+  // The time is free again.
+  await book(svc, await insideNotice(), { p_email: 'e@example.com', p_phone: '07700900555' });
+});
+
+test('a cancellation reason is tidied to one line and kept short', async () => {
+  const cases = [
+    ['x'.repeat(299) + ' ' + 'y'.repeat(100), 'x'.repeat(299)],
+    ['z'.repeat(400), 'z'.repeat(300)],
+    ['Sorry,\r\n\r\nsomething   came up', 'Sorry, something came up'],
+    [' \n\t ', null],
+    [null, null],
+  ];
+  let n = 0;
+  for (const [reason, want] of cases) {
+    const a = await diaryAppt(await londonAt(4 + n, '10:00'), { email: `r${n++}@example.com` });
+    await cancelBooking(a.public_token, reason);
+    assert.equal((await appt(a.reference)).cancel_reason, want);
+    assert.equal((await changesOf(a.id))[0].note, want);
+  }
+});
+
+test('cancelling drops waiting emails, and both cancellation notices go out', async () => {
+  const svc = await addService();
+  const r = await book(svc, await londonAt(4, '10:00'));
+  const { public_token: token } = await appt(r.reference);
+  // Fresh booking: nothing has gone yet.
+  await cancelBooking(token, 'Sorry');
+  assert.deepEqual((await outbox()).map(({ kind, status }) => ({ kind, status })), [
+    { kind: 'booking_received', status: 'skipped' },
+    { kind: 'cancelled', status: 'pending' },
+    { kind: 'owner_cancelled', status: 'pending' },
+    { kind: 'owner_new_booking', status: 'skipped' },
+  ]);
+  const c = await claimJobs();
+  assert.deepEqual(c.jobs.map((j) => `${j.kind} ${j.to}`).sort(), ['cancelled jess@example.com', 'owner_cancelled owner@example.com']);
+  const owner = c.jobs.find((j) => j.kind === 'owner_cancelled');
+  assert.deepEqual([owner.cancelled_by, owner.cancelled_late, owner.cancel_reason, owner.status], ['client', false, 'Sorry', 'cancelled']);
+  assert.equal(owner.changes.at(-1).action, 'cancelled');
+
+  // Change notices still waiting are dropped too.
+  const r2 = await book(svc, await londonAt(5, '10:00'), { p_email: 'b@example.com', p_phone: '07700900222' });
+  const t2 = (await appt(r2.reference)).public_token;
+  await sendAll();
+  await changeBooking(t2, null, await londonAt(5, '11:00'));
+  await cancelBooking(t2);
+  const rows = (await db.query(`select o.kind, o.status from public.email_outbox o join public.appointments a on a.id = o.appointment_id
+                                 where a.reference = $1 order by o.kind`, [r2.reference])).rows;
+  assert.deepEqual(rows.filter((x) => x.kind.endsWith('changed')).map((x) => x.status), ['skipped', 'skipped']);
+  assert.deepEqual((await claimJobs()).jobs.map((j) => j.kind).sort(), ['cancelled', 'owner_cancelled']);
+});
+
+test('the email script is handed the manage link, the cut-off and the latest changes', async () => {
+  const gel = await addService('Gel polish', 45, 2500);
+  const biab = await addService('BIAB infill', 75, 3500);
+  const r = await book(gel, await londonAt(4, '10:00'));
+  const a = await appt(r.reference);
+
+  let c = await sendAll();
+  const job = c.jobs.find((j) => j.kind === 'booking_received');
+  assert.equal(job.manage_url, `https://book.example.com/manage/${a.public_token}`);
+  assert.equal(new Date(job.free_until).getTime(), a.starts_at.getTime() - 48 * 3600e3);
+  assert.deepEqual([job.deposit_paid, job.cancelled_by, job.cancelled_late, job.changes], [false, null, false, []]);
+  assert.deepEqual([c.settings.cancel_notice_hours, c.settings.client_self_service], [48, true]);
+
+  // Four changes: the owner's alert gets the last three, oldest first.
+  await changeBooking(a.public_token, null, await londonAt(4, '11:00'));
+  await changeBooking(a.public_token, biab, null);
+  await changeBooking(a.public_token, null, await londonAt(5, '10:00'));
+  await changeBooking(a.public_token, gel, await londonAt(5, '14:00'));
+  c = await sendAll();
+  const owner = c.jobs.find((j) => j.kind === 'owner_changed');
+  assert.deepEqual(owner.changes.map((x) => x.action), ['treatment', 'moved', 'moved_treatment']);
+  assert.deepEqual(Object.keys(owner.changes[0]).sort(),
+    ['action', 'at', 'late', 'new_service_name', 'new_starts_at', 'old_service_name', 'old_starts_at']);
+  assert.deepEqual([owner.changes[0].old_service_name, owner.changes[0].new_service_name, owner.changes[0].late],
+    ['Gel polish', 'BIAB infill', false]);
+  assert.deepEqual([iso(owner.changes[2].old_starts_at), iso(owner.changes[2].new_starts_at)],
+    [iso(await londonAt(5, '10:00')), iso(await londonAt(5, '14:00'))]);
+
+  await asOwner(`select public.owner_mark_deposit_paid($1, 'cash')`, [a.id]);
+  assert.equal((await sendAll()).jobs.find((j) => j.kind === 'deposit_received').deposit_paid, true);
+
+  // No web address set: no link. No notice period: no cut-off.
+  await db.query(`update public.settings set public_site_url = null, cancel_notice_hours = 0 where id = 1`);
+  await asOwner(`select public.owner_queue_email($1, 'booking_received')`, [a.id]);
+  c = await claimJobs();
+  assert.deepEqual([c.jobs[0].manage_url, c.jobs[0].free_until, c.settings.cancel_notice_hours], [null, null, 0]);
+});
+
+test('who cancelled is recorded: the owner, or the system when a deposit never came', async () => {
+  const svc = await addService();
+  const r = await book(svc, await londonAt(4, '10:00'));
+  await asOwner(`select public.owner_cancel_appointment($1, 'Ill', true)`, [(await appt(r.reference)).id]);
+  const a = await appt(r.reference);
+  assert.deepEqual([a.cancelled_by, a.cancelled_late], ['owner', false]);
+  assert.ok(!(await outbox()).some((e) => e.kind === 'owner_cancelled'), 'no alert to herself about her own cancellation');
+
+  const r2 = await book(svc, await londonAt(5, '10:00'), { p_email: 'b@example.com', p_phone: '07700900222' });
+  await db.query(`update public.appointments set deposit_due_at = now() - interval '1 minute' where reference = $1`, [r2.reference]);
+  await db.query(`update public.settings set auto_cancel_unpaid = true where id = 1`);
+  const c = await claimJobs();
+  const b = await appt(r2.reference);
+  assert.deepEqual([b.status, b.cancelled_by, b.cancelled_late], ['cancelled', 'system', false]);
+  const jobs = c.jobs.filter((j) => j.kind === 'cancelled').map((j) => [j.reference, j.cancelled_by]).sort();
+  assert.deepEqual(jobs, [[r.reference, 'owner'], [r2.reference, 'system']].sort());
+});
+
+test('the owner can email a client their new time after moving it herself', async () => {
+  const svc = await addService();
+  const r = await book(svc, await londonAt(4, '10:00'));
+  const a = await appt(r.reference);
+  await sendAll();
+  await asOwner(`update public.appointments set starts_at = $2 where id = $1`, [a.id, await londonAt(4, '15:00')]);
+  assert.equal((await appt(r.reference)).details_sent_at, null);
+
+  await asOwner(`select public.owner_queue_email($1, 'changed')`, [a.id]);
+  const stamped = (await appt(r.reference)).details_sent_at;
+  assert.ok(stamped);
+  assert.deepEqual((await outbox()).find((e) => e.kind === 'changed'), { kind: 'changed', status: 'pending', to_email: 'jess@example.com' });
+  // A re-sent reminder isn't the full details, so it doesn't count.
+  await asOwner(`select public.owner_queue_email($1, 'reminder')`, [a.id]);
+  assert.equal((await appt(r.reference)).details_sent_at.getTime(), stamped.getTime());
+
+  await rejects(asOwner(`select public.owner_queue_email($1, 'owner_changed')`, [a.id]), 'invalid_kind');
+  await rejects(asStranger(`select public.owner_queue_email($1, 'changed')`, [a.id]), 'not_allowed');
+  await rejects(asAnon(`select public.owner_queue_email($1, 'changed')`, [a.id]), 'permission denied');
+});
+
+test('the log of client changes is for the owner’s eyes only', async () => {
+  const svc = await addService();
+  const r = await book(svc, await londonAt(4, '10:00'));
+  const a = await appt(r.reference);
+  await changeBooking(a.public_token, null, await londonAt(4, '11:00'));
+
+  await rejects(asAnon(`select * from public.client_changes`), 'permission denied');
+  await rejects(asAnon(`insert into public.client_changes (appointment_id, action) values ($1, 'moved')`, [a.id]), 'permission denied');
+  assert.equal((await asStranger(`select * from public.client_changes`)).rows.length, 0);
+  await rejects(asStranger(`insert into public.client_changes (appointment_id, action) values ($1, 'moved')`, [a.id]), 'row-level security');
+  assert.equal((await asOwner(`select * from public.client_changes`)).rows.length, 1);
+  // Nor can anyone reach the helper that puts emails in the queue.
+  await rejects(asAnon(`select public.queue_email($1, 'changed', 'someone@example.com', true)`, [a.id]), 'permission denied');
+  await rejects(asStranger(`select public.queue_email($1, 'changed', 'someone@example.com', true)`, [a.id]), 'permission denied');
+});
+
+test('the owner can mark a cancellation as late when the client told her by phone or WhatsApp', async () => {
+  const a = await diaryAppt(new Date(Date.now() + 20 * 3600e3));
+  await asOwner(`select public.owner_cancel_appointment($1, 'Told me on WhatsApp', true, true)`, [a.id]);
+  const late = (await db.query(`select * from public.appointments where id = $1`, [a.id])).rows[0];
+  assert.equal(late.status, 'cancelled');
+  assert.equal(late.cancelled_by, 'owner');
+  assert.equal(late.cancelled_late, true);
+  const jobs = await claimJobs();
+  const job = jobs.jobs.find((j) => j.kind === 'cancelled');
+  assert.equal(job.cancelled_by, 'owner');
+  assert.equal(job.cancelled_late, true);
+
+  // Without the flag (the old three-argument call) it isn't late.
+  const b = await diaryAppt(new Date(Date.now() + 30 * 3600e3), { email: 'erin@example.com' });
+  await asOwner(`select public.owner_cancel_appointment($1, 'Ill', true)`, [b.id]);
+  assert.equal((await db.query(`select cancelled_late from public.appointments where id = $1`, [b.id])).rows[0].cancelled_late, false);
+});
+
+test('the manage page knows whether changes will be confirmed by email, without seeing the address', async () => {
+  const withEmail = await diaryAppt(await londonAt(4, '10:00'));
+  const m = await getBooking(withEmail.public_token);
+  assert.equal(m.booking.has_email, true);
+  assert.ok(!JSON.stringify(m).includes('dana@example.com'));
+  const c = (await db.query(`insert into public.clients (full_name, phone) values ('No Email', '07700 900999') returning id`)).rows[0];
+  const noEmail = (await db.query(
+    `insert into public.appointments (client_id, service_name, duration_min, starts_at, ends_at, busy_until, reference, status)
+     values ($1, 'Gel', 45, $2, $2, $2, '', 'confirmed') returning *`, [c.id, await londonAt(5, '10:00')])).rows[0];
+  assert.equal((await getBooking(noEmail.public_token)).booking.has_email, false);
 });

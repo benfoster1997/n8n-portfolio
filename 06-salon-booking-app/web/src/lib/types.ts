@@ -241,6 +241,8 @@ export interface ManagedBooking {
   cancelled_late: boolean;
   /** Online changes still allowed before they have to get in touch. */
   changes_left: number;
+  /** Changes and cancellations are confirmed by email. */
+  has_email: boolean;
   /** A new client who hasn't filled in the consultation form yet. */
   form_needed: boolean;
   /** After this time, cancelling (or moving) is inside the notice period. Null when there is no notice period. */

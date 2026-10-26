@@ -65,7 +65,8 @@ export interface Api {
     'starts_at' | 'duration_min' | 'service_name' | 'service_id' | 'price_pence' | 'owner_notes' | 'status' | 'whatsapp_reminder_sent_at'>>): Promise<Appointment>;
   markDepositPaid(id: string, method: PayMethod): Promise<void>;
   completeAppointment(id: string, amountPence: number, method: PayMethod, tipPence: number, note: string | null): Promise<void>;
-  cancelAppointment(id: string, reason: string | null, notify: boolean): Promise<void>;
+  /** late: the client cancelled with too little notice (by phone or WhatsApp). */
+  cancelAppointment(id: string, reason: string | null, notify: boolean, late?: boolean): Promise<void>;
   queueEmail(id: string, kind: Extract<EmailKind, 'booking_received' | 'deposit_received' | 'reminder' | 'changed'>): Promise<void>;
   listEmailLog(appointmentId: string): Promise<EmailLogRow[]>;
   /** Changes clients made online: for one appointment, or everything since a time (newest first). */

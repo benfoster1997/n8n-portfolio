@@ -353,6 +353,7 @@ export function demoApi(): Api {
           deposit_due_at: a.deposit_due_at, deposit_paid: !!a.deposit_paid_at, cancelled_at: a.cancelled_at,
           cancelled_by: a.cancelled_by, cancelled_late: a.cancelled_late,
           changes_left: Math.max(0, MAX_CLIENT_CHANGES - a.client_change_count),
+          has_email: !!c?.email,
           form_needed: a.is_new_client && !db.forms.some((f) => f.client_id === a.client_id),
           free_until: s.cancel_notice_hours > 0 ? new Date(new Date(a.starts_at).getTime() - s.cancel_notice_hours * 3600e3).toISOString() : null,
         },
@@ -391,7 +392,9 @@ export function demoApi(): Api {
       if (moved) { a.reminder_email_sent_at = null; a.whatsapp_reminder_sent_at = null; }
       if (a.deposit_due_at && a.deposit_due_at > a.starts_at) a.deposit_due_at = a.starts_at;
       a.client_change_count += 1;
-      a.client_changed_at = a.details_sent_at = nowIso();
+      a.client_changed_at = nowIso();
+      // Only counts as "details sent" when there's an address to send them to.
+      if (db.clients.find((x) => x.id === a.client_id)?.email) a.details_sent_at = a.client_changed_at;
       logChange({ appointment_id: a.id, action: moved && switched ? 'moved_treatment' : moved ? 'moved' : 'treatment',
         old_starts_at: before.starts_at, new_starts_at: a.starts_at, old_service_name: before.service_name,
         new_service_name: a.service_name, old_price_pence: before.price_pence, new_price_pence: a.price_pence, late, note: null });
@@ -403,7 +406,7 @@ export function demoApi(): Api {
     async cancelBooking(token, reason) {
       const a = managed(token);
       const late = insideNotice(a.starts_at);
-      const note = (reason ?? '').replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, 300) || null;
+      const note = (reason ?? '').replace(/[\s\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, 300).trim() || null;
       Object.assign(a, { status: 'cancelled', cancelled_at: nowIso(), cancelled_by: 'client', cancelled_late: late,
         cancel_reason: note, client_changed_at: nowIso() });
       db.outbox.filter((o) => o.appointment_id === a.id && o.status === 'pending' && o.kind !== 'cancelled' && o.kind !== 'owner_cancelled')
@@ -500,6 +503,7 @@ export function demoApi(): Api {
         db.payments.push({ id: uid(), appointment_id: a.id, client_id: c.id, client_name: c.full_name, description: `Deposit · ${a.service_name}`,
           amount_pence: a.deposit_required_pence, method, kind: 'deposit', paid_on: todayInZone(TZ), note: null, created_at: nowIso() });
       }
+      if (c.email) a.details_sent_at = nowIso();
       queue(a.id, 'deposit_received', c.email);
       commit();
       await delay(null);
@@ -516,13 +520,14 @@ export function demoApi(): Api {
       commit();
       await delay(null);
     },
-    async cancelAppointment(id, reason, notify) {
+    async cancelAppointment(id, reason, notify, late = false) {
       needOwner();
       const a = db.appointments.find((x) => x.id === id) ?? fail('not_found');
       if (a.status !== 'confirmed' && a.status !== 'pending_deposit') fail('not_cancellable');
       a.status = 'cancelled';
       a.cancelled_at = nowIso();
       a.cancelled_by = 'owner';
+      a.cancelled_late = late;
       a.cancel_reason = reason;
       db.outbox.filter((o) => o.appointment_id === id && o.status === 'pending').forEach((o) => { o.status = 'skipped'; });
       if (notify) queue(id, 'cancelled', db.clients.find((x) => x.id === a.client_id)?.email);

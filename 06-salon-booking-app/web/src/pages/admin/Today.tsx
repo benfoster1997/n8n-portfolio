@@ -37,7 +37,16 @@ export function Today() {
   const changes = data?.changes ?? [];
   // Late cancellations from the last week, until the charge is recorded in Money.
   const settled = new Set((data?.payments ?? []).filter((p) => p.kind === 'other' || p.kind === 'payment').map((p) => p.appointment_id));
-  const lateCancels = changes.filter((c) => c.action === 'cancelled' && c.late && !settled.has(c.appointment_id));
+  // Client cancellations online, plus ones she marked late herself (they told her by phone or WhatsApp).
+  const weekAgo = new Date(Date.now() - 7 * 86400e3).toISOString();
+  const lateCancels = [
+    ...changes.filter((c) => c.action === 'cancelled' && c.late).map((c) => ({
+      appointment_id: c.appointment_id, client_name: c.client_name, service_name: c.old_service_name,
+      starts_at: c.old_starts_at, price_pence: c.old_price_pence })),
+    ...appts.filter((a) => a.status === 'cancelled' && a.cancelled_late && a.cancelled_by === 'owner' && (a.cancelled_at ?? '') >= weekAgo)
+      .map((a) => ({ appointment_id: a.id, client_name: a.client?.full_name ?? a.booking_name, service_name: a.service_name,
+        starts_at: a.starts_at, price_pence: a.price_pence })),
+  ].filter((c, i, all) => !settled.has(c.appointment_id) && all.findIndex((x) => x.appointment_id === c.appointment_id) === i);
   const takingsToday = todays.filter((a) => a.status !== 'no_show').reduce((n, a) => n + a.price_pence, 0);
 
   const setup: { text: string; to: string }[] = [];
@@ -86,11 +95,11 @@ export function Today() {
             <div className="card tight attention" style={{ marginBottom: 10 }}>
               <div style={{ padding: '10px 16px 0', fontWeight: 600 }}>Late cancellations · {lateCancels.length}</div>
               <ul className="list">{lateCancels.map((c) => (
-                <li key={c.id}><Link className="list-row" to={`/appointments/${c.appointment_id}`}>
+                <li key={c.appointment_id}><Link className="list-row" to={`/appointments/${c.appointment_id}`}>
                   <div className="grow">
                     <div className="title">{c.client_name ?? 'Client'}</div>
-                    <div className="meta">{c.old_service_name}{c.old_starts_at && ` · ${fmtDayTime(c.old_starts_at, tz)}`}</div>
-                    {!!c.old_price_pence && <div className="meta">Full {money(c.old_price_pence)} payable under your policy</div>}
+                    <div className="meta">{c.service_name}{c.starts_at && ` · ${fmtDayTime(c.starts_at, tz)}`}</div>
+                    {!!c.price_pence && <div className="meta">Full {money(c.price_pence)} payable under your policy</div>}
                   </div>
                   <LateChip>Late cancel</LateChip>
                   <span className="chev"><Icon name="chev" size={18} /></span>

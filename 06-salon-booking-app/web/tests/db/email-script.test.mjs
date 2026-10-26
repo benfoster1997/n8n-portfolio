@@ -166,7 +166,10 @@ test('every kind of email renders, with a subject and both versions', async () =
     [{ kind: 'deposit_received', status: 'confirmed' }, /Deposit received/],
     [{ kind: 'reminder', status: 'confirmed' }, /Reminder: Gel on Wednesday at 10:30/],
     [{ kind: 'cancelled', status: 'cancelled', cancel_reason: 'Unwell' }, /cancelled/],
+    [{ kind: 'changed', status: 'confirmed' }, /^Your booking has changed: Gel, Wed 10 Jun$/],
     [{ kind: 'owner_new_booking', status: 'confirmed' }, /New booking: Amy Example/],
+    [{ kind: 'owner_changed', status: 'confirmed', changes: [] }, /^Booking changed: Amy Example — Gel, Wed 10 Jun 10:30$/],
+    [{ kind: 'owner_cancelled', status: 'cancelled' }, /^Cancelled: Amy Example — Gel, Wed 10 Jun 10:30$/],
   ];
   for (const [extra, subject] of cases) {
     const m = sandbox.render_({ ...base, ...extra }, s);
@@ -210,4 +213,315 @@ test('asks only for as many emails as Gmail will still send today, and uses the 
   const legacy = loadScript({ fetchQueue: [{ body: { settings: {}, jobs: [] } }], props: { ...PROPS, SUPABASE_ANON_KEY: 'eyJhbGciOi.x.y' } });
   legacy.sandbox.processEmails();
   assert.equal(legacy.calls[0].headers.Authorization, 'Bearer eyJhbGciOi.x.y');
+});
+
+// ---------------------------------------------------------------------------
+// Changes and cancellations made by the client online
+// ---------------------------------------------------------------------------
+
+/** A London wall-clock time N days from today, as an ISO instant. */
+async function londonAt(daysAhead, hhmm) {
+  const r = await db.query(
+    `select (((now() at time zone 'Europe/London')::date + $1::int) + $2::time) at time zone 'Europe/London' as t`,
+    [daysAhead, hhmm]);
+  return r.rows[0].t.toISOString();
+}
+
+/** Claim from the real database, let the script send everything, and feed its report back. */
+async function sendViaScript() {
+  const claim = (await asAnon(`select public.email_jobs_claim($1) as j`, [SECRET])).rows[0].j;
+  const { sandbox, sent, calls } = loadScript({ fetchQueue: [{ body: claim }, { body: claim.jobs.length }], props: { ...PROPS } });
+  sandbox.processEmails();
+  if (calls[1]) await asAnon(`select public.email_jobs_report($1, $2)`, [SECRET, JSON.stringify(calls[1].body.p_results)]);
+  return { claim, sent };
+}
+
+const london = (iso, pattern) => formatInTimeZone(new Date(iso), 'Europe/London', pattern, { locale: enGB });
+
+test('a client’s online change: their new details to them, an alert to the owner', async () => {
+  const set = (await db.query(`select id from public.services where name = 'BIAB new set'`)).rows[0].id;
+  const infill = (await db.query(
+    `insert into public.services (name, duration_min, price_pence) values ('BIAB infill', 60, 3000) returning id`)).rows[0].id;
+  await asAnon(`select public.public_create_booking($1, $2, 'Kim & Co Example', 'kim@example.com', '07700900124', null, p_policy_accepted => true)`,
+    [set, await londonAt(5, '10:00')]);
+  const token = (await db.query(`select a.public_token from public.appointments a join public.clients c on c.id = a.client_id
+                                  where c.email = 'kim@example.com'`)).rows[0].public_token;
+  const link = `https://book.example.com/manage/${token}`;
+
+  // The confirmation carries her own link; the owner's new-booking alert never does.
+  const first = await sendViaScript();
+  const confirmation = first.sent.find((m) => m.to === 'kim@example.com');
+  assert.ok(confirmation.html.includes(`href="${link}"`) && confirmation.text.includes(link));
+  const alert = first.sent.find((m) => m.to === 'owner@example.com');
+  assert.ok(!alert.html.includes('/manage/') && !alert.text.includes('/manage/'));
+
+  const newTime = await londonAt(6, '14:00');
+  await asAnon(`select public.public_change_booking($1, $2, $3)`, [token, infill, newTime]);
+  const { sent } = await sendViaScript();
+  assert.equal(sent.length, 2);
+
+  const client = sent.find((m) => m.to === 'kim@example.com');
+  assert.equal(client.subject, `Your booking has changed: BIAB infill, ${london(newTime, 'EEE d MMM')}`);
+  assert.equal(client.replyTo, 'owner@example.com');
+  for (const bit of ['BIAB infill', london(newTime, "EEEE d MMMM 'at' HH:mm"), '£30', link, 'Change or cancel your booking',
+                     '£10 deposit', 'T Studio', '00-00-00', '12345678', 'Please let us know by', '24 hours notice please']) {
+    assert.ok(client.html.includes(bit) && client.text.includes(bit), `change email is missing ${bit}`);
+  }
+  assert.ok(!client.html.includes('1 Example Road'), 'the address waits until the deposit is in');
+
+  const owner = sent.find((m) => m.to === 'owner@example.com');
+  assert.equal(owner.subject, `Booking changed: Kim & Co Example — BIAB infill, ${london(newTime, 'EEE d MMM HH:mm')}`);
+  assert.equal(owner.replyTo, 'kim@example.com', 'she can reply straight to the client');
+  assert.ok(owner.html.includes('Kim &amp; Co Example') && !owner.html.includes('Kim & Co'));
+  assert.ok(owner.text.includes(`- Moved from ${london(await londonAt(5, '10:00'), 'EEE d MMM HH:mm')} to ${london(newTime, 'EEE d MMM HH:mm')}, and switched from BIAB new set to BIAB infill`));
+  assert.ok(!owner.html.includes('/manage/') && !owner.text.includes('/manage/'), 'the client’s link never goes to the owner');
+  assert.ok(!owner.text.includes('less than'), 'plenty of notice: nothing flagged');
+
+  const statuses = (await db.query(`select distinct o.status from public.email_outbox o join public.appointments a on a.id = o.appointment_id
+                                     where a.public_token = $1`, [token])).rows.map((r) => r.status);
+  assert.deepEqual(statuses, ['sent']);
+});
+
+test('a late cancellation online: a gentle note to the client, the facts to the owner', async () => {
+  const c = (await db.query(`insert into public.clients (full_name, email, phone)
+                             values ('Lou <i>Example</i>', 'lou@example.com', '07700 900125') returning id`)).rows[0];
+  const a = (await db.query(
+    `insert into public.appointments (client_id, service_name, price_pence, duration_min, starts_at, ends_at, busy_until, reference,
+                                      status, deposit_required_pence, deposit_paid_at)
+     values ($1, 'BIAB new set', 3500, 75, $2, $2, $2, '', 'confirmed', 1000, now()) returning *`,
+    [c.id, await londonAt(1, '14:00')])).rows[0];   // tomorrow afternoon: inside the 48 hours
+  const r = (await asAnon(`select public.public_cancel_booking($1, $2) as r`, [a.public_token, '<script>alert(1)</script> Sorry!'])).rows[0].r;
+  assert.equal(r.late, true);
+  const { sent } = await sendViaScript();
+  assert.equal(sent.length, 2);
+
+  const client = sent.find((m) => m.to === 'lou@example.com');
+  assert.match(client.subject, /^Your appointment has been cancelled/);
+  assert.ok(client.text.includes('as you asked, your appointment below has been cancelled.'));
+  assert.ok(client.text.includes('As this was less than 48 hours before your appointment, our cancellation policy applies: 24 hours notice please'));
+  assert.ok(!client.text.includes('Sorry') && !client.text.includes('Reason'), 'her own reason isn’t repeated back to her');
+  assert.ok(client.text.includes('To book a new time: https://book.example.com/book'));
+  assert.ok(!client.html.includes('/manage/'));
+  assert.equal(client.replyTo, 'owner@example.com');
+
+  const owner = sent.find((m) => m.to === 'owner@example.com');
+  assert.match(owner.subject, /^Late cancellation: Lou <i>Example<\/i> — BIAB new set, /);
+  assert.equal(owner.replyTo, 'lou@example.com');
+  assert.ok(owner.html.includes('Lou &lt;i&gt;Example&lt;/i&gt;') && !owner.html.includes('<i>Example'));
+  assert.ok(owner.html.includes('&lt;script&gt;alert(1)&lt;/script&gt; Sorry!') && !owner.html.includes('<script>'));
+  assert.ok(owner.text.includes('Cancelled with less than 48 hours’ notice. Under your cancellation policy the full £35 is payable — ' +
+    'this is for you to arrange with the client; the app doesn’t take payments.'));
+  assert.ok(owner.text.includes('Deposit: £10 — paid'));
+  assert.ok(owner.text.includes('They paid a £10 deposit. Whether you keep it or refund it is your call.'));
+  assert.ok(!owner.html.includes('/manage/') && !owner.text.includes('/manage/'));
+});
+
+test('every client email has the change/cancel link and the cut-off; the owner’s never do', async () => {
+  const { sandbox } = loadScript({ fetchQueue: [], props: PROPS });
+  const start = new Date(Date.now() + 5 * 86400e3);
+  const freeUntil = new Date(start.getTime() - 48 * 3600e3);
+  const job = {
+    id: 1, to: 'a@example.com', first_name: 'Amy', client_name: 'Amy Example', client_email: 'amy@example.com',
+    service_name: 'Gel', price_pence: 2500, starts_at: start.toISOString(), reference: 'ABCDEF', deposit_required_pence: 1000,
+    form_needed: false, manage_url: 'https://x.example/manage/tok-123', free_until: freeUntil.toISOString(), changes: [],
+  };
+  const s = { business_name: 'Studio', timezone: 'Europe/London', public_site_url: 'https://x.example', cancel_notice_hours: 48, client_self_service: true };
+  const by = `Please let us know by ${london(freeUntil, "EEEE d MMMM 'at' HH:mm")} — after that, the cancellation policy applies.`;
+
+  for (const [kind, status] of [['booking_received', 'confirmed'], ['booking_received', 'pending_deposit'], ['deposit_received', 'confirmed'],
+                                ['reminder', 'confirmed'], ['changed', 'confirmed'], ['changed', 'pending_deposit']]) {
+    const m = sandbox.render_({ ...job, kind, status }, s);
+    assert.ok(m.html.includes('Need to change or cancel? You can do it online: <a href="https://x.example/manage/tok-123"'), `${kind}/${status}`);
+    assert.ok(m.text.includes('Change or cancel your booking (https://x.example/manage/tok-123)'), `${kind}/${status} plain text`);
+    assert.ok(m.text.includes(by), `${kind}/${status} has the cut-off`);
+  }
+  for (const kind of ['owner_new_booking', 'owner_changed', 'owner_cancelled', 'cancelled']) {
+    const m = sandbox.render_({ ...job, kind, status: kind.endsWith('cancelled') ? 'cancelled' : 'confirmed' }, s);
+    assert.ok(!m.html.includes('tok-123') && !m.text.includes('tok-123'), `${kind} must not carry the client’s link`);
+    assert.ok(!m.text.includes('Need to change or cancel'), kind);
+  }
+
+  // Past the cut-off, it isn't offered as a deadline any more.
+  const past = sandbox.render_({ ...job, kind: 'reminder', status: 'confirmed', free_until: new Date(Date.now() - 3600e3).toISOString() }, s);
+  assert.ok(past.text.includes('You can do it online') && !past.text.includes('Please let us know by'));
+  // Online changes switched off: no link, but still the time to get in touch by.
+  const off = sandbox.render_({ ...job, kind: 'reminder', status: 'confirmed' }, { ...s, client_self_service: false });
+  assert.ok(!off.html.includes('tok-123'));
+  assert.ok(off.text.includes('Need to change or cancel? Just get in touch.') && off.text.includes(by));
+  // Only ever an https link.
+  for (const bad of ['http://x.example/manage/tok-123', 'javascript:alert(1)']) {
+    const m = sandbox.render_({ ...job, kind: 'reminder', status: 'confirmed', manage_url: bad }, s);
+    assert.ok(!m.html.includes('tok-123') && !m.html.includes('javascript:') && !m.text.includes('You can do it online'), bad);
+  }
+  // Neither a link nor a cut-off: nothing at all.
+  const none = sandbox.render_({ ...job, kind: 'reminder', status: 'confirmed', manage_url: null, free_until: null }, s);
+  assert.ok(!none.text.includes('Need to change or cancel'));
+});
+
+test('the change email repeats the bank details only while a deposit is owed', async () => {
+  const { sandbox } = loadScript({ fetchQueue: [], props: PROPS });
+  const start = new Date(Date.now() + 5 * 86400e3);
+  const due = new Date(Date.now() + 86400e3);
+  const job = {
+    id: 1, kind: 'changed', to: 'a@example.com', first_name: '<b>Amy</b>', service_name: 'Gel', price_pence: 2500,
+    starts_at: start.toISOString(), reference: 'ABCDEF', deposit_required_pence: 1000, deposit_due_at: due.toISOString(),
+    form_needed: true, form_url: 'https://x.example/form/tok-123', manage_url: 'https://x.example/manage/tok-123',
+    free_until: new Date(start.getTime() - 48 * 3600e3).toISOString(),
+  };
+  const s = {
+    business_name: 'Studio', timezone: 'Europe/London', address: '1 Example Road', public_site_url: 'https://x.example',
+    bank_account_name: 'T Studio', bank_sort_code: '00-00-00', bank_account_number: '12345678', owner_phone: '07700 900000',
+    cancellation_policy: '48 hours’ notice please', cancel_notice_hours: 48, client_self_service: true,
+  };
+
+  const owing = sandbox.render_({ ...job, status: 'pending_deposit', deposit_paid: false }, s);
+  assert.equal(owing.subject, `Your booking has changed: Gel, ${london(start, 'EEE d MMM')}`);
+  for (const bit of ['Your appointment is still reserved', '£10 deposit', `by ${london(due, "HH:mm 'on' EEEE d MMMM")}`,
+                     'Account name: T Studio', 'Sort code: 00-00-00', 'Account number: 12345678', 'Please use the reference ABCDEF']) {
+    assert.ok(owing.text.includes(bit), `missing ${bit}`);
+  }
+  assert.ok(!owing.text.includes('1 Example Road'), 'no address until it’s confirmed');
+  // In order: the new details, the deposit, the form, the link, the policy, then how to get in touch.
+  const at = (t) => owing.text.indexOf(t);
+  const order = ['Treatment: Gel', 'Account number', 'consultation form', 'Need to change or cancel', 'Cancellations:', 'Questions?'];
+  order.forEach((t) => assert.ok(at(t) >= 0, `missing ${t}`));
+  assert.deepEqual([...order].sort((x, y) => at(x) - at(y)), order);
+  assert.ok(owing.html.includes('Hi &lt;b&gt;Amy&lt;/b&gt;') && !owing.html.includes('<b>Amy'));
+
+  const confirmed = sandbox.render_({ ...job, status: 'confirmed', deposit_paid: true }, s);
+  assert.ok(!confirmed.text.includes('12345678') && !confirmed.text.includes('deposit'));
+  assert.ok(confirmed.text.includes('Where: 1 Example Road'));
+
+  // A deadline already gone by isn't repeated back.
+  const overdue = sandbox.render_({ ...job, status: 'pending_deposit', deposit_due_at: new Date(Date.now() - 3600e3).toISOString() }, s);
+  assert.ok(overdue.text.includes('by bank transfer as soon as you can'));
+});
+
+test('the cancellation email depends on who cancelled', async () => {
+  const { sandbox } = loadScript({ fetchQueue: [], props: PROPS });
+  const s = { business_name: 'Studio', timezone: 'Europe/London', public_site_url: 'https://x.example',
+    cancellation_policy: 'Full price if under 24 hours’ notice.', cancel_notice_hours: 24 };
+  const job = { id: 1, kind: 'cancelled', status: 'cancelled', first_name: 'Amy', service_name: 'Gel', price_pence: 2500,
+    starts_at: '2026-11-12T14:00:00Z', reference: 'ABCDEF', cancel_reason: 'Running late <again>' };
+
+  const late = sandbox.render_({ ...job, cancelled_by: 'client', cancelled_late: true }, s);
+  assert.ok(late.text.includes('Hi Amy, as you asked, your appointment below has been cancelled.'));
+  assert.ok(late.text.includes('As this was less than 24 hours before your appointment, our cancellation policy applies: Full price if under 24 hours’ notice.'));
+  assert.ok(!late.text.includes('Reason') && !late.text.includes('Running late'), 'her own reason isn’t repeated back');
+  const inTime = sandbox.render_({ ...job, cancelled_by: 'client', cancelled_late: false }, s);
+  assert.ok(inTime.text.includes('as you asked') && !inTime.text.includes('policy applies'));
+  const noPolicy = sandbox.render_({ ...job, cancelled_by: 'client', cancelled_late: true }, { ...s, cancellation_policy: null });
+  assert.ok(noPolicy.text.includes('our cancellation policy applies.'));
+
+  for (const by of ['owner', 'system', null]) {
+    const m = sandbox.render_({ ...job, cancelled_by: by }, s);
+    assert.ok(m.text.includes('Hi Amy, your appointment below has been cancelled.'), String(by));
+    assert.ok(m.text.includes('Reason: Running late <again>') && m.html.includes('Running late &lt;again&gt;'), String(by));
+    assert.ok(!m.text.includes('as you asked') && !m.text.includes('policy applies'), String(by));
+  }
+  for (const m of [late, inTime]) assert.ok(m.text.includes('To book a new time: https://x.example/book'));
+  // She cancelled it for them (they told her late, by phone or WhatsApp) and ticked "late".
+  const ownerLate = sandbox.render_({ ...job, cancelled_by: 'owner', cancelled_late: true }, s);
+  assert.ok(ownerLate.text.includes('Reason: Running late <again>'));
+  assert.ok(ownerLate.text.includes('As this was less than 24 hours before your appointment, our cancellation policy applies'));
+});
+
+test('the owner’s change alert lists what changed, and flags a late move', async () => {
+  const { sandbox } = loadScript({ fetchQueue: [], props: PROPS });
+  const s = { business_name: 'Studio', timezone: 'Europe/London', public_site_url: 'https://x.example', cancel_notice_hours: 48 };
+  const job = {
+    id: 1, kind: 'owner_changed', status: 'confirmed', to: 'owner@example.com', client_name: 'Amy <Example>', booking_name: 'Amy <Example>',
+    client_phone: '07700 900123', client_email: 'amy@example.com', service_name: 'BIAB infill', price_pence: 3500,
+    starts_at: '2026-11-12T14:00:00Z', reference: 'ABCDEF', deposit_required_pence: 0, manage_url: 'https://x.example/manage/tok-123',
+    changes: [
+      { at: '2026-11-09T18:05:00Z', action: 'moved', old_starts_at: '2026-11-10T10:00:00Z', new_starts_at: '2026-11-12T14:00:00Z',
+        old_service_name: 'Gel <polish>', new_service_name: 'Gel <polish>', late: true },
+      { at: '2026-11-09T18:07:00Z', action: 'treatment', old_starts_at: '2026-11-12T14:00:00Z', new_starts_at: '2026-11-12T14:00:00Z',
+        old_service_name: 'Gel <polish>', new_service_name: 'BIAB infill', late: false },
+    ],
+  };
+  const m = sandbox.render_(job, s);
+  assert.equal(m.subject, 'Booking changed: Amy <Example> — BIAB infill, Thu 12 Nov 14:00');
+  for (const line of ['Client: Amy <Example>', 'Mobile: 07700 900123', 'Email: amy@example.com', 'Treatment: BIAB infill',
+                      'When: Thursday 12 November at 14:00', 'Price: £35', 'Reference: ABCDEF', 'Status: Confirmed',
+                      'Moved with less than 48 hours’ notice.',
+                      '- Moved from Tue 10 Nov 10:00 to Thu 12 Nov 14:00 (less than 48 hours’ notice) · changed Mon 9 Nov at 18:05',
+                      '- Switched from Gel <polish> to BIAB infill · changed Mon 9 Nov at 18:07',
+                      'Open your diary (https://x.example/)']) {
+    assert.ok(m.text.includes(line), `missing: ${line}`);
+  }
+  assert.ok(m.html.includes('Gel &lt;polish&gt;') && !m.html.includes('<polish>') && !m.html.includes('<Example>'));
+  assert.ok(!m.text.includes('Booked as'), 'the same name isn’t repeated');
+  assert.ok(!m.text.includes('tok-123'));
+
+  const inTime = sandbox.render_({ ...job, changes: [{ ...job.changes[0], late: false }, job.changes[1]] }, s);
+  assert.ok(!inTime.text.includes('less than'));
+  const both = sandbox.render_({ ...job, status: 'pending_deposit', deposit_required_pence: 1000,
+    changes: [{ ...job.changes[0], action: 'moved_treatment', new_service_name: 'BIAB infill', late: false }] }, s);
+  assert.ok(both.text.includes('Status: Waiting for £10 deposit'));
+  assert.ok(both.text.includes('- Moved from Tue 10 Nov 10:00 to Thu 12 Nov 14:00, and switched from Gel <polish> to BIAB infill'));
+  // London time on both sides of a clock change (the clocks go forward on Sunday 28 March 2027).
+  const dst = sandbox.render_({ ...job, starts_at: '2027-03-29T09:00:00Z', changes: [{ ...job.changes[0],
+    at: '2027-03-25T12:00:00Z', old_starts_at: '2027-03-26T10:00:00Z', new_starts_at: '2027-03-29T09:00:00Z' }] }, s);
+  assert.ok(dst.text.includes('When: Monday 29 March at 10:00'));
+  assert.ok(dst.text.includes('- Moved from Fri 26 Mar 10:00 to Mon 29 Mar 10:00'));
+});
+
+test('the owner’s cancellation alert: in time, late, and what happened to the deposit', async () => {
+  const { sandbox } = loadScript({ fetchQueue: [], props: PROPS });
+  const s = { business_name: 'Studio', timezone: 'Europe/London', public_site_url: 'https://x.example', cancel_notice_hours: 48 };
+  const job = {
+    id: 1, kind: 'owner_cancelled', status: 'cancelled', to: 'owner@example.com', client_name: 'Amy Example', client_phone: '07700 900123',
+    client_email: 'amy@example.com', service_name: 'Gel', price_pence: 2500, starts_at: '2026-11-12T14:00:00Z', reference: 'ABCDEF',
+    deposit_required_pence: 0, deposit_paid: false, cancelled_by: 'client', cancelled_late: false, cancel_reason: null,
+    manage_url: 'https://x.example/manage/tok-123', changes: [],
+  };
+
+  const inTime = sandbox.render_(job, s);
+  assert.equal(inTime.subject, 'Cancelled: Amy Example — Gel, Thu 12 Nov 14:00');
+  for (const line of ['Client: Amy Example', 'Mobile: 07700 900123', 'Email: amy@example.com', 'Treatment: Gel',
+                      'Was: Thursday 12 November at 14:00', 'Price: £25', 'Reference: ABCDEF', 'Deposit: None']) {
+    assert.ok(inTime.text.includes(line), `missing: ${line}`);
+  }
+  for (const not of ['payable', 'Their reason', 'refund', 'tok-123', 'Earlier']) assert.ok(!inTime.text.includes(not), not);
+  const unpaid = sandbox.render_({ ...job, deposit_required_pence: 1000 }, s);
+  assert.ok(unpaid.text.includes('Deposit: £10 — not paid') && !unpaid.text.includes('refund'));
+
+  const late = sandbox.render_({ ...job, cancelled_late: true, deposit_required_pence: 1000, deposit_paid: true, cancel_reason: 'Flu' }, s);
+  assert.equal(late.subject, 'Late cancellation: Amy Example — Gel, Thu 12 Nov 14:00');
+  for (const line of ['Cancelled with less than 48 hours’ notice. Under your cancellation policy the full £25 is payable — ' +
+                        'this is for you to arrange with the client; the app doesn’t take payments.',
+                      'Deposit: £10 — paid', 'Their reason: Flu', 'They paid a £10 deposit. Whether you keep it or refund it is your call.']) {
+    assert.ok(late.text.includes(line), `missing: ${line}`);
+  }
+  // Moved late earlier, then cancelled in good time: still worth knowing about.
+  const movedLate = sandbox.render_({ ...job, changes: [
+    { at: '2026-11-09T18:05:00Z', action: 'moved', old_starts_at: '2026-11-10T10:00:00Z', new_starts_at: '2026-11-12T14:00:00Z', late: true },
+    { at: '2026-11-09T18:09:00Z', action: 'cancelled', old_starts_at: '2026-11-12T14:00:00Z', late: false }] }, s);
+  assert.ok(movedLate.text.includes('Earlier, they moved this booking with less than 48 hours’ notice.'));
+  assert.ok(!movedLate.text.includes('payable'));
+});
+
+test('the owner’s alerts reply to the client; client emails reply to the owner', async () => {
+  const base = { first_name: 'Amy', client_name: 'Amy Example', client_email: 'amy@example.com', service_name: 'Gel', price_pence: 2500,
+    starts_at: new Date(Date.now() + 5 * 86400e3).toISOString(), reference: 'ABCDEF', status: 'confirmed', form_needed: false, changes: [] };
+  const kinds = ['booking_received', 'deposit_received', 'reminder', 'changed', 'cancelled', 'owner_new_booking', 'owner_changed', 'owner_cancelled'];
+  const jobs = kinds.map((kind, i) => ({ ...base, id: 100 + i, kind, to: kind.startsWith('owner_') ? 'owner@example.com' : 'amy@example.com' }));
+  jobs.push({ ...base, id: 200, kind: 'owner_cancelled', to: 'owner@example.com', client_email: null });
+  const claim = { settings: { business_name: 'Studio', timezone: 'Europe/London', owner_email: 'owner@example.com' }, jobs };
+  const { sandbox, sent } = loadScript({ fetchQueue: [{ body: claim }, { body: jobs.length }], props: { ...PROPS } });
+  assert.equal(sandbox.processEmails(), jobs.length);
+  sent.forEach((m, i) => {
+    const want = jobs[i].kind.startsWith('owner_') ? (jobs[i].client_email ?? undefined) : 'owner@example.com';
+    assert.equal(m.replyTo, want, jobs[i].kind);
+  });
+});
+
+test('the test email shows the 48-hour policy and the change/cancel link', () => {
+  const { sandbox, sent } = loadScript({ fetchQueue: [], props: { ...PROPS } });
+  sandbox.sendTestEmail();
+  assert.match(sent[0].subject, /^\[TEST\] Please pay your deposit/);
+  assert.ok(sent[0].text.includes('Please give at least 48 hours’ notice if you need to cancel or move your appointment.'));
+  assert.ok(sent[0].text.includes('Change or cancel your booking (https://example.com/manage/test)'));
+  assert.ok(sent[0].text.includes('Please let us know by'));
 });
