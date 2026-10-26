@@ -1,8 +1,8 @@
 // Service worker: cache the app shell so it opens from the home screen even
 // with a poor signal. Never caches API calls or anything with client data —
 // those go straight to the network.
-const CACHE = 'bookings-shell-v2';
-const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/apple-touch-icon.png'];
+const CACHE = 'bookings-shell-v3';
+const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/book.webmanifest', '/icons/icon-192.png', '/icons/apple-touch-icon.png'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));

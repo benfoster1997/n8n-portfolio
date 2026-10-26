@@ -16,6 +16,7 @@ import {
 import { Today } from './pages/admin/Today';
 import { Book } from './pages/public/Book';
 import { FormPage } from './pages/public/FormPage';
+import { Manage } from './pages/public/Manage';
 import { Privacy } from './pages/public/Privacy';
 
 export function App() {
@@ -36,6 +37,7 @@ export function App() {
           {/* Public pages: clients use these, no sign-in. */}
           <Route path="/book" element={<Book />} />
           <Route path="/form/:token" element={<FormPage />} />
+          <Route path="/manage/:token" element={<Manage />} />
           <Route path="/privacy" element={<Privacy />} />
 
           {/* Everything else is the owner's diary. */}

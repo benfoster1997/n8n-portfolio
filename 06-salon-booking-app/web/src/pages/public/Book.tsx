@@ -2,16 +2,19 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../../api';
 import { ConsultationFields } from '../../components/ConsultationFields';
+import { SlotPicker, useFreeSlots } from '../../components/SlotPicker';
+import { useClientManifest } from '../../components/clientManifest';
 import { ErrorBox, Field, Icon, Spinner, useAction, useLoad } from '../../components/ui';
 import { blankAnswers, validateAnswers } from '../../lib/consultation';
-import { availableSlots, openDays } from '../../lib/slots';
-import { addDays, fmt, fmtDayLong, fmtTime, minutesLabel, startOfDayInstant } from '../../lib/time';
+import { openDays } from '../../lib/slots';
+import { addDays, fmtDayLong, fmtTime, minutesLabel, startOfDayInstant } from '../../lib/time';
 import { friendlyError, isPlausibleEmail, isPlausiblePhone, money } from '../../lib/text';
 import type { BookingInfo, BusyRange } from '../../lib/types';
 
 type Step = 'service' | 'time' | 'details' | 'done';
 
 export function Book() {
+  useClientManifest();
   const { data: info, error, loading } = useLoad(() => api.getBookingInfo(), []);
   useEffect(() => { if (info) document.title = `Book · ${info.business_name}`; }, [info]);
   if (loading) return <Spinner />;
@@ -55,13 +58,7 @@ function BookingFlow({ info }: { info: BookingInfo }) {
     () => (firstDay ? api.getBusyTimes(startOfDayInstant(firstDay, tz), startOfDayInstant(addDays(lastDay, 1), tz)) : Promise.resolve([])),
     [firstDay, lastDay]);
 
-  const slotsByDay = useMemo(() => {
-    const m = new Map<string, Date[]>();
-    if (!service || !busyTimes) return m;
-    for (const d of days) m.set(d, availableSlots(d, service.duration_min, info, busyTimes));
-    return m;
-  }, [service, busyTimes, days, info]);
-  const daysWithSlots = days.filter((d) => (slotsByDay.get(d)?.length ?? 0) > 0);
+  const { slotsByDay, daysWithSlots } = useFreeSlots(info, days, service?.duration_min ?? null, busyTimes);
 
   useEffect(() => {
     if (step === 'time' && service && (!day || !slotsByDay.get(day)?.length)) setDay(daysWithSlots[0] ?? null);
@@ -142,25 +139,8 @@ function BookingFlow({ info }: { info: BookingInfo }) {
             <div className="notice">Sorry — there are no free times in the next {info.max_days_ahead} days. Please get in touch directly.</div>
           ) : (
             <>
-              <div className="date-strip" role="listbox" aria-label="Days">
-                {daysWithSlots.map((d) => (
-                  <button key={d} role="option" aria-selected={d === day} className={`date-pill${d === day ? ' on' : ''}`} onClick={() => { setDay(d); setSlot(null); }}>
-                    <div className="dow">{fmt(d + 'T12:00:00Z', 'EEE', tz)}</div>
-                    <div className="dom">{Number(d.slice(8))}</div>
-                    <div className="mon">{fmt(d + 'T12:00:00Z', 'MMM', tz)}</div>
-                  </button>
-                ))}
-              </div>
-              {day && (
-                <>
-                  <div className="sub">{fmtDayLong(day + 'T12:00:00Z', tz)}</div>
-                  <div className="slot-grid">
-                    {(slotsByDay.get(day) ?? []).map((d) => (
-                      <button key={d.toISOString()} className={`slot${slot?.getTime() === d.getTime() ? ' on' : ''}`} onClick={() => setSlot(d)}>{fmtTime(d, tz)}</button>
-                    ))}
-                  </div>
-                </>
-              )}
+              <SlotPicker days={daysWithSlots} slotsByDay={slotsByDay} day={day} slot={slot} tz={tz}
+                onDay={(d) => { setDay(d); setSlot(null); }} onSlot={setSlot} />
               <button className="btn primary block" disabled={!slot} onClick={() => setStep('details')}>Continue</button>
             </>
           )}
@@ -236,6 +216,7 @@ function BookingFlow({ info }: { info: BookingInfo }) {
             <div className="sub">Reference <b className="mono">{result.reference}</b></div>
           </div>
           <p>A confirmation is on its way to <b>{details.email.trim()}</b> (check your junk folder). {info.deposit_amount_pence > 0 && 'If you’re a new client, it has the bank details for your deposit — use your reference so it can be matched.'}</p>
+          <p className="sub">Need to change or cancel? Use the link in your confirmation email.</p>
           <button className="btn" onClick={() => window.location.reload()}>Book another appointment</button>
         </div>
       )}

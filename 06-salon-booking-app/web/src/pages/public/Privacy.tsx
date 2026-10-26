@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import { api } from '../../api';
 import { useLoad } from '../../components/ui';
+import { useClientManifest } from '../../components/clientManifest';
 
 /**
  * Privacy notice (UK GDPR Articles 13 and 14). It is written for a one-person
@@ -9,6 +10,7 @@ import { useLoad } from '../../components/ui';
  * if the database can't be reached, because people must always be able to read it.
  */
 export function Privacy() {
+  useClientManifest();
   const { data } = useLoad(() => api.getBookingInfo(), []);
   const business = data?.business_name ?? 'This business';
   const owner = data?.legal_name?.trim();
@@ -30,6 +32,9 @@ export function Privacy() {
       <ul>
         <li><b>Your name, email, mobile and bookings</b> — to make and manage your appointments and send confirmations and
           reminders. <i>Basis: to provide the service you asked for (contract).</i></li>
+        <li><b>Changes you make to your booking</b> — your confirmation email has a private link to change or cancel your
+          booking. Anyone with the link can use it, so please don’t share it. Changes you make there, and any reason you give
+          for cancelling, are recorded so {business} can see them. <i>Basis: contract.</i></li>
         <li><b>Payments you make</b> — to keep the business records HMRC requires. <i>Basis: legal obligation.</i></li>
         <li><b>Treatment notes and photos of your nails</b> — to remember your preferences and keep accurate treatment
           records. Photos are private and never posted anywhere without asking you first.

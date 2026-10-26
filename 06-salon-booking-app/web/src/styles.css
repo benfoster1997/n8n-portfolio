@@ -441,3 +441,17 @@ fieldset { border: 0; padding: 0; margin: 0; }
 .prose ul { padding-left: 1.2rem; }
 .centre { text-align: center; }
 .big-tick { width: 64px; height: 64px; margin: 8px auto; color: var(--ok); }
+
+/* ---------- manage your booking (public, /manage/:token) ---------- */
+.manage .kv { margin: 0; }
+.manage .booking-head { align-items: flex-start; }
+.manage .booking-head h2 { font-size: 1.15rem; padding-top: 1px; }
+.service .chip { margin-bottom: 4px; }
+.card.policy.late { border-color: color-mix(in srgb, var(--warn) 45%, var(--line)); background: var(--warn-soft); }
+.card.policy.late h2 { color: var(--warn); }
+.compare { display: grid; gap: 12px; }
+.compare > div { display: flex; flex-direction: column; gap: 2px; }
+.compare .label { font-size: 0.75rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.compare .was { color: var(--muted); }
+.compare .to { border-top: 1px solid var(--line); padding-top: 12px; }
+.compare .changed { color: var(--accent); font-weight: 700; }

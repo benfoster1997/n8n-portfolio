@@ -5,9 +5,11 @@ import { ConsultationFields } from '../../components/ConsultationFields';
 import { ErrorBox, Spinner, useAction, useLoad } from '../../components/ui';
 import { blankAnswers, validateAnswers } from '../../lib/consultation';
 import { fmtDayLong, fmtTime } from '../../lib/time';
+import { useClientManifest } from '../../components/clientManifest';
 
 /** The consultation form link sent to new clients who didn't fill it in while booking. */
 export function FormPage() {
+  useClientManifest();
   const { token = '' } = useParams();
   const valid = /^[0-9a-f-]{36}$/i.test(token);
   const { data, error, loading } = useLoad(() => (valid ? api.getForm(token) : Promise.resolve(null)), [token]);
@@ -32,6 +34,7 @@ export function FormPage() {
       <div className="page page-public stack centre">
         <h1>Thank you{data.first_name ? `, ${data.first_name}` : ''}!</h1>
         <p>Your consultation form has been received. See you on {fmtDayLong(data.starts_at)} at {fmtTime(data.starts_at)}.</p>
+        <p className="sub">Need to change or cancel? <Link to={`/manage/${token}`}>Manage your booking</Link></p>
       </div>
     );
   }
@@ -56,6 +59,7 @@ export function FormPage() {
       </div>
       <ErrorBox error={saveError} />
       <button className="btn primary block" disabled={busy} onClick={submit}>{busy ? 'Sending…' : 'Send form'}</button>
+      <p className="sub centre">Need to change or cancel? <Link to={`/manage/${token}`}>Manage your booking</Link></p>
       <p className="sub centre">See the <Link to="/privacy">privacy notice</Link> for how your information is kept.</p>
     </div>
   );
