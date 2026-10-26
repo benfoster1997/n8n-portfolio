@@ -59,13 +59,15 @@ export function firstName(fullName: string | null | undefined): string {
 
 export const DEFAULT_TEMPLATES = {
   reminder:
-    'Hi {first_name}! Just a reminder of your {service} appointment on {date} at {time}. See you then! 💅\n{business}',
+    'Hi {first_name}! Just a reminder of your {service} appointment on {date} at {time}. 💅\n\n' +
+    'Need to change or cancel? Please do it by {change_by}: {manage_link}\n\nSee you then!\n{business}',
   deposit:
     'Hi {first_name}, thanks for booking {service} on {date} at {time}. To secure your appointment please send the {deposit} deposit by bank transfer:\n\n' +
     'Name: {bank_name}\nSort code: {sort_code}\nAccount: {account_number}\nReference: {reference}\n\n' +
     'Thank you! {business}',
   confirmed:
-    "Hi {first_name}, you're booked in for {service} on {date} at {time}. See you soon!\n{business}",
+    "Hi {first_name}, you're booked in for {service} on {date} at {time}. See you soon!\n\n" +
+    'To change or cancel: {manage_link}\n{business}',
 } as const;
 
 export type TemplateKind = keyof typeof DEFAULT_TEMPLATES;
@@ -75,8 +77,20 @@ export function templateFor(kind: TemplateKind, s: Settings): string {
   return custom && custom.trim() ? custom : DEFAULT_TEMPLATES[kind];
 }
 
+/** The client's own page for changing or cancelling this booking. */
+export function manageLink(a: Pick<Appointment, 'public_token'>, s: Pick<Settings, 'public_site_url'>): string {
+  const base = s.public_site_url || (typeof window !== 'undefined' ? window.location.origin : '');
+  return `${base.replace(/\/+$/, '')}/manage/${a.public_token}`;
+}
+
+/** The last moment to change or cancel without being inside the notice period (the start time if there is none). */
+export function freeChangeDeadline(startsAt: string, noticeHours: number): Date {
+  return new Date(new Date(startsAt).getTime() - Math.max(0, noticeHours) * 3600e3);
+}
+
 /** Fill {placeholders} in a message template for one appointment. Unknown placeholders are left as typed. */
 export function fillTemplate(template: string, a: Appointment, s: Settings): string {
+  const changeBy = freeChangeDeadline(a.starts_at, s.cancel_notice_hours ?? 0);
   const values: Record<string, string> = {
     first_name: firstName(a.client?.full_name ?? a.booking_name),
     name: a.client?.full_name ?? a.booking_name ?? '',
@@ -90,6 +104,8 @@ export function fillTemplate(template: string, a: Appointment, s: Settings): str
     bank_name: s.bank_account_name ?? '',
     sort_code: s.bank_sort_code ?? '',
     account_number: s.bank_account_number ?? '',
+    manage_link: manageLink(a, s),
+    change_by: `${fmtDayLong(changeBy, s.timezone)} at ${fmtTime(changeBy, s.timezone)}`,
   };
   return template.replace(/\{(\w+)\}/g, (whole, key: string) => (key in values ? values[key] : whole));
 }
@@ -97,6 +113,7 @@ export function fillTemplate(template: string, a: Appointment, s: Settings): str
 export const TEMPLATE_PLACEHOLDERS = [
   '{first_name}', '{name}', '{service}', '{date}', '{time}', '{price}', '{deposit}',
   '{reference}', '{bank_name}', '{sort_code}', '{account_number}', '{business}',
+  '{manage_link}', '{change_by}',
 ];
 
 /** Turn rows into a CSV that Excel and Google Sheets open cleanly (UTF-8 with BOM). */
@@ -156,6 +173,13 @@ export function friendlyError(e: unknown): string {
     busy_try_later: 'Lots of bookings are coming in right now — please try again in a little while, or get in touch directly.',
     booking_failed: 'Sorry, that booking couldn’t be made. Please check your details or get in touch directly.',
     form_failed: 'Sorry, the form couldn’t be sent. Please try again or get in touch directly.',
+    change_failed: 'Sorry, that change couldn’t be made. Please try again or get in touch directly.',
+    cancel_failed: 'Sorry, the booking couldn’t be cancelled. Please try again or get in touch directly.',
+    too_late: 'This appointment has already started, so it can’t be changed online.',
+    not_changeable: 'This booking can’t be changed any more — it may already have been cancelled.',
+    changes_disabled: 'Bookings can’t be changed online at the moment — please get in touch directly.',
+    too_many_changes: 'This booking has already been changed a few times — please get in touch directly to change it again.',
+    no_change: 'That’s the same as your booking now — pick a different time or treatment.',
     signature_required: 'Please type your full name to sign the form.',
     already_submitted: 'This form has already been filled in. Thank you!',
     not_found: "This link has expired or isn't valid.",

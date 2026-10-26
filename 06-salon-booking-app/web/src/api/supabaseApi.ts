@@ -1,8 +1,8 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type { Api, FormInfo } from './api';
 import type {
-  Appointment, BookingInfo, BusyRange, Client, ClientPhoto, ConsultationForm, EmailLogRow,
-  OpeningHours, PatchTest, Payment, Service, Session, Settings, TimeOff,
+  Appointment, BookingChangeResult, BookingInfo, BusyRange, Client, ClientChange, ClientPhoto, ConsultationForm,
+  EmailLogRow, ManageInfo, OpeningHours, PatchTest, Payment, Service, Session, Settings, TimeOff,
 } from '../lib/types';
 
 const PHOTO_BUCKET = 'client-photos';
@@ -21,6 +21,7 @@ function shapeAppt(r: ApptRow): Appointment {
     ...r, client, has_form: forms > 0,
     starts_at: iso(r.starts_at)!, ends_at: iso(r.ends_at)!, created_at: iso(r.created_at)!,
     deposit_due_at: iso(r.deposit_due_at), deposit_paid_at: iso(r.deposit_paid_at),
+    cancelled_at: iso(r.cancelled_at), client_changed_at: iso(r.client_changed_at), details_sent_at: iso(r.details_sent_at),
   };
 }
 
@@ -72,6 +73,31 @@ export function supabaseApi(url: string, anonKey: string): Api {
     },
     async submitForm(token, answers, consent, signedName) {
       check(await sb.rpc('public_submit_form', { p_token: token, p_answers: answers, p_health_consent: consent, p_signed_name: signedName }));
+    },
+    async getManagedBooking(token) {
+      const m = check(await sb.rpc('public_get_booking', { p_token: token })) as ManageInfo | null;
+      if (!m) return null;
+      const b = m.booking;
+      return {
+        ...m,
+        booking: {
+          ...b, starts_at: iso(b.starts_at)!, ends_at: iso(b.ends_at)!, deposit_due_at: iso(b.deposit_due_at),
+          cancelled_at: iso(b.cancelled_at), free_until: iso(b.free_until),
+        },
+      };
+    },
+    async getBusyTimesExcept(token, from, to) {
+      const rows = check(await sb.rpc('public_busy_times_except', { p_token: token, p_from: from.toISOString(), p_to: to.toISOString() })) as BusyRange[];
+      return rows.map((b) => ({ starts_at: iso(b.starts_at)!, ends_at: iso(b.ends_at)! }));
+    },
+    async changeBooking(token, change) {
+      const r = check(await sb.rpc('public_change_booking', {
+        p_token: token, p_service_id: change.service_id, p_starts_at: change.starts_at,
+      })) as BookingChangeResult;
+      return { ...r, starts_at: iso(r.starts_at)! };
+    },
+    async cancelBooking(token, reason) {
+      return check(await sb.rpc('public_cancel_booking', { p_token: token, p_reason: reason })) as { late: boolean };
     },
 
     // --- auth -------------------------------------------------------------------
@@ -183,6 +209,20 @@ export function supabaseApi(url: string, anonKey: string): Api {
         .select('id, kind, to_email, status, attempts, sent_at, last_error, created_at')
         .eq('appointment_id', appointmentId).order('id')) as EmailLogRow[];
     },
+    async listClientChanges({ appointmentId, sinceIso }) {
+      let q = sb.from('client_changes')
+        .select('*, appointment:appointments(client_id, booking_name, client:clients(full_name))')
+        .order('changed_at', { ascending: false }).order('id', { ascending: false }).limit(200);
+      if (appointmentId) q = q.eq('appointment_id', appointmentId);
+      if (sinceIso) q = q.gte('changed_at', sinceIso);
+      type Row = ClientChange & { appointment: { client_id: string; booking_name: string | null; client: { full_name: string } | null } | null };
+      const rows = check(await q) as Row[];
+      return rows.map(({ appointment, ...c }) => ({
+        ...c, changed_at: iso(c.changed_at)!, old_starts_at: iso(c.old_starts_at), new_starts_at: iso(c.new_starts_at),
+        client_id: appointment?.client_id ?? null,
+        client_name: appointment?.client?.full_name ?? appointment?.booking_name ?? null,
+      }));
+    },
 
     // --- clients -------------------------------------------------------------------
     async listClients() {
@@ -280,7 +320,7 @@ export function supabaseApi(url: string, anonKey: string): Api {
 
     async exportAll() {
       const tables = ['settings', 'opening_hours', 'services', 'clients', 'patch_tests', 'consultation_forms',
-        'appointments', 'time_off', 'payments', 'client_photos'];
+        'appointments', 'client_changes', 'time_off', 'payments', 'client_photos'];
       const out: Record<string, unknown[]> = {};
       for (const t of tables) {
         const key = t === 'settings' ? 'id' : t === 'opening_hours' ? 'weekday' : 'id';

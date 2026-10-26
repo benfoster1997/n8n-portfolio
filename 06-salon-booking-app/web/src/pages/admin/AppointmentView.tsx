@@ -14,7 +14,10 @@ const EMAIL_LABEL: Record<EmailKind, string> = {
   deposit_received: 'Deposit received',
   reminder: 'Reminder',
   cancelled: 'Cancellation',
+  changed: 'Booking changed',
   owner_new_booking: 'New booking alert (to you)',
+  owner_changed: 'Change alert (to you)',
+  owner_cancelled: 'Cancellation alert (to you)',
 };
 
 export function AppointmentView() {

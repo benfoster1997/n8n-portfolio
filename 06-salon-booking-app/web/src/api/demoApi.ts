@@ -4,14 +4,15 @@
 // demo; the database (supabase/schema.sql) is the real authority.
 import type { Api, FormInfo } from './api';
 import type {
-  Appointment, BookingInfo, BusyRange, Client, ClientPhoto, ConsultationForm, EmailLogRow,
-  OpeningHours, PatchTest, Payment, Service, Session, Settings, TimeOff,
+  Appointment, BookingInfo, BusyRange, Client, ClientChange, ClientPhoto, ConsultationForm, EmailLogRow,
+  ManageInfo, OpeningHours, PatchTest, Payment, Service, Session, Settings, TimeOff,
 } from '../lib/types';
 import { addDays, dateInZone, todayInZone, zonedToInstant } from '../lib/time';
 import { availableSlots } from '../lib/slots';
 import { normalizeUkPhone } from '../lib/text';
 
-const KEY = 'salon-demo-v3';
+const KEY = 'salon-demo-v4';
+const MAX_CLIENT_CHANGES = 6; // public.max_client_changes()
 const TZ = 'Europe/London';
 
 type Row<T> = T;
@@ -27,6 +28,7 @@ interface Store {
   payments: Payment[];
   photos: ClientPhoto[];
   outbox: (EmailLogRow & { appointment_id: string })[];
+  client_changes: ClientChange[];
   session: Session | null;
 }
 
@@ -58,13 +60,15 @@ function seed(): Store {
     bank_sort_code: '00-00-00',
     bank_account_number: '12345678',
     cancellation_policy: 'Please give at least 48 hours’ notice if you need to cancel or move your appointment. If you cancel with less than 48 hours’ notice, or don’t turn up, the full price of your treatment is payable.',
-    reminder_hours_before: 24,
+    reminder_hours_before: 72,
     wa_template_reminder: null,
     wa_template_deposit: null,
     wa_template_confirmed: null,
     booking_enabled: true,
     legal_name: 'Demo Owner',
     auto_cancel_unpaid: false,
+    cancel_notice_hours: 48,
+    client_self_service: true,
     email_secret_hash: null,
     email_last_poll_at: null,
   };
@@ -108,7 +112,8 @@ function seed(): Store {
       status, source: 'owner' as const, booking_name: c.full_name, is_new_client: false, deposit_required_pence: 0,
       deposit_due_at: null, deposit_paid_at: null, reference: ref(), public_token: uid(), client_notes: null,
       owner_notes: null, cancellation_policy_agreed: null, reminder_email_sent_at: null, whatsapp_reminder_sent_at: null, cancelled_at: null,
-      cancel_reason: null, created_at: at(-14, '09:00'), ...extra,
+      cancel_reason: null, cancelled_by: null, cancelled_late: false, client_change_count: 0, client_changed_at: null,
+      details_sent_at: null, created_at: at(-14, '09:00'), ...extra,
     };
     appts.push(a);
     return a;
@@ -139,7 +144,23 @@ function seed(): Store {
     client_notes: 'First time trying BIAB — would love a soft pink.',
   });
   add(ruby, gel, at(3, '10:30'), 'confirmed');
-  add(amelia, infill, at(8, '12:00'), 'confirmed');
+  // Changes clients made themselves from the link in their emails.
+  const hoursAgo = (h: number) => new Date(Date.now() - h * 3600e3).toISOString();
+  const moved = add(amelia, infill, at(8, '12:00'), 'confirmed', {
+    source: 'online', client_change_count: 1, client_changed_at: hoursAgo(3), details_sent_at: hoursAgo(3),
+  });
+  const lateCancel = add(isla, toes, at(1, '15:30'), 'cancelled', {
+    source: 'online', cancelled_by: 'client', cancelled_late: true, cancelled_at: hoursAgo(4),
+    client_changed_at: hoursAgo(4), cancel_reason: 'Sorry — something came up at work.',
+  });
+  const client_changes: ClientChange[] = [
+    { id: 1, appointment_id: moved.id, changed_at: hoursAgo(3), action: 'moved', old_starts_at: at(7, '15:00'),
+      new_starts_at: moved.starts_at, old_service_name: infill.name, new_service_name: infill.name,
+      old_price_pence: infill.price_pence, new_price_pence: infill.price_pence, late: false, note: null },
+    { id: 2, appointment_id: lateCancel.id, changed_at: hoursAgo(4), action: 'cancelled', old_starts_at: lateCancel.starts_at,
+      new_starts_at: null, old_service_name: toes.name, new_service_name: null, old_price_pence: toes.price_pence,
+      new_price_pence: null, late: true, note: lateCancel.cancel_reason },
+  ];
 
   sophie.health_consent_at = newBooking.created_at;
   sophie.health_consent_note = 'Online consultation form';
@@ -159,6 +180,7 @@ function seed(): Store {
     payments,
     photos: [],
     outbox: [],
+    client_changes,
     session: null,
   };
 }
@@ -201,10 +223,10 @@ export function demoApi(): Api {
     return db.appointments.some((a) => a.id !== excludeId && ACTIVE.has(a.status)
       && s < new Date(a.busy_until).getTime() && e > new Date(a.starts_at).getTime());
   };
-  const queue = (appointment_id: string, kind: EmailLogRow['kind'], to: string | null | undefined) => {
+  const queue = (appointment_id: string, kind: EmailLogRow['kind'], to: string | null | undefined, requeue = true) => {
     if (!to) return;
     const existing = db.outbox.find((o) => o.appointment_id === appointment_id && o.kind === kind);
-    if (existing) { existing.status = 'pending'; existing.attempts = 0; return; }
+    if (existing) { if (requeue) { existing.status = 'pending'; existing.attempts = 0; } return; }
     db.outbox.push({ id: db.outbox.length + 1, appointment_id, kind, to_email: to, status: 'pending', attempts: 0,
       sent_at: null, last_error: null, created_at: nowIso() });
   };
@@ -213,6 +235,20 @@ export function demoApi(): Api {
   });
   const delay = <T,>(v: T): Promise<T> => new Promise((r) => setTimeout(() => r(v), 60));
   const needOwner = () => { if (!db.session) fail('not_allowed'); };
+  // The same checks as public_change_booking / public_cancel_booking.
+  const managed = (token: string) => {
+    const a = db.appointments.find((x) => x.public_token === token) ?? fail('not_found');
+    if (a.status !== 'pending_deposit' && a.status !== 'confirmed') fail('not_changeable');
+    if (new Date(a.starts_at).getTime() <= Date.now()) fail('too_late');
+    if (!db.settings.client_self_service) fail('changes_disabled');
+    return a;
+  };
+  const insideNotice = (startsAt: string) =>
+    db.settings.cancel_notice_hours > 0 && Date.now() > new Date(startsAt).getTime() - db.settings.cancel_notice_hours * 3600e3;
+  const logChange = (c: Omit<ClientChange, 'id' | 'changed_at'>) =>
+    db.client_changes.push({ id: db.client_changes.length + 1, changed_at: nowIso(), ...c });
+  const pendingEmail = (appointment_id: string, kind: EmailLogRow['kind']) =>
+    db.outbox.some((o) => o.appointment_id === appointment_id && o.kind === kind && o.status === 'pending');
 
   const api: Api = {
     mode: 'demo',
@@ -264,7 +300,9 @@ export function demoApi(): Api {
         deposit_due_at: deposit > 0 ? new Date(Math.min(Date.now() + s.deposit_deadline_hours * 3600e3, new Date(r.starts_at).getTime())).toISOString() : null,
         deposit_paid_at: null, reference: ref(), public_token: uid(), client_notes: r.notes, owner_notes: null,
         cancellation_policy_agreed: s.cancellation_policy?.trim() || null,
-        reminder_email_sent_at: null, whatsapp_reminder_sent_at: null, cancelled_at: null, cancel_reason: null, created_at: nowIso(),
+        reminder_email_sent_at: null, whatsapp_reminder_sent_at: null, cancelled_at: null, cancel_reason: null,
+        cancelled_by: null, cancelled_late: false, client_change_count: 0, client_changed_at: null, details_sent_at: null,
+        created_at: nowIso(),
       });
       db.appointments.push(a);
       if (r.consultation && created) {
@@ -296,6 +334,86 @@ export function demoApi(): Api {
       if (c) { c.health_consent_at = nowIso(); c.health_consent_note = 'Online consultation form'; }
       commit();
       await delay(null);
+    },
+
+    async getManagedBooking(token) {
+      const a = db.appointments.find((x) => x.public_token === token && new Date(x.starts_at).getTime() > Date.now() - 86400e3);
+      if (!a) return delay(null);
+      const s = db.settings;
+      const c = db.clients.find((x) => x.id === a.client_id);
+      const m: ManageInfo = {
+        info: await api.getBookingInfo(),
+        contact_phone: s.owner_phone,
+        cancel_notice_hours: s.cancel_notice_hours,
+        client_self_service: s.client_self_service,
+        booking: {
+          reference: a.reference, status: a.status, first_name: (a.booking_name || c?.full_name || '').split(' ')[0],
+          service_id: a.service_id, service_name: a.service_name, price_pence: a.price_pence, duration_min: a.duration_min,
+          starts_at: a.starts_at, ends_at: a.ends_at, deposit_required_pence: a.deposit_required_pence,
+          deposit_due_at: a.deposit_due_at, deposit_paid: !!a.deposit_paid_at, cancelled_at: a.cancelled_at,
+          cancelled_by: a.cancelled_by, cancelled_late: a.cancelled_late,
+          changes_left: Math.max(0, MAX_CLIENT_CHANGES - a.client_change_count),
+          form_needed: a.is_new_client && !db.forms.some((f) => f.client_id === a.client_id),
+          free_until: s.cancel_notice_hours > 0 ? new Date(new Date(a.starts_at).getTime() - s.cancel_notice_hours * 3600e3).toISOString() : null,
+        },
+        bank: a.status === 'pending_deposit'
+          ? { account_name: s.bank_account_name, sort_code: s.bank_sort_code, account_number: s.bank_account_number } : null,
+      };
+      return delay(m);
+    },
+    async getBusyTimesExcept(token, from, to) {
+      const a = db.appointments.find((x) => x.public_token === token) ?? fail('not_found');
+      const f = from.getTime(), t = to.getTime();
+      return delay(busyFor(a.id).filter((b) => new Date(b.starts_at).getTime() < t && new Date(b.ends_at).getTime() > f));
+    },
+    async changeBooking(token, change) {
+      const a = managed(token);
+      const s = db.settings;
+      if (!s.booking_enabled) fail('booking_disabled');
+      if (a.client_change_count >= MAX_CLIENT_CHANGES) fail('too_many_changes');
+      const keep = !change.service_id || change.service_id === a.service_id;
+      const service = keep ? null
+        : db.services.find((v) => v.id === change.service_id && v.is_active && v.online_bookable) ?? fail('invalid_service');
+      const duration = service ? service.duration_min : a.duration_min;
+      const start = new Date(change.starts_at ?? a.starts_at).toISOString();
+      const moved = start !== a.starts_at;
+      const switched = !!service && (service.id !== a.service_id || duration !== a.duration_min);
+      if (!moved && !switched) fail('no_change');
+      const ok = availableSlots(dateInZone(start, s.timezone), duration, { ...s, hours: db.hours }, busyFor(a.id))
+        .some((d) => d.toISOString() === start);
+      if (!ok) fail('slot_taken');
+      const late = moved && insideNotice(a.starts_at);
+      const before = { starts_at: a.starts_at, service_name: a.service_name, price_pence: a.price_pence };
+      if (service) Object.assign(a, { service_id: service.id, service_name: service.name, price_pence: service.price_pence, duration_min: duration });
+      a.starts_at = start;
+      a.ends_at = new Date(new Date(start).getTime() + duration * 60e3).toISOString();
+      a.busy_until = new Date(new Date(a.ends_at).getTime() + s.buffer_min * 60e3).toISOString();
+      if (moved) { a.reminder_email_sent_at = null; a.whatsapp_reminder_sent_at = null; }
+      if (a.deposit_due_at && a.deposit_due_at > a.starts_at) a.deposit_due_at = a.starts_at;
+      a.client_change_count += 1;
+      a.client_changed_at = a.details_sent_at = nowIso();
+      logChange({ appointment_id: a.id, action: moved && switched ? 'moved_treatment' : moved ? 'moved' : 'treatment',
+        old_starts_at: before.starts_at, new_starts_at: a.starts_at, old_service_name: before.service_name,
+        new_service_name: a.service_name, old_price_pence: before.price_pence, new_price_pence: a.price_pence, late, note: null });
+      if (!pendingEmail(a.id, 'booking_received')) queue(a.id, 'changed', db.clients.find((x) => x.id === a.client_id)?.email);
+      if (!pendingEmail(a.id, 'owner_new_booking')) queue(a.id, 'owner_changed', s.owner_email);
+      commit();
+      return delay({ reference: a.reference, starts_at: a.starts_at, service_name: a.service_name, price_pence: a.price_pence, late });
+    },
+    async cancelBooking(token, reason) {
+      const a = managed(token);
+      const late = insideNotice(a.starts_at);
+      const note = (reason ?? '').replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, 300) || null;
+      Object.assign(a, { status: 'cancelled', cancelled_at: nowIso(), cancelled_by: 'client', cancelled_late: late,
+        cancel_reason: note, client_changed_at: nowIso() });
+      db.outbox.filter((o) => o.appointment_id === a.id && o.status === 'pending' && o.kind !== 'cancelled' && o.kind !== 'owner_cancelled')
+        .forEach((o) => { o.status = 'skipped'; });
+      logChange({ appointment_id: a.id, action: 'cancelled', old_starts_at: a.starts_at, new_starts_at: null,
+        old_service_name: a.service_name, new_service_name: null, old_price_pence: a.price_pence, new_price_pence: null, late, note });
+      queue(a.id, 'cancelled', db.clients.find((x) => x.id === a.client_id)?.email, false);
+      queue(a.id, 'owner_cancelled', db.settings.owner_email, false);
+      commit();
+      return delay({ late });
     },
 
     async getSession() { return delay(db.session); },
@@ -347,7 +465,8 @@ export function demoApi(): Api {
       const a = withBusy({
         id: uid(), ...n, starts_at: new Date(n.starts_at).toISOString(), ends_at: ends, source: 'owner', booking_name: null,
         deposit_paid_at: null, reference: ref(), public_token: uid(), client_notes: null, cancellation_policy_agreed: null, reminder_email_sent_at: null,
-        whatsapp_reminder_sent_at: null, cancelled_at: null, cancel_reason: null, created_at: nowIso(),
+        whatsapp_reminder_sent_at: null, cancelled_at: null, cancel_reason: null, cancelled_by: null, cancelled_late: false,
+        client_change_count: 0, client_changed_at: null, details_sent_at: null, created_at: nowIso(),
       });
       db.appointments.push(a);
       commit();
@@ -403,6 +522,7 @@ export function demoApi(): Api {
       if (a.status !== 'confirmed' && a.status !== 'pending_deposit') fail('not_cancellable');
       a.status = 'cancelled';
       a.cancelled_at = nowIso();
+      a.cancelled_by = 'owner';
       a.cancel_reason = reason;
       db.outbox.filter((o) => o.appointment_id === id && o.status === 'pending').forEach((o) => { o.status = 'skipped'; });
       if (notify) queue(id, 'cancelled', db.clients.find((x) => x.id === a.client_id)?.email);
@@ -414,10 +534,22 @@ export function demoApi(): Api {
       const a = db.appointments.find((x) => x.id === id) ?? fail('not_found');
       const email = db.clients.find((x) => x.id === a.client_id)?.email ?? fail('no_email');
       queue(id, kind, email);
+      if (kind !== 'reminder') a.details_sent_at = nowIso();
       commit();
       await delay(null);
     },
     async listEmailLog(appointmentId) { return delay(db.outbox.filter((o) => o.appointment_id === appointmentId)); },
+    async listClientChanges({ appointmentId, sinceIso }) {
+      needOwner();
+      return delay(db.client_changes
+        .filter((c) => (!appointmentId || c.appointment_id === appointmentId) && (!sinceIso || c.changed_at >= sinceIso))
+        .sort((a, b) => b.changed_at.localeCompare(a.changed_at) || b.id - a.id)
+        .map((c) => {
+          const a = db.appointments.find((x) => x.id === c.appointment_id);
+          const cl = a && db.clients.find((x) => x.id === a.client_id);
+          return { ...c, client_id: a?.client_id ?? null, client_name: cl?.full_name ?? a?.booking_name ?? null };
+        }));
+    },
 
     async listClients() {
       needOwner();
@@ -456,6 +588,7 @@ export function demoApi(): Api {
       db.forms = db.forms.filter((f) => f.client_id !== id);
       db.photos = db.photos.filter((p) => p.client_id !== id);
       db.outbox = db.outbox.filter((o) => !gone.has(o.appointment_id));
+      db.client_changes = db.client_changes.filter((c) => !gone.has(c.appointment_id));
       db.payments.forEach((p) => { if (p.client_id === id) p.client_id = null; if (p.appointment_id && gone.has(p.appointment_id)) p.appointment_id = null; });
       commit();
       await delay(null);

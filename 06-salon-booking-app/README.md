@@ -8,9 +8,10 @@ no card processor, no SMS and no paid WhatsApp.
 
 | For clients | For the owner |
 |---|---|
-| Online booking page for her Instagram bio | **Today**: what's on, deposits waiting, missing forms |
-| Health and allergy consultation form for first visits | **Diary**: week view, add, move and cancel bookings, block time off |
-| Confirmation and reminder emails | **One-tap WhatsApp** reminders and deposit requests |
+| Online booking page for her Instagram bio | **Today**: what's on, deposits waiting, missing forms, what clients changed |
+| **Change or cancel online** from a private link, any time before the appointment | **Diary**: week view, add, move and cancel bookings, block time off |
+| Health and allergy consultation form for first visits | **One-tap WhatsApp** reminders (3 days ahead) and deposit requests |
+| Confirmation, change and reminder emails (72 hours before) | **Late cancellations** flagged, with a one-tap follow-up and "record payment" |
 | Bank-transfer deposit instructions (new clients only) | **Clients**: notes, allergies, patch tests, forms, private nail photos |
 | Plain-English privacy notice | **Money**: cash and bank-transfer takings, by month or UK tax year, CSV export |
 
@@ -44,6 +45,17 @@ no card processor, no SMS and no paid WhatsApp.
   That records the money and emails the client to say they're confirmed.
 - **"New client" means no completed appointment.** Someone who booked before but never turned
   up is still asked for a deposit.
+- **Clients manage their own booking through a secret link.** Each confirmation, reminder and
+  WhatsApp reminder has a `/manage/<token>` link. It opens that one booking and nothing else, and it
+  is never shown on the booking page, so booking with somebody else's email doesn't hand you their
+  link. Clients can move, switch treatment or cancel at any time before the start. Inside the
+  cancellation notice period (48 hours by default) it still goes through, but it's flagged as late
+  and the owner is emailed. The app never charges anyone: she collects a late-cancellation fee
+  herself and records it. A new time follows exactly the same rules as a new booking, and each
+  booking can be changed online at most 6 times, so a link can't be used to send endless emails.
+- **Reminders 72 hours ahead.** That is a day before the 48-hour cut-off, so a reminder is still
+  useful to someone who needs to change. A reminder email isn't sent on top of a change notice
+  the client has just had.
 - **WhatsApp is one tap, not automatic.** WhatsApp charges businesses per automated message.
   Opening WhatsApp with the message written, and letting her press send, is free and comes from
   her own number.
@@ -82,6 +94,6 @@ Chromium; set `CHROME_PATH` if it isn't at the default path in `playwright.confi
 
 ## What it does not do
 
-No card payments, no automatic WhatsApp or SMS, no marketplace listing, no push notifications
-(new bookings arrive by email), no client self-service cancellation, no expenses tracking, and one
-staff member only. The full list, and the reasons, are in [SETUP.md](SETUP.md#what-this-app-does-not-do).
+No card payments (so no automatic late-cancellation charges), no automatic WhatsApp or SMS, no
+marketplace listing, no push notifications (new bookings and changes arrive by email), no expenses
+tracking, and one staff member only. The full list, and the reasons, are in [SETUP.md](SETUP.md#what-this-app-does-not-do).

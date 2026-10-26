@@ -3,7 +3,10 @@
 export type ApptStatus = 'pending_deposit' | 'confirmed' | 'completed' | 'cancelled' | 'no_show';
 export type PayMethod = 'cash' | 'bank_transfer';
 export type PayKind = 'deposit' | 'payment' | 'tip' | 'refund' | 'other';
-export type EmailKind = 'booking_received' | 'deposit_received' | 'reminder' | 'cancelled' | 'owner_new_booking';
+export type EmailKind =
+  | 'booking_received' | 'deposit_received' | 'reminder' | 'cancelled' | 'changed'
+  | 'owner_new_booking' | 'owner_changed' | 'owner_cancelled';
+export type CancelledBy = 'client' | 'owner' | 'system';
 
 export interface Settings {
   business_name: string;
@@ -31,6 +34,10 @@ export interface Settings {
   booking_enabled: boolean;
   legal_name: string | null;
   auto_cancel_unpaid: boolean;
+  /** Notice the cancellation policy asks for. Later client cancellations are flagged as late. 0 = none. */
+  cancel_notice_hours: number;
+  /** Clients can change or cancel their own booking from the link in their emails. */
+  client_self_service: boolean;
   email_secret_hash: string | null;
   email_last_poll_at: string | null;
 }
@@ -99,10 +106,39 @@ export interface Appointment {
   whatsapp_reminder_sent_at: string | null;
   cancelled_at: string | null;
   cancel_reason: string | null;
+  cancelled_by: CancelledBy | null;
+  /** The client cancelled inside the cancellation notice period. */
+  cancelled_late: boolean;
+  /** How many times the client has changed this booking online. */
+  client_change_count: number;
+  client_changed_at: string | null;
+  /** When the client was last emailed their details after booking (a change notice or re-sent confirmation). */
+  details_sent_at: string | null;
   created_at: string;
   client?: ClientLite;
   /** True when the client has at least one consultation form on file. */
   has_form?: boolean;
+}
+
+/** One change a client made to their own booking online. */
+export interface ClientChange {
+  id: number;
+  appointment_id: string;
+  changed_at: string;
+  action: 'moved' | 'treatment' | 'moved_treatment' | 'cancelled';
+  old_starts_at: string | null;
+  new_starts_at: string | null;
+  old_service_name: string | null;
+  new_service_name: string | null;
+  old_price_pence: number | null;
+  new_price_pence: number | null;
+  /** Made with less notice than the cancellation policy asks for. */
+  late: boolean;
+  /** The client's reason, if they gave one when cancelling. */
+  note: string | null;
+  /** Filled in by the owner's list: whose booking it is. */
+  client_name?: string | null;
+  client_id?: string | null;
 }
 
 export interface PatchTest {
@@ -184,6 +220,50 @@ export interface BookingInfo {
   contact_email: string | null;
   hours: OpeningHours[];
   services: Pick<Service, 'id' | 'name' | 'description' | 'duration_min' | 'price_pence'>[];
+}
+
+/** What a client sees about their own booking on the manage page. */
+export interface ManagedBooking {
+  reference: string;
+  status: ApptStatus;
+  first_name: string;
+  service_id: string | null;
+  service_name: string;
+  price_pence: number;
+  duration_min: number;
+  starts_at: string;
+  ends_at: string;
+  deposit_required_pence: number;
+  deposit_due_at: string | null;
+  deposit_paid: boolean;
+  cancelled_at: string | null;
+  cancelled_by: CancelledBy | null;
+  cancelled_late: boolean;
+  /** Online changes still allowed before they have to get in touch. */
+  changes_left: number;
+  /** A new client who hasn't filled in the consultation form yet. */
+  form_needed: boolean;
+  /** After this time, cancelling (or moving) is inside the notice period. Null when there is no notice period. */
+  free_until: string | null;
+}
+
+export interface ManageInfo {
+  info: BookingInfo;
+  booking: ManagedBooking;
+  contact_phone: string | null;
+  cancel_notice_hours: number;
+  client_self_service: boolean;
+  /** Only while a deposit is still owed. */
+  bank: { account_name: string | null; sort_code: string | null; account_number: string | null } | null;
+}
+
+export interface BookingChangeResult {
+  reference: string;
+  starts_at: string;
+  service_name: string;
+  price_pence: number;
+  /** The time moved inside the notice period. */
+  late: boolean;
 }
 
 export interface BusyRange {

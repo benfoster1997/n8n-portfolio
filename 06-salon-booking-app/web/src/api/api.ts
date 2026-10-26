@@ -3,9 +3,9 @@
 //   * demoApi     — invented data kept in this browser, so the app can be
 //                   tried (and tested) before anything is set up.
 import type {
-  Appointment, BookingInfo, BookingRequest, BusyRange, Client, ClientPhoto, ConsultationForm,
-  EmailKind, EmailLogRow, NewAppointment, OpeningHours, PatchTest, PayMethod, Payment, Service,
-  Session, Settings, TimeOff,
+  Appointment, BookingChangeResult, BookingInfo, BookingRequest, BusyRange, Client, ClientChange, ClientPhoto,
+  ConsultationForm, EmailKind, EmailLogRow, ManageInfo, NewAppointment, OpeningHours, PatchTest, PayMethod,
+  Payment, Service, Session, Settings, TimeOff,
 } from '../lib/types';
 
 export interface FormInfo {
@@ -25,6 +25,15 @@ export interface Api {
   createBooking(req: BookingRequest): Promise<{ reference: string; starts_at: string }>;
   getForm(token: string): Promise<FormInfo | null>;
   submitForm(token: string, answers: Record<string, unknown>, consent: boolean, signedName: string): Promise<void>;
+
+  // --- a client managing their own booking (/manage/:token) ------------------
+  /** Null when the link is unknown or the appointment is long past. */
+  getManagedBooking(token: string): Promise<ManageInfo | null>;
+  /** Busy times for choosing a new time; the client's own booking doesn't count. */
+  getBusyTimesExcept(token: string, from: Date, to: Date): Promise<BusyRange[]>;
+  /** Move the booking and/or switch treatment. Null keeps that part as it is. */
+  changeBooking(token: string, change: { service_id: string | null; starts_at: string | null }): Promise<BookingChangeResult>;
+  cancelBooking(token: string, reason: string | null): Promise<{ late: boolean }>;
 
   // --- sign-in -------------------------------------------------------------
   getSession(): Promise<Session | null>;
@@ -57,8 +66,10 @@ export interface Api {
   markDepositPaid(id: string, method: PayMethod): Promise<void>;
   completeAppointment(id: string, amountPence: number, method: PayMethod, tipPence: number, note: string | null): Promise<void>;
   cancelAppointment(id: string, reason: string | null, notify: boolean): Promise<void>;
-  queueEmail(id: string, kind: Extract<EmailKind, 'booking_received' | 'deposit_received' | 'reminder'>): Promise<void>;
+  queueEmail(id: string, kind: Extract<EmailKind, 'booking_received' | 'deposit_received' | 'reminder' | 'changed'>): Promise<void>;
   listEmailLog(appointmentId: string): Promise<EmailLogRow[]>;
+  /** Changes clients made online: for one appointment, or everything since a time (newest first). */
+  listClientChanges(opts: { appointmentId?: string; sinceIso?: string }): Promise<ClientChange[]>;
 
   // --- owner: clients ------------------------------------------------------
   listClients(): Promise<(Client & { last_visit: string | null; visits: number })[]>;

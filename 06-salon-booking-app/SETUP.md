@@ -14,6 +14,14 @@ everything belongs to the business owner rather than to whoever sets it up. Turn
 | **Netlify** | Puts the app on the web at an address like `yourstudio.netlify.app` | Free plan |
 | **Google Apps Script** (in her Gmail) | Sends confirmation and reminder emails from her own Gmail | Free |
 
+> **Does she have to use Netlify?** No, she never sees it. A home-screen web app is a web page
+> that the phone keeps on the home screen, so it has to live at a web address. That address is
+> also where clients book, change and cancel. Netlify is just the free host for that address.
+> Whoever sets the app up does step 2 once. After that, she only ever taps the icon on her home
+> screen. (Cloudflare Pages or Vercel would do the same job. The only way to have no web host
+> at all would be an App Store app, which costs about £79 a year for Apple's developer account and still
+> needs a web page for client bookings.)
+
 > **Before you start:** a business that keeps client records, especially health information
 > like allergies, has to pay the **ICO data protection fee**. That's £52 a year for a small
 > business, or £47 by direct debit. It's a legal requirement whatever app is used, so she may
@@ -90,9 +98,13 @@ Lock the door first, then make her key:
 
 ## 4. Add it to the home screen: 1 minute
 
-In Safari on the iPhone, tap **Share** (the square with the arrow), then **Add to Home Screen**,
-name it **Bookings** and tap **Add**. It now opens full-screen like an app, with its own icon,
-and she stays signed in.
+In Safari on the iPhone, open the app's address (the one she signed in on, **not** `/book`), tap
+**Share** (the square with the arrow), then **Add to Home Screen**, name it **Bookings** and tap
+**Add**. It now opens full-screen like an app, with its own icon, and she stays signed in.
+
+Her side of the app (diary, clients, money, settings) only opens for her account. Clients only ever
+see the booking pages. If a client adds the booking page to *their* home screen, their icon opens
+the booking page, never her sign-in.
 
 ---
 
@@ -108,7 +120,7 @@ Open the app and go to **Settings**:
    - **This app's web address**: tap *Use …netlify.app*.
 2. **Opening hours**: the days and times clients can book, and any lunch break.
 3. **Treatments & prices**: add each service, with how long it really takes (including removal).
-4. **Deposits & bank details**:
+4. **Deposits & cancellations**:
    - The deposit for new clients (e.g. £10) and how many hours they have to pay it.
    - Whether unpaid bookings are released automatically. This is off by default: late ones are just flagged.
    - The account name, sort code and account number. These are only ever sent to clients who owe a deposit.
@@ -116,8 +128,18 @@ Open the app and go to **Settings**:
      otherwise the full price of the treatment is payable*. It shows at the top of the booking page and
      in every confirmation and reminder email. Clients have to tick to agree before booking, and each
      booking keeps a copy of the wording they agreed to.
-5. **Booking rules**: the gap between clients (clean-up time), the minimum notice, and how far ahead people can book.
+   - **Notice needed to cancel**: 48 hours, to match the policy.
+   - **Clients can change or cancel online**: on by default. Every confirmation and reminder has a
+     private link where the client can move their appointment, switch treatment or cancel, at any time
+     before it starts. If they do it with less than 48 hours' notice, it still goes through, but it's
+     flagged as **late**, and she gets an email alert. **The app doesn't collect the charge:** she
+     arranges that with the client herself, and can record the money in the app when it arrives.
+5. **Booking rules**: the gap between clients (clean-up time), the minimum notice, how far ahead people
+   can book, and when reminders go out. Reminders are set to **72 hours (3 days) before**, for both the
+   email and the WhatsApp list. That gives clients a full day to change their plans before the 48-hour
+   cut-off.
 6. **WhatsApp messages** (optional): the wording of the reminder, deposit and confirmation messages.
+   The reminder already includes the client's change/cancel link and the date to change by.
 
 Until the essentials are done, the **Today** screen shows a "Finish setting up" list.
 
@@ -125,7 +147,8 @@ Until the essentials are done, the **Today** screen shows a "Finish setting up" 
 
 ## 6. Switch on emails (Google Apps Script): 10 minutes
 
-This sends confirmation, deposit, reminder and cancellation emails **from her own Gmail**, for free.
+This sends confirmation, deposit, reminder, change and cancellation emails **from her own Gmail**,
+for free. It also emails her when a client books, changes or cancels.
 It uses Google's MailApp, which can *send* email but **can't read her inbox**.
 
 1. In the app, go to **Settings → Email confirmations & reminders → Create the secret**.
@@ -194,7 +217,10 @@ from her own Instagram, WhatsApp, Google profile and word of mouth.
 | She wants to… | Where |
 |---|---|
 | See today and anything waiting on her | **Today** |
-| Send tomorrow's WhatsApp reminders | **Today → Send N WhatsApp reminders**: tap each one, WhatsApp opens with the message written, press send |
+| Send WhatsApp reminders (appointments in the next 3 days) | **Today → Send N WhatsApp reminders**: tap each one, WhatsApp opens with the message written, press send |
+| See what clients have changed or cancelled themselves | **Today → Changed by clients** (she's also emailed each time). Late ones are marked **Late**. |
+| Follow up a late cancellation | The appointment → **Late cancellation** → WhatsApp the client, then **Record payment received** when the money arrives |
+| Move a booking herself | The appointment → **Change time**. Leave *Email … their new time* ticked and the client is told. |
 | Confirm a new client's deposit has arrived | Today → *Deposits waiting* → the booking → **Deposit received** (the client is emailed automatically) |
 | Finish an appointment and record payment | The appointment → **Finish & take payment** → cash or bank transfer |
 | Block a holiday or a dentist appointment | **Diary → Block time** |
@@ -229,6 +255,9 @@ She is the **data controller**. The app is built to make that easier, but these 
 - **If something goes wrong**, such as a lost phone or someone else getting in: change her password straight away.
   If client data may have been exposed, she may need to tell the ICO within **72 hours**.
 - **Keep the phone locked** with Face ID or a passcode. Anyone holding the unlocked phone can open the diary.
+- **Change/cancel links are private to each client.** They're only sent to the client's own email (or
+  by her on WhatsApp), and they only open that one booking. Anyone a client forwards the link to could
+  change or cancel that booking, so the privacy notice tells clients not to share it.
 
 ---
 
@@ -243,7 +272,10 @@ So nobody is surprised later:
 - **No text messages (SMS)**, because they cost about 4p each.
 - **No marketplace.** Unlike Fresha, nobody finds her *through* the app. She shares her link.
 - **No phone notifications for new bookings.** She gets an email instead, within 10 minutes.
-- **Clients can't cancel or move bookings themselves.** They reply to the email or WhatsApp her, and she changes it.
+- **No charging for late cancellations.** Clients can change or cancel online at any time, but the app
+  doesn't take the late-cancellation charge. It flags the booking, tells her, and she arranges payment
+  herself (then records it in the app). A booking can be changed online up to 6 times; after that the
+  client has to get in touch.
 - **No expenses tracking.** It only records money received, so she should keep receipts for products, training and insurance separately.
 - **One person only.** It's built for one diary, not a salon with staff.
 - **A brake on online bookings.** At most 6 an hour, 25 a day and 15 waiting for a deposit, and 3 an hour from any
@@ -256,6 +288,7 @@ So nobody is surprised later:
 
 | Problem | What to do |
 |---|---|
+| A client says the change/cancel link doesn't work | Links stop working a day after the appointment, and changes aren't possible once it has started. Check **Settings → Deposits & cancellations → Clients can change or cancel online** is on. |
 | Clients say they got no email | App → Settings → Email shows when the script last checked in. At [script.google.com](https://script.google.com) → the project → **Executions**, you can see any errors. Ask the client to check their junk folder. |
 | "Can't reach the server" | The free Supabase project may have paused. Go to the Supabase dashboard → the project → **Restore**. |
 | The email script says the secret was refused | App → Settings → Email → **Make a new secret**, then paste it into Script Properties → `EMAIL_SECRET`. |

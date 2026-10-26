@@ -1,5 +1,5 @@
 dist/
-dist-demo/
+dist-demo*/
 test-results/
 playwright-report/
 .env.local
