@@ -112,7 +112,10 @@ Open the app and go to **Settings**:
    - The deposit for new clients (e.g. £10) and how many hours they have to pay it.
    - Whether unpaid bookings are released automatically. This is off by default: late ones are just flagged.
    - The account name, sort code and account number. These are only ever sent to clients who owe a deposit.
-   - Her cancellation policy.
+   - Her cancellation policy. It's already filled in: *at least 48 hours' notice to cancel or move,
+     otherwise the full price of the treatment is payable*. It shows at the top of the booking page and
+     in every confirmation and reminder email. Clients have to tick to agree before booking, and each
+     booking keeps a copy of the wording they agreed to.
 5. **Booking rules**: the gap between clients (clean-up time), the minimum notice, and how far ahead people can book.
 6. **WhatsApp messages** (optional): the wording of the reminder, deposit and confirmation messages.
 

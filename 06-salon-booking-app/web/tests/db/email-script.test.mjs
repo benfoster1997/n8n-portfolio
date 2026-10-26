@@ -96,7 +96,7 @@ test('the script sends exactly what the database hands over, and reports back', 
   const start = (await db.query(
     `select ((((now() at time zone 'Europe/London')::date + 3) + time '10:00') at time zone 'Europe/London') as t`)).rows[0].t;
   const svc = (await db.query(`select id from public.services`)).rows[0].id;
-  await asAnon(`select public.public_create_booking($1, $2, 'Jess & Co Example', 'jess@example.com', '07700900123', '<script>alert(1)</script>')`,
+  await asAnon(`select public.public_create_booking($1, $2, 'Jess & Co Example', 'jess@example.com', '07700900123', '<script>alert(1)</script>', p_policy_accepted => true)`,
     [svc, start]);
 
   const claim = (await asAnon(`select public.email_jobs_claim($1) as j`, [SECRET])).rows[0].j;

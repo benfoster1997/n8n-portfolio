@@ -80,6 +80,12 @@ export function AppointmentView() {
           {a.cancel_reason && <><dt>Reason</dt><dd>{a.cancel_reason}</dd></>}
         </dl>
         {a.client_notes && <div className="notice"><b>Client’s note:</b> {a.client_notes}</div>}
+        {a.cancellation_policy_agreed && (
+          <details>
+            <summary className="sub">✓ Agreed to your cancellation policy when booking</summary>
+            <p className="sub" style={{ whiteSpace: 'pre-wrap' }}>{a.cancellation_policy_agreed}</p>
+          </details>
+        )}
       </div>
 
       {a.client && (

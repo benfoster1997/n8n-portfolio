@@ -152,6 +152,7 @@ export function friendlyError(e: unknown): string {
     too_many_bookings: 'You already have three upcoming bookings. Please get in touch to book more.',
     booking_disabled: 'Online booking is paused at the moment. Please get in touch directly.',
     consent_required: 'Please tick both boxes under the health questions.',
+    policy_required: 'Please tick to agree to the cancellation policy.',
     busy_try_later: 'Lots of bookings are coming in right now — please try again in a little while, or get in touch directly.',
     booking_failed: 'Sorry, that booking couldn’t be made. Please check your details or get in touch directly.',
     form_failed: 'Sorry, the form couldn’t be sent. Please try again or get in touch directly.',

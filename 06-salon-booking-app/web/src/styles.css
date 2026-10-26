@@ -356,6 +356,8 @@ fieldset { border: 0; padding: 0; margin: 0; }
 .service.on { border-color: var(--accent); outline: 2px solid var(--accent); }
 .service .price { font-weight: 700; white-space: nowrap; }
 .hero { padding: 8px 4px 4px; }
+.card.policy { border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); background: var(--accent-soft); box-shadow: none; }
+.card.policy h2, .card.policy h3 { color: var(--accent); margin-bottom: 4px; }
 .hero h1 { font-size: 1.8rem; }
 .steps { display: flex; gap: 6px; margin: 12px 0 4px; }
 .steps span { flex: 1; height: 4px; border-radius: 2px; background: var(--line); }

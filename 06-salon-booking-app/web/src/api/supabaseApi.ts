@@ -64,7 +64,7 @@ export function supabaseApi(url: string, anonKey: string): Api {
       return check(await sb.rpc('public_create_booking', {
         p_service_id: r.service_id, p_starts_at: r.starts_at, p_full_name: r.full_name, p_email: r.email,
         p_phone: r.phone, p_notes: r.notes, p_consultation: r.consultation, p_health_consent: r.health_consent,
-        p_signed_name: r.signed_name,
+        p_signed_name: r.signed_name, p_policy_accepted: r.policy_accepted,
       })) as { reference: string; starts_at: string };
     },
     async getForm(token) {

@@ -11,7 +11,7 @@ import { addDays, dateInZone, todayInZone, zonedToInstant } from '../lib/time';
 import { availableSlots } from '../lib/slots';
 import { normalizeUkPhone } from '../lib/text';
 
-const KEY = 'salon-demo-v2';
+const KEY = 'salon-demo-v3';
 const TZ = 'Europe/London';
 
 type Row<T> = T;
@@ -57,7 +57,7 @@ function seed(): Store {
     bank_account_name: 'Demo Studio',
     bank_sort_code: '00-00-00',
     bank_account_number: '12345678',
-    cancellation_policy: 'Please give at least 24 hours’ notice to cancel or move your appointment. Deposits are non-refundable for late cancellations or no-shows.',
+    cancellation_policy: 'Please give at least 48 hours’ notice if you need to cancel or move your appointment. If you cancel with less than 48 hours’ notice, or don’t turn up, the full price of your treatment is payable.',
     reminder_hours_before: 24,
     wa_template_reminder: null,
     wa_template_deposit: null,
@@ -107,7 +107,7 @@ function seed(): Store {
       busy_until: new Date(new Date(ends).getTime() + settings.buffer_min * 60e3).toISOString(),
       status, source: 'owner' as const, booking_name: c.full_name, is_new_client: false, deposit_required_pence: 0,
       deposit_due_at: null, deposit_paid_at: null, reference: ref(), public_token: uid(), client_notes: null,
-      owner_notes: null, reminder_email_sent_at: null, whatsapp_reminder_sent_at: null, cancelled_at: null,
+      owner_notes: null, cancellation_policy_agreed: null, reminder_email_sent_at: null, whatsapp_reminder_sent_at: null, cancelled_at: null,
       cancel_reason: null, created_at: at(-14, '09:00'), ...extra,
     };
     appts.push(a);
@@ -237,6 +237,7 @@ export function demoApi(): Api {
     async createBooking(r) {
       const s = db.settings;
       if (!s.booking_enabled) fail('booking_disabled');
+      if (s.cancellation_policy?.trim() && !r.policy_accepted) fail('policy_required');
       const service = db.services.find((v) => v.id === r.service_id && v.is_active && v.online_bookable) ?? fail('invalid_service');
       const day = dateInZone(r.starts_at, s.timezone);
       const ok = availableSlots(day, service.duration_min, { ...s, hours: db.hours }, busyFor())
@@ -262,6 +263,7 @@ export function demoApi(): Api {
         is_new_client: isNew, deposit_required_pence: deposit,
         deposit_due_at: deposit > 0 ? new Date(Math.min(Date.now() + s.deposit_deadline_hours * 3600e3, new Date(r.starts_at).getTime())).toISOString() : null,
         deposit_paid_at: null, reference: ref(), public_token: uid(), client_notes: r.notes, owner_notes: null,
+        cancellation_policy_agreed: s.cancellation_policy?.trim() || null,
         reminder_email_sent_at: null, whatsapp_reminder_sent_at: null, cancelled_at: null, cancel_reason: null, created_at: nowIso(),
       });
       db.appointments.push(a);
@@ -344,7 +346,7 @@ export function demoApi(): Api {
       const ends = new Date(new Date(n.starts_at).getTime() + n.duration_min * 60e3).toISOString();
       const a = withBusy({
         id: uid(), ...n, starts_at: new Date(n.starts_at).toISOString(), ends_at: ends, source: 'owner', booking_name: null,
-        deposit_paid_at: null, reference: ref(), public_token: uid(), client_notes: null, reminder_email_sent_at: null,
+        deposit_paid_at: null, reference: ref(), public_token: uid(), client_notes: null, cancellation_policy_agreed: null, reminder_email_sent_at: null,
         whatsapp_reminder_sent_at: null, cancelled_at: null, cancel_reason: null, created_at: nowIso(),
       });
       db.appointments.push(a);

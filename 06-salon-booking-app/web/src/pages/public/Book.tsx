@@ -40,6 +40,8 @@ function BookingFlow({ info }: { info: BookingInfo }) {
   const [signedName, setSignedName] = useState('');
   const [website, setWebsite] = useState(''); // honeypot: real people never see or fill this
   const [ageOk, setAgeOk] = useState(false);
+  const [policyOk, setPolicyOk] = useState(false);
+  const policy = info.cancellation_policy?.trim() || null;
   const [result, setResult] = useState<{ reference: string; starts_at: string } | null>(null);
   const { busy, error, run, setError } = useAction();
   const topRef = useRef<HTMLDivElement>(null);
@@ -80,12 +82,14 @@ function BookingFlow({ info }: { info: BookingInfo }) {
       if (signedName.trim().length < 2) return setError(new Error('signature_required'));
     }
     if (!ageOk) return setError(new Error('Please confirm you are 16 or over, or that a parent or guardian is booking for you.'));
+    if (policy && !policyOk) return setError(new Error('policy_required'));
     const ok = await run(async () => {
       setResult(await api.createBooking({
         service_id: service!.id, starts_at: slot!.toISOString(), full_name: details.full_name.trim(),
         email: details.email.trim(), phone: details.phone.trim(), notes: details.notes.trim() || null,
         consultation: firstVisit ? answers : null, health_consent: firstVisit ? consent : false,
         signed_name: firstVisit ? signedName.trim() : null,
+        policy_accepted: !!policy && policyOk,
       }));
     });
     if (ok) setStep('done');
@@ -104,6 +108,13 @@ function BookingFlow({ info }: { info: BookingInfo }) {
         {info.location_note && <p className="sub">{info.location_note}</p>}
       </div>
       {step !== 'done' && <div className="steps" aria-hidden>{[0, 1, 2].map((i) => <span key={i} className={i <= stepIndex ? 'on' : ''} />)}</div>}
+
+      {step === 'service' && policy && (
+        <div className="card policy" role="note" aria-label="Cancellation policy">
+          <h2>Cancellation policy</h2>
+          <p style={{ whiteSpace: 'pre-wrap' }}>{policy}</p>
+        </div>
+      )}
 
       {step === 'service' && (
         <>
@@ -193,7 +204,16 @@ function BookingFlow({ info }: { info: BookingInfo }) {
               New clients pay a {money(info.deposit_amount_pence)} deposit by bank transfer to secure their appointment. If this applies to you, the bank details are in your confirmation email — please pay within {info.deposit_deadline_hours} hours. The deposit comes off your bill.
             </div>
           )}
-          {info.cancellation_policy && <p className="sub"><b>Cancellations:</b> {info.cancellation_policy}</p>}
+          {policy && (
+            <div className="card policy stack" style={{ gap: 4 }}>
+              <h3>Cancellation policy</h3>
+              <p style={{ whiteSpace: 'pre-wrap' }}>{policy}</p>
+              <label className="check">
+                <input type="checkbox" checked={policyOk} onChange={(e) => setPolicyOk(e.target.checked)} />
+                <span>I’ve read and agree to the cancellation policy.</span>
+              </label>
+            </div>
+          )}
           <label className="check">
             <input type="checkbox" checked={ageOk} onChange={(e) => setAgeOk(e.target.checked)} />
             <span>I’m 16 or over, or I’m a parent or guardian booking for my child.</span>

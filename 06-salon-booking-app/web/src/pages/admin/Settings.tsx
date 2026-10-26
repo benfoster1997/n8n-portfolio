@@ -144,7 +144,9 @@ export function DepositSettings() {
         <Field label="Sort code"><input type="text" inputMode="numeric" value={txt(d.bank_sort_code)} maxLength={20} placeholder="00-00-00" onChange={(e) => f.set('bank_sort_code', e.target.value)} /></Field>
         <Field label="Account number"><input type="text" inputMode="numeric" value={txt(d.bank_account_number)} maxLength={20} onChange={(e) => f.set('bank_account_number', e.target.value)} /></Field>
       </div>
-      <Field label="Cancellation policy" hint="Shown on the booking page and in confirmation emails."><textarea value={txt(d.cancellation_policy)} maxLength={1000} onChange={(e) => f.set('cancellation_policy', e.target.value)} /></Field>
+      <Field label="Cancellation policy" hint="Shown at the top of your booking page and in every confirmation and reminder email. Clients must tick to agree to it before they can book, and each booking keeps a copy of the wording they agreed to.">
+        <textarea value={txt(d.cancellation_policy)} maxLength={1000} style={{ minHeight: 110 }} onChange={(e) => f.set('cancellation_policy', e.target.value)} />
+      </Field>
       <ErrorBox error={f.error} />
       <button className="btn primary block" disabled={f.busy} onClick={submit}>{f.busy ? 'Saving…' : 'Save'}</button>
     </Page>

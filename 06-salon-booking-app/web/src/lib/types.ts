@@ -92,6 +92,8 @@ export interface Appointment {
   reference: string;
   public_token: string;
   client_notes: string | null;
+  /** The cancellation policy the client agreed to when booking online. */
+  cancellation_policy_agreed: string | null;
   owner_notes: string | null;
   reminder_email_sent_at: string | null;
   whatsapp_reminder_sent_at: string | null;
@@ -199,6 +201,8 @@ export interface BookingRequest {
   consultation: Record<string, unknown> | null;
   health_consent: boolean;
   signed_name: string | null;
+  /** Ticked "I agree to the cancellation policy". */
+  policy_accepted: boolean;
 }
 
 export interface NewAppointment {

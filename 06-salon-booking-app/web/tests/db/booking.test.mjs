@@ -55,6 +55,7 @@ beforeEach(async () => {
       bank_account_name = 'T Studio', bank_sort_code = '00-00-00', bank_account_number = '12345678',
       owner_email = 'owner@example.com', public_site_url = 'https://book.example.com',
       reminder_hours_before = 24, booking_enabled = true,
+      cancellation_policy = '48 hours notice or the full price is payable',
       email_secret_hash = '${createHash('sha256').update(SECRET).digest('hex')}'
      where id = 1;
     update public.opening_hours set is_open = true, open_time = '09:00', close_time = '18:00',
@@ -112,12 +113,14 @@ function book(serviceId, startsAt, overrides = {}) {
     p_consultation: null,
     p_health_consent: false,
     p_signed_name: null,
+    p_policy_accepted: true,
     ...overrides,
   };
   return asAnon(
-    `select public.public_create_booking($1, $2, $3, $4, $5, $6, $7, $8, $9) as r`,
+    `select public.public_create_booking($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) as r`,
     [p.p_service_id, p.p_starts_at, p.p_full_name, p.p_email, p.p_phone, p.p_notes,
-     p.p_consultation === null ? null : JSON.stringify(p.p_consultation), p.p_health_consent, p.p_signed_name],
+     p.p_consultation === null ? null : JSON.stringify(p.p_consultation), p.p_health_consent, p.p_signed_name,
+     p.p_policy_accepted],
   ).then((r) => r.rows[0].r);
 }
 
@@ -588,11 +591,11 @@ test('flood brake: a handful of online bookings an hour, three per connection', 
   const who = (i) => ({ p_full_name: `Client ${'abcdefg'[i]}`, p_email: `c${i}@example.com`, p_phone: `0770090010${i}` });
   // Per connection (the API gateway passes the caller's address in x-forwarded-for).
   const fromIp = (i, ip) => as('anon', null,
-    `select public.public_create_booking($1, $2, $3, $4, $5) as r`,
+    `select public.public_create_booking($1, $2, $3, $4, $5, p_policy_accepted => true) as r`,
     [svc, null, who(i).p_full_name, who(i).p_email, who(i).p_phone], {}, { 'x-forwarded-for': `${ip}, 10.0.0.1` });
   for (let i = 0; i < 3; i++) {
     const at = await londonAt(3, `${10 + i}:00`);
-    await as('anon', null, `select public.public_create_booking($1, $2, $3, $4, $5) as r`,
+    await as('anon', null, `select public.public_create_booking($1, $2, $3, $4, $5, p_policy_accepted => true) as r`,
       [svc, at, who(i).p_full_name, who(i).p_email, who(i).p_phone], {}, { 'x-forwarded-for': '203.0.113.9, 10.0.0.1' });
   }
   await rejects(fromIp(3, '203.0.113.9'), 'busy_try_later');
@@ -762,4 +765,41 @@ test('moving an appointment earlier brings the deposit deadline with it', async 
 test('email addresses that could smuggle extra fields into a mail link are refused', async () => {
   const svc = await addService();
   await rejects(book(svc, await londonAt(3, '10:00'), { p_email: 'a@b.com?cc=x%40evil.com' }), 'invalid_email');
+});
+
+test('clients must agree to the cancellation policy, and the wording they agreed to is kept', async () => {
+  const svc = await addService();
+  await rejects(book(svc, await londonAt(3, '10:00'), { p_policy_accepted: false }), 'policy_required');
+  const r = await book(svc, await londonAt(3, '10:00'));
+  assert.equal((await appt(r.reference)).cancellation_policy_agreed, '48 hours notice or the full price is payable');
+  // Changing the policy later doesn't rewrite what earlier clients agreed to.
+  await db.query(`update public.settings set cancellation_policy = 'New policy' where id = 1`);
+  assert.equal((await appt(r.reference)).cancellation_policy_agreed, '48 hours notice or the full price is payable');
+  // With no policy set, there's nothing to agree to.
+  await db.query(`update public.settings set cancellation_policy = null where id = 1`);
+  const r2 = await book(svc, await londonAt(4, '10:00'), { p_email: 'b@example.com', p_phone: '07700900222', p_policy_accepted: false });
+  assert.equal((await appt(r2.reference)).cancellation_policy_agreed, null);
+});
+
+test('the booking page shows the cancellation policy to everyone', async () => {
+  const info = (await asAnon(`select public.public_booking_info() as i`)).rows[0].i;
+  assert.equal(info.cancellation_policy, '48 hours notice or the full price is payable');
+});
+
+test('a fresh install starts with the 48-hour, full-price cancellation policy', async () => {
+  const fresh = `booking_fresh_${process.pid}`;
+  await admin.query(`drop database if exists ${fresh}`);
+  await admin.query(`create database ${fresh}`);
+  const c = new pg.Client({ host: PGHOST, user: PGUSER, database: fresh });
+  await c.connect();
+  try {
+    await c.query(SHIM);
+    await c.query(SCHEMA);
+    const p = (await c.query(`select cancellation_policy from public.settings`)).rows[0].cancellation_policy;
+    assert.match(p, /at least 48 hours’ notice/);
+    assert.match(p, /full price of your treatment is payable/);
+  } finally {
+    await c.end();
+    await admin.query(`drop database if exists ${fresh}`);
+  }
 });

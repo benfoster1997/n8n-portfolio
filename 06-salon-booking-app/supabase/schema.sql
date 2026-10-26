@@ -66,7 +66,10 @@ create table if not exists public.settings (
   email_last_poll_at     timestamptz,
   updated_at             timestamptz not null default now()
 );
-insert into public.settings (id) values (1) on conflict (id) do nothing;
+-- The starting cancellation policy (editable in the app: Settings → Deposits & bank details).
+insert into public.settings (id, cancellation_policy)
+values (1, 'Please give at least 48 hours’ notice if you need to cancel or move your appointment. If you cancel with less than 48 hours’ notice, or don’t turn up, the full price of your treatment is payable.')
+on conflict (id) do nothing;
 
 -- Opening hours per ISO weekday (1 = Monday … 7 = Sunday).
 create table if not exists public.opening_hours (
@@ -157,6 +160,8 @@ create table if not exists public.appointments (
   reference              text not null unique,
   public_token           uuid not null unique default gen_random_uuid(),
   client_notes           text check (length(client_notes) <= 1000),
+  -- The exact cancellation policy the client ticked to agree to when booking online.
+  cancellation_policy_agreed text check (length(cancellation_policy_agreed) <= 1000),
   owner_notes            text check (length(owner_notes) <= 2000),
   reminder_email_sent_at timestamptz,
   whatsapp_reminder_sent_at timestamptz,
@@ -259,6 +264,8 @@ alter table public.clients add column if not exists is_regular boolean not null 
 alter table public.clients add column if not exists health_consent_at timestamptz;
 alter table public.clients add column if not exists health_consent_note text check (length(health_consent_note) <= 200);
 alter table public.consultation_forms add column if not exists consent_version text not null default 'v1';
+alter table public.appointments add column if not exists cancellation_policy_agreed text
+  check (length(cancellation_policy_agreed) <= 1000);
 
 -- The consent wording currently shown on the form (web/src/lib/consultation.ts).
 create or replace function public.current_consent_version()
@@ -501,6 +508,8 @@ begin
   end if;
 end $$;
 
+drop function if exists public.public_create_booking(uuid, timestamptz, text, text, text, text, jsonb, boolean, text);
+
 create or replace function public.public_create_booking(
   p_service_id     uuid,
   p_starts_at      timestamptz,
@@ -510,7 +519,8 @@ create or replace function public.public_create_booking(
   p_notes          text    default null,
   p_consultation   jsonb   default null,
   p_health_consent boolean default false,
-  p_signed_name    text    default null
+  p_signed_name    text    default null,
+  p_policy_accepted boolean default false
 )
 returns jsonb language plpgsql volatile security definer set search_path = public as $$
 declare
@@ -552,6 +562,10 @@ begin
   end if;
   if v_phone is null or length(v_phone) not between 10 and 15 or length(btrim(p_phone)) > 30 then raise exception 'invalid_phone'; end if;
   if length(coalesce(p_notes, '')) > 1000 then raise exception 'invalid_notes'; end if;
+  -- Clients must agree to the cancellation policy (when there is one) before booking.
+  if coalesce(btrim(s.cancellation_policy), '') <> '' and not coalesce(p_policy_accepted, false) then
+    raise exception 'policy_required';
+  end if;
 
   select * into v_service from public.services
    where id = p_service_id and is_active and online_bookable;
@@ -593,14 +607,14 @@ begin
     insert into public.appointments (
       client_id, service_id, service_name, price_pence, duration_min, starts_at, ends_at, busy_until,
       status, source, booking_name, is_new_client, deposit_required_pence, deposit_due_at,
-      reference, client_notes)
+      reference, client_notes, cancellation_policy_agreed)
     values (
       v_client.id, v_service.id, v_service.name, v_service.price_pence, v_service.duration_min,
       p_starts_at, p_starts_at, p_starts_at,             -- ends_at / busy_until recomputed by trigger
       case when v_deposit > 0 then 'pending_deposit' else 'confirmed' end,
       'online', v_name, v_is_new, v_deposit,
       case when v_deposit > 0 then least(now() + make_interval(hours => s.deposit_deadline_hours), p_starts_at) end,
-      '', nullif(btrim(coalesce(p_notes, '')), ''))
+      '', nullif(btrim(coalesce(p_notes, '')), ''), nullif(btrim(coalesce(s.cancellation_policy, '')), ''))
     returning * into v_appt;
   exception when exclusion_violation then
     raise exception 'slot_taken';
@@ -1042,7 +1056,7 @@ alter default privileges in schema public revoke execute on functions from publi
 grant execute on function public.public_owner_exists()                       to anon, authenticated;
 grant execute on function public.public_booking_info()                       to anon, authenticated;
 grant execute on function public.public_busy_times(timestamptz, timestamptz) to anon, authenticated;
-grant execute on function public.public_create_booking(uuid, timestamptz, text, text, text, text, jsonb, boolean, text)
+grant execute on function public.public_create_booking(uuid, timestamptz, text, text, text, text, jsonb, boolean, text, boolean)
                                                                               to anon, authenticated;
 grant execute on function public.public_get_form(uuid)                       to anon, authenticated;
 grant execute on function public.public_submit_form(uuid, jsonb, boolean, text) to anon, authenticated;

@@ -15,6 +15,10 @@ async function signIn(page: Page) {
 test('a new client books online, fills in the form, and the owner confirms the deposit', async ({ page }) => {
   await page.goto('/book');
   await expect(page.getByRole('heading', { name: 'Demo Nail Studio' })).toBeVisible();
+  // Everyone sees the cancellation policy before choosing anything.
+  const policy = page.getByRole('note', { name: 'Cancellation policy' });
+  await expect(policy).toContainText('at least 48 hours’ notice');
+  await expect(policy).toContainText('the full price of your treatment is payable');
   await shot(page, '01-book-services');
   await page.getByRole('button', { name: /Gel polish — hands/ }).click();
 
@@ -38,6 +42,10 @@ test('a new client books online, fills in the form, and the owner confirms the d
   await page.getByLabel('Type your full name to sign').fill('Poppy Tester');
   await page.getByLabel(/16 or over/).check();
   await shot(page, '03-book-details');
+  // Can't book without agreeing to the cancellation policy.
+  await page.getByRole('button', { name: 'Confirm booking' }).click();
+  await expect(page.getByRole('alert')).toContainText('agree to the cancellation policy');
+  await page.getByLabel(/agree to the cancellation policy/).check();
   await page.getByRole('button', { name: 'Confirm booking' }).click();
 
   await expect(page.getByRole('heading', { name: /Booking received/ })).toBeVisible();
@@ -53,6 +61,7 @@ test('a new client books online, fills in the form, and the owner confirms the d
   await card.getByRole('link', { name: /Poppy Tester/ }).click();
   await expect(page.getByText(`Waiting for the £10 deposit`)).toBeVisible();
   await expect(page.getByText('form on file')).toBeVisible();
+  await expect(page.getByText('Agreed to your cancellation policy when booking')).toBeVisible();
   await shot(page, '06-appointment-deposit');
 
   await page.getByRole('button', { name: 'Deposit received' }).click();
@@ -75,6 +84,7 @@ test('a returning client is not asked for a deposit', async ({ page }) => {
   await page.getByLabel('Mobile').fill('07700 900101');
   await page.getByRole('radio', { name: 'I’ve been before' }).click();
   await page.getByLabel(/16 or over/).check();
+  await page.getByLabel(/agree to the cancellation policy/).check();
   await page.getByRole('button', { name: 'Confirm booking' }).click();
   await expect(page.getByRole('heading', { name: /Booking received/ })).toBeVisible();
 
