@@ -134,6 +134,9 @@ Open the app and go to **Settings**:
      before it starts. If they do it with less than 48 hours' notice, it still goes through, but it's
      flagged as **late**, and she gets an email alert. **The app doesn't collect the charge:** she
      arranges that with the client herself, and can record the money in the app when it arrives.
+     Once a client has changed a booking inside the 48 hours, cancelling it later still counts as
+     late, and the amount payable stays at the price before the change. So moving late, or switching
+     to something cheaper, can't be used to dodge or shrink the charge.
 5. **Booking rules**: the gap between clients (clean-up time), the minimum notice, how far ahead people
    can book, and when reminders go out. Reminders are set to **72 hours (3 days) before**, for both the
    email and the WhatsApp list. That gives clients a full day to change their plans before the 48-hour
@@ -221,6 +224,9 @@ from her own Instagram, WhatsApp, Google profile and word of mouth.
 | See what clients have changed or cancelled themselves | **Today → Changed by clients** (she's also emailed each time). Late ones are marked **Late**. |
 | Follow up a late cancellation | The appointment → **Late cancellation** → WhatsApp the client, then **Record payment received** when the money arrives |
 | Move a booking herself | The appointment → **Change time**. Leave *Email … their new time* ticked and the client is told. |
+| A client cancels late by WhatsApp or phone | The appointment → **Cancel** → tick *… cancelled with less than 48 hours' notice*. It's then flagged like an online late cancellation. |
+| A booking says "the mobile given is different" | A returning client typed a new number when booking. Check which is right and tap **Use this number** or **Keep the record's number** before you WhatsApp them. |
+| A change/cancel link reached the wrong person | The appointment → **Make a new link**. The old one stops working straight away. |
 | Confirm a new client's deposit has arrived | Today → *Deposits waiting* → the booking → **Deposit received** (the client is emailed automatically) |
 | Finish an appointment and record payment | The appointment → **Finish & take payment** → cash or bank transfer |
 | Block a holiday or a dentist appointment | **Diary → Block time** |
@@ -257,7 +263,8 @@ She is the **data controller**. The app is built to make that easier, but these 
 - **Keep the phone locked** with Face ID or a passcode. Anyone holding the unlocked phone can open the diary.
 - **Change/cancel links are private to each client.** They're only sent to the client's own email (or
   by her on WhatsApp), and they only open that one booking. Anyone a client forwards the link to could
-  change or cancel that booking, so the privacy notice tells clients not to share it.
+  change or cancel that booking, so the privacy notice tells clients not to share it. If a link
+  reaches the wrong person, **Make a new link** on the appointment switches the old one off.
 
 ---
 
@@ -275,7 +282,8 @@ So nobody is surprised later:
 - **No charging for late cancellations.** Clients can change or cancel online at any time, but the app
   doesn't take the late-cancellation charge. It flags the booking, tells her, and she arranges payment
   herself (then records it in the app). A booking can be changed online up to 6 times; after that the
-  client has to get in touch.
+  client has to get in touch. Across all bookings, online changes are capped at 10 an hour and 40 a day,
+  so the links can't be used to use up her Gmail allowance.
 - **No expenses tracking.** It only records money received, so she should keep receipts for products, training and insurance separately.
 - **One person only.** It's built for one diary, not a salon with staff.
 - **A brake on online bookings.** At most 6 an hour, 25 a day and 15 waiting for a deposit, and 3 an hour from any

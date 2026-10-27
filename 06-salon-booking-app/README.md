@@ -51,8 +51,11 @@ no card processor, no SMS and no paid WhatsApp.
   link. Clients can move, switch treatment or cancel at any time before the start. Inside the
   cancellation notice period (48 hours by default) it still goes through, but it's flagged as late
   and the owner is emailed. The app never charges anyone: she collects a late-cancellation fee
-  herself and records it. A new time follows exactly the same rules as a new booking, and each
-  booking can be changed online at most 6 times, so a link can't be used to send endless emails.
+  herself and records it. Any change inside the notice period fixes the fee at the price before it,
+  and makes a later cancellation late too, so moving late or downgrading can't shrink the charge.
+  A new time follows exactly the same rules as a new booking. Each booking can be changed online at
+  most 6 times, and changes across all bookings are capped per hour and per day, so the links can't
+  be used to burn through the owner's Gmail quota.
 - **Reminders 72 hours ahead.** That is a day before the 48-hour cut-off, so a reminder is still
   useful to someone who needs to change. A reminder email isn't sent on top of a change notice
   the client has just had.
