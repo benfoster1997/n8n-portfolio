@@ -890,7 +890,8 @@ test('the manage link shows that one booking, and only what the page needs', asy
   assert.deepEqual(Object.keys(m).sort(), ['bank', 'booking', 'cancel_notice_hours', 'client_self_service', 'contact_phone', 'info']);
   assert.deepEqual(Object.keys(m.booking).sort(), [
     'cancelled_at', 'cancelled_by', 'cancelled_late', 'changes_left', 'deposit_due_at', 'deposit_paid',
-    'deposit_required_pence', 'duration_min', 'ends_at', 'first_name', 'form_needed', 'free_until', 'has_email', 'price_pence',
+    'deposit_required_pence', 'duration_min', 'ends_at', 'first_name', 'form_needed', 'free_until', 'has_email',
+    'late_fee_pence', 'price_pence',
     'reference', 'service_id', 'service_name', 'starts_at', 'status']);
   assert.equal(m.booking.reference, r.reference);
   assert.equal(m.booking.first_name, 'Jess');
@@ -1081,18 +1082,22 @@ test('nothing can be changed once the appointment has started, or once it is can
   await rejects(cancelBooking(started.public_token), 'not_changeable');
 });
 
-test('moving inside the notice period is flagged as late; switching treatment is not', async () => {
+test('any change inside the notice period is late, and fixes the fee at the price before it', async () => {
   const gel = await addService('Gel polish', 45, 2500);
   const biab = await addService('BIAB infill', 75, 3500);
   const soon = await diaryAppt(await insideNotice(), { serviceId: gel });
 
-  assert.equal((await changeBooking(soon.public_token, biab, null)).late, false, 'same time, different treatment');
+  // Switching treatment inside the notice period counts too (so a cheaper one can't shrink the fee).
+  assert.equal((await changeBooking(soon.public_token, biab, null)).late, true, 'same time, different treatment');
   assert.equal((await changeBooking(soon.public_token, null, await londonAt(4, '10:00'))).late, true);
-  // Moved again, now with plenty of notice for the time she had: not late.
+  // Moved again, now with plenty of notice for the time she had: this change itself isn't late.
   assert.equal((await changeBooking(soon.public_token, null, await londonAt(5, '10:00'))).late, false);
   const log = await changesOf(soon.id);
-  assert.deepEqual(log.map((c) => [c.action, c.late]), [['treatment', false], ['moved', true], ['moved', false]]);
+  assert.deepEqual(log.map((c) => [c.action, c.late]), [['treatment', true], ['moved', true], ['moved', false]]);
   assert.equal(iso(log[1].old_starts_at), iso(await insideNotice()));
+  // The fee is the dearest price the booking had when it was changed late.
+  const row = (await db.query(`select late_fee_pence from public.appointments where id = $1`, [soon.id])).rows[0];
+  assert.equal(row.late_fee_pence, 3500);
 
   // With no notice period, nothing is ever late.
   await db.query(`update public.settings set cancel_notice_hours = 0 where id = 1`);
