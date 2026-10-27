@@ -5,12 +5,16 @@ import { resetDemo } from '../../api/demoApi';
 import { useOwner } from '../../components/owner';
 import { BlockTimeSheet } from './Diary';
 import { ErrorBox, Field, Icon, Sheet, Spinner, TopBar, useAction, useLoad, useToast } from '../../components/ui';
-import { DEFAULT_TEMPLATES, TEMPLATE_PLACEHOLDERS, downloadText, friendlyError, isPlausibleEmail, money, parsePounds } from '../../lib/text';
+import {
+  DEFAULT_TEMPLATES, TEMPLATE_PLACEHOLDERS, checkHandle, downloadText, friendlyError, isPlausibleEmail, money, parseMenu, parsePounds,
+  socialLink, type SocialSite,
+} from '../../lib/text';
 import { WEEKDAY_NAMES, fmtDayTime, minutesLabel, todayInZone } from '../../lib/time';
 import type { OpeningHours, Service, Settings as S } from '../../lib/types';
 
 const SECTIONS = [
   { to: 'business', label: 'Business details', sub: 'Name, booking page text, your email' },
+  { to: 'booking-page', label: 'Booking page', sub: 'Tagline, add-ons, safety note, socials' },
   { to: 'hours', label: 'Opening hours', sub: 'When clients can book' },
   { to: 'services', label: 'Treatments & prices', sub: 'What clients can book' },
   { to: 'time-off', label: 'Time off', sub: 'Holidays and blocked time' },
@@ -79,7 +83,7 @@ export function BusinessSettings() {
         <input type="text" autoComplete="name" value={txt(d.legal_name)} maxLength={100} onChange={(e) => f.set('legal_name', e.target.value)} />
       </Field>
       <Field label="Booking page welcome" hint="A line or two shown above your treatments."><textarea value={txt(d.booking_intro)} maxLength={1000} onChange={(e) => f.set('booking_intro', e.target.value)} /></Field>
-      <Field label="Area (shown publicly)" hint="e.g. “South Woodham Ferrers — full address in your confirmation”">
+      <Field label="Area (shown publicly)" hint="e.g. “Home studio near the high street — full address in your confirmation”">
         <input type="text" value={txt(d.location_note)} maxLength={200} onChange={(e) => f.set('location_note', e.target.value)} />
       </Field>
       <Field label="Full address (only in confirmation emails)"><textarea value={txt(d.address)} maxLength={300} onChange={(e) => f.set('address', e.target.value)} /></Field>
@@ -93,6 +97,99 @@ export function BusinessSettings() {
         <span>Online booking is open<br /><span className="sub">Untick to pause new online bookings (e.g. while you’re away).</span></span></label>
       <ErrorBox error={f.error} />
       <button className="btn primary block" disabled={f.busy} onClick={submit}>{f.busy ? 'Saving…' : 'Save'}</button>
+    </Page>
+  );
+}
+
+type HandleKey = 'instagram_handle' | 'tiktok_handle' | 'facebook_handle';
+const SOCIAL_FIELDS: { site: SocialSite; key: HandleKey; label: string }[] = [
+  { site: 'instagram', key: 'instagram_handle', label: 'Instagram' },
+  { site: 'tiktok', key: 'tiktok_handle', label: 'TikTok' },
+  { site: 'facebook', key: 'facebook_handle', label: 'Facebook page' },
+];
+
+const MENU_EXAMPLE = 'Nail art\nSimple nail art | 50p per nail\n> Lots of colours counts as detailed. Just ask!\nExtras\nChrome powder | £5';
+
+/** The add-ons menu as the booking page will read it, so a slip in the format shows straight away. */
+function MenuPreview({ text }: { text: string | null }) {
+  const sections = parseMenu(text);
+  if (!sections.length) return null;
+  return (
+    <div className="card stack" role="group" aria-label="How your add-ons will read">
+      {sections.map((sec, i) => (
+        <div className="stack" key={i} style={{ gap: 6 }}>
+          {sec.title && <strong>{sec.title}</strong>}
+          {sec.items.map((it, j) => (
+            <div className="row" key={j}><span className="grow">{it.name}</span><strong>{it.price}</strong></div>
+          ))}
+          {sec.notes.map((n, j) => <div className="sub" key={j}>{n}</div>)}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export function BookingPageSettings() {
+  const f = useSettingsForm(['tagline', 'strapline', 'extras_menu', 'safety_note', 'instagram_handle', 'tiktok_handle', 'facebook_handle']);
+  const d = f.draft;
+  // A price typed without its "|" turns the line into a heading: say so before it goes live.
+  const priceAsHeading = parseMenu(d.extras_menu).find((x) => x.title && /£\s?\d|\d\s?p\b/i.test(x.title))?.title;
+  const tidy = (v: string | null) => v?.trim() || null;
+  async function submit() {
+    const handles = {} as Pick<S, HandleKey>;
+    for (const x of SOCIAL_FIELDS) {
+      const r = checkHandle(x.site, d[x.key]);
+      if (r.error) return f.setError(new Error(r.error));
+      handles[x.key] = r.handle;
+    }
+    const saved = await f.save({
+      tagline: tidy(d.tagline), strapline: tidy(d.strapline), extras_menu: tidy(d.extras_menu), safety_note: tidy(d.safety_note), ...handles,
+    });
+    // Show what was kept: "@name" or a pasted link becomes just the handle.
+    if (saved) for (const x of SOCIAL_FIELDS) f.set(x.key, handles[x.key]);
+  }
+  return (
+    <Page title="Booking page">
+      <p className="sub">These dress up your booking page. Leave any of them blank to leave it off.</p>
+      <Field label="Tagline" hint="A short line in pink handwriting under your business name, e.g. “Happy hands, happy you”.">
+        <input type="text" value={txt(d.tagline)} maxLength={120} onChange={(e) => f.set('tagline', e.target.value)} />
+      </Field>
+      <Field label="Strapline" hint="A few words in spaced capitals with little hearts between, e.g. “Gel, BIAB, Nail art”. Separate them with commas.">
+        <input type="text" value={txt(d.strapline)} maxLength={80} onChange={(e) => f.set('strapline', e.target.value)} />
+      </Field>
+
+      <div className="section-title">Add-ons</div>
+      <Field label="Add-ons menu" hint={<>
+        One per line. <strong>Name | price</strong> is an item, a line starting with <strong>&gt;</strong> is a note, and any other
+        line is a heading. Shown for information: clients add these on the day, they don’t book them online. For example:
+        <span className="mono" style={{ display: 'block', whiteSpace: 'pre-line', marginTop: 6 }}>{MENU_EXAMPLE}</span>
+      </>}>
+        <textarea value={txt(d.extras_menu)} maxLength={2000} style={{ minHeight: 300 }} onChange={(e) => f.set('extras_menu', e.target.value)} />
+      </Field>
+      {priceAsHeading && (
+        <div className="notice warn">“{priceAsHeading}” will show as a heading. To make it an item, put a | between the name and the price.</div>
+      )}
+      {d.extras_menu?.trim() && <><div className="sub">How it reads on your booking page:</div><MenuPreview text={d.extras_menu} /></>}
+
+      <div className="section-title">Safety</div>
+      <Field label="Safety note" hint="Shown in a badge on your booking page, e.g. how you keep tools clean and the PPE you use.">
+        <textarea value={txt(d.safety_note)} maxLength={300} onChange={(e) => f.set('safety_note', e.target.value)} />
+      </Field>
+
+      <div className="section-title">Social links</div>
+      {SOCIAL_FIELDS.map((x) => {
+        const r = checkHandle(x.site, d[x.key]);
+        return (
+          <Field key={x.key} label={x.label}
+            hint={r.handle ? `Links to ${socialLink(x.site, r.handle).replace(/^https:\/\/(www\.)?/, '')}` : 'Your handle, or paste the link to your profile.'}>
+            <input type="text" value={txt(d[x.key])} maxLength={200} autoCapitalize="none" autoCorrect="off" spellCheck={false}
+              placeholder={x.site === 'facebook' ? 'YourNailStudio' : '@yournailstudio'} onChange={(e) => f.set(x.key, e.target.value)} />
+          </Field>
+        );
+      })}
+      <ErrorBox error={f.error} />
+      <button className="btn primary block" disabled={f.busy} onClick={submit}>{f.busy ? 'Saving…' : 'Save'}</button>
+      <Link className="btn block" to="/book">Preview booking page</Link>
     </Page>
   );
 }

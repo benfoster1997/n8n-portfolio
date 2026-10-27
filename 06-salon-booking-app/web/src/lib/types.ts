@@ -38,6 +38,14 @@ export interface Settings {
   cancel_notice_hours: number;
   /** Clients can change or cancel their own booking from the link in their emails. */
   client_self_service: boolean;
+  /** The booking page's look (Settings → Booking page). All public: see BookingPageText. */
+  tagline: string | null;
+  strapline: string | null;
+  extras_menu: string | null;
+  safety_note: string | null;
+  instagram_handle: string | null;
+  tiktok_handle: string | null;
+  facebook_handle: string | null;
   email_secret_hash: string | null;
   email_last_poll_at: string | null;
 }
@@ -208,8 +216,26 @@ export interface EmailLogRow {
   created_at: string;
 }
 
+/** The owner's own words for the booking page: its header, add-ons menu, safety badge and social links. */
+export interface BookingPageText {
+  /** Pink handwritten line under the business name, e.g. "Happy hands, happy you". Up to 120 characters. */
+  tagline: string | null;
+  /** Spaced capitals with hearts between, e.g. "Gel, BIAB, Nail art". Up to 80 characters. */
+  strapline: string | null;
+  /** Add-ons price list as plain text; read it with parseMenu() in lib/text. Up to 2,000 characters. */
+  extras_menu: string | null;
+  /** The PPE and hygiene badge. Up to 300 characters. */
+  safety_note: string | null;
+  /** Handles only, no @ or web address: [A-Za-z0-9._], 1–30 characters. */
+  instagram_handle: string | null;
+  /** [A-Za-z0-9._], 2–24 characters. */
+  tiktok_handle: string | null;
+  /** The page's name in its web address: [A-Za-z0-9.], 5–50 characters. */
+  facebook_handle: string | null;
+}
+
 /** What the public booking page is allowed to know. */
-export interface BookingInfo {
+export interface BookingInfo extends BookingPageText {
   business_name: string;
   booking_intro: string | null;
   location_note: string | null;

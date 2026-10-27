@@ -1,4 +1,5 @@
-// Small text helpers: phone numbers, money, WhatsApp links and message templates.
+// Small text helpers: phone numbers, money, WhatsApp links, message templates,
+// and the booking page's add-ons menu and social handles.
 import type { Appointment, Settings } from './types';
 import { fmtDayLong, fmtTime } from './time';
 
@@ -155,6 +156,115 @@ export const TEMPLATE_PLACEHOLDERS = [
   '{reference}', '{bank_name}', '{sort_code}', '{account_number}', '{business}',
   '{change_note}', '{manage_link}', '{change_by}',
 ];
+
+/** One section of the add-ons menu: a heading (null for lines before the first one), its items and notes. */
+export interface MenuSection {
+  title: string | null;
+  items: { name: string; price: string }[];
+  notes: string[];
+}
+
+/**
+ * Read the add-ons menu the owner types in Settings → Booking page (settings.extras_menu).
+ * One entry per line:
+ *   "Name | price"  an item, e.g. "Simple nail art | 50p per nail" (split at the first "|")
+ *   "> text"        a note under the current section
+ *   anything else   a section heading
+ * Blank lines are ignored. Items and notes before the first heading go in a section
+ * with title null. A line with nothing before its "|" is skipped; one with nothing
+ * after it is an item with price "".
+ */
+export function parseMenu(text: string | null | undefined): MenuSection[] {
+  const sections: MenuSection[] = [];
+  const current = () => {
+    if (!sections.length) sections.push({ title: null, items: [], notes: [] });
+    return sections[sections.length - 1];
+  };
+  for (const raw of (text ?? '').split(/\r\n|\r|\n/)) {
+    const line = raw.trim();
+    if (!line) continue;
+    if (line.startsWith('>')) {
+      const note = line.slice(1).trim();
+      if (note) current().notes.push(note);
+    } else if (line.includes('|')) {
+      const bar = line.indexOf('|');
+      const name = line.slice(0, bar).trim();
+      if (name) current().items.push({ name, price: line.slice(bar + 1).trim() });
+    } else {
+      sections.push({ title: line, items: [], notes: [] });
+    }
+  }
+  return sections;
+}
+
+export type SocialSite = 'instagram' | 'tiktok' | 'facebook';
+
+/** The same patterns as the checks on settings.instagram_handle, tiktok_handle and facebook_handle. */
+export const SOCIAL_SITES: Record<SocialSite, { label: string; pattern: RegExp; hosts: RegExp; problem: string }> = {
+  instagram: {
+    label: 'Instagram', pattern: /^[A-Za-z0-9._]{1,30}$/, hosts: /^(instagram\.com|instagr\.am)$/i,
+    problem: 'Check your Instagram handle: just the name after the @, like yournailstudio (letters, numbers, dots and underscores, up to 30).',
+  },
+  tiktok: {
+    label: 'TikTok', pattern: /^[A-Za-z0-9._]{2,24}$/, hosts: /^tiktok\.com$/i,
+    problem: 'Check your TikTok handle: just the name after the @, like yournailstudio (letters, numbers, dots and underscores, 2 to 24).',
+  },
+  facebook: {
+    label: 'Facebook', pattern: /^[A-Za-z0-9.]{5,50}$/, hosts: /^(facebook\.com|fb\.com|fb\.me)$/i,
+    problem: 'Check your Facebook page name: the part after facebook.com/, like YourNailStudio (letters, numbers and dots, at least 5). '
+      + 'If your page’s web address ends in a number, give the page a username in Facebook first.',
+  },
+};
+
+// A pasted profile link: the site, then the path.
+const SOCIAL_LINK = /^(?:https?:\/\/)?(?:(?:www|m|mobile|web)\.)?(instagram\.com|instagr\.am|tiktok\.com|facebook\.com|fb\.com|fb\.me)(?=$|[/?#])(?:\/+([^?#\s]*))?/i;
+// Paths that are pages of the site, not someone's handle.
+const NOT_A_HANDLE = /^(profile\.php|people|pages|pg|groups|share|sharer\.php|p|reel|reels|explore|stories|tv|video|watch|events)$/i;
+
+/** Which site a pasted link is for, and the handle in it (null when there isn't one, e.g. a profile number or a post). */
+function linkHandle(t: string): { site: SocialSite; handle: string | null } | null {
+  const m = SOCIAL_LINK.exec(t);
+  if (!m) return null;
+  const site = (Object.keys(SOCIAL_SITES) as SocialSite[]).find((k) => SOCIAL_SITES[k].hosts.test(m[1]))!;
+  const first = (m[2] ?? '').split('/')[0].replace(/^@+/, '');
+  return { site, handle: first && !NOT_A_HANDLE.test(first) ? first : null };
+}
+
+/**
+ * "@yournailstudio", "https://www.instagram.com/yournailstudio/?hl=en" or
+ * "tiktok.com/@yournailstudio" → "yournailstudio". Blank → null. A link with no
+ * handle in it comes back as typed. Use checkHandle() to check the result too.
+ */
+export function cleanHandle(input: string | null | undefined): string | null {
+  const t = (input ?? '').trim();
+  const link = linkHandle(t);
+  if (link) return link.handle ?? t;
+  return t.replace(/^@+/, '').trim() || null;
+}
+
+/**
+ * Tidy a handle or pasted profile link for one site and check it against the
+ * database's rule, with a friendly message when it won't do. Blank is fine: no link is shown.
+ */
+export function checkHandle(site: SocialSite, input: string | null | undefined): { handle: string | null; error: string | null } {
+  const t = (input ?? '').trim();
+  if (!t) return { handle: null, error: null };
+  const s = SOCIAL_SITES[site];
+  const link = linkHandle(t);
+  if (link && link.site !== site) {
+    return { handle: null, error: `That’s a link to ${SOCIAL_SITES[link.site].label}. Paste your ${s.label} link here, or just your handle.` };
+  }
+  const handle = link ? link.handle : cleanHandle(t);
+  return handle && s.pattern.test(handle) ? { handle, error: null } : { handle: null, error: s.problem };
+}
+
+/** The public profile link for a checked handle. */
+export function socialLink(site: SocialSite, handle: string): string {
+  const h = encodeURIComponent(handle);
+  return site === 'instagram' ? `https://www.instagram.com/${h}/`
+    : site === 'tiktok' ? `https://www.tiktok.com/@${h}`
+    : `https://www.facebook.com/${h}`;
+}
 
 /** Turn rows into a CSV that Excel and Google Sheets open cleanly (UTF-8 with BOM). */
 export function toCsv(rows: (string | number | null | undefined)[][]): string {

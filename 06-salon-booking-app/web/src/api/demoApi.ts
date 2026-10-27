@@ -38,13 +38,25 @@ const nowIso = () => new Date().toISOString();
 const fail = (code: string): never => { throw new Error(code); };
 const ACTIVE = new Set(['pending_deposit', 'confirmed', 'completed']);
 
-function seed(): Store {
-  const today = todayInZone(TZ);
-  const at = (dayOffset: number, hhmm: string) => zonedToInstant(addDays(today, dayOffset), hhmm, TZ).toISOString();
-  const settings: Settings = {
+// The demo's add-ons menu: invented prices, in the format parseMenu() reads.
+const DEMO_EXTRAS_MENU = [
+  'Nail art',
+  'Simple nail art | 50p per nail',
+  'Gems & charms | £1 per nail',
+  'Detailed hand-painted art | £2 per nail',
+  '> Detailed means lots of colours or fine line work on one nail. Something else in mind? Just ask!',
+  'Extras',
+  'Chrome powder | £5',
+  'French tips | £5',
+  'Ombré fade | £6',
+  'Glitter fade | £4',
+].join('\n');
+
+function demoSettings(): Settings {
+  return {
     business_name: 'Demo Nail Studio',
     booking_intro: 'Gel, BIAB and acrylic nails in a calm home studio. Book your appointment below — I’ll confirm by email.',
-    location_note: 'Essex — full address in your confirmation email',
+    location_note: 'Exampletown — full address in your confirmation email',
     address: '1 Example Road, Exampletown, EX1 2MP',
     owner_email: 'owner@example.com',
     owner_phone: '07700 900000',
@@ -69,9 +81,22 @@ function seed(): Store {
     auto_cancel_unpaid: false,
     cancel_notice_hours: 48,
     client_self_service: true,
+    tagline: 'Happy hands, happy you',
+    strapline: 'Gel, BIAB, Nail art',
+    extras_menu: DEMO_EXTRAS_MENU,
+    safety_note: 'Tools are cleaned between every client, and I use PPE for all nail work.',
+    instagram_handle: null,
+    tiktok_handle: null,
+    facebook_handle: null,
     email_secret_hash: null,
     email_last_poll_at: null,
   };
+}
+
+function seed(): Store {
+  const today = todayInZone(TZ);
+  const at = (dayOffset: number, hhmm: string) => zonedToInstant(addDays(today, dayOffset), hhmm, TZ).toISOString();
+  const settings = demoSettings();
   const hours: OpeningHours[] = [1, 2, 3, 4, 5, 6, 7].map((weekday) => ({
     weekday,
     is_open: weekday !== 7,
@@ -188,10 +213,17 @@ function seed(): Store {
 function load(): Store {
   try {
     const raw = localStorage.getItem(KEY);
-    if (raw) return JSON.parse(raw) as Store;
+    if (raw) return upgrade(JSON.parse(raw) as Store);
   } catch { /* fall through */ }
   const s = seed();
   save(s);
+  return s;
+}
+/** A demo saved before a setting existed gets its demo value; everything already saved is kept. */
+function upgrade(s: Store): Store {
+  const defaults = demoSettings();
+  const settings = s.settings as unknown as Record<string, unknown>;
+  for (const [k, v] of Object.entries(defaults)) if (!(k in settings)) settings[k] = v;
   return s;
 }
 function save(s: Store) {
@@ -260,7 +292,10 @@ export function demoApi(): Api {
         cancellation_policy: s.cancellation_policy, timezone: s.timezone, slot_interval_min: s.slot_interval_min,
         buffer_min: s.buffer_min, min_notice_hours: s.min_notice_hours, max_days_ahead: s.max_days_ahead,
         deposit_amount_pence: s.deposit_amount_pence, deposit_deadline_hours: s.deposit_deadline_hours,
-        booking_enabled: s.booking_enabled, legal_name: s.legal_name, contact_email: s.owner_email, hours: db.hours,
+        booking_enabled: s.booking_enabled, legal_name: s.legal_name, contact_email: s.owner_email,
+        tagline: s.tagline, strapline: s.strapline, extras_menu: s.extras_menu, safety_note: s.safety_note,
+        instagram_handle: s.instagram_handle, tiktok_handle: s.tiktok_handle, facebook_handle: s.facebook_handle,
+        hours: db.hours,
         services: db.services.filter((v) => v.is_active && v.online_bookable).sort((a, b) => a.sort_order - b.sort_order)
           .map(({ id, name, description, duration_min, price_pence }) => ({ id, name, description, duration_min, price_pence })),
       };

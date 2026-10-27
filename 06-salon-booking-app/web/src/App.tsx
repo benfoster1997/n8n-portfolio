@@ -10,7 +10,7 @@ import { Diary } from './pages/admin/Diary';
 import { Money } from './pages/admin/Money';
 import { Reminders } from './pages/admin/Reminders';
 import {
-  AccountSettings, BackupSettings, BusinessSettings, DepositSettings, EmailSettings, HoursSettings,
+  AccountSettings, BackupSettings, BookingPageSettings, BusinessSettings, DepositSettings, EmailSettings, HoursSettings,
   MessageSettings, RulesSettings, ServicesSettings, SettingsHome, TimeOffSettings,
 } from './pages/admin/Settings';
 import { Today } from './pages/admin/Today';
@@ -52,6 +52,7 @@ export function App() {
             <Route path="money" element={<Money />} />
             <Route path="settings" element={<SettingsHome />} />
             <Route path="settings/business" element={<BusinessSettings />} />
+            <Route path="settings/booking-page" element={<BookingPageSettings />} />
             <Route path="settings/hours" element={<HoursSettings />} />
             <Route path="settings/services" element={<ServicesSettings />} />
             <Route path="settings/time-off" element={<TimeOffSettings />} />

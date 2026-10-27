@@ -57,6 +57,8 @@ beforeEach(async () => {
       reminder_hours_before = 24, booking_enabled = true, auto_cancel_unpaid = false,
       cancel_notice_hours = 48, client_self_service = true,
       cancellation_policy = '48 hours notice or the full price is payable',
+      tagline = null, strapline = null, extras_menu = null, safety_note = null,
+      instagram_handle = null, tiktok_handle = null, facebook_handle = null,
       email_secret_hash = '${createHash('sha256').update(SECRET).digest('hex')}'
      where id = 1;
     update public.opening_hours set is_open = true, open_time = '09:00', close_time = '18:00',
@@ -1822,4 +1824,104 @@ test('a deposit chase ticked off on the reminders list doesn’t count as the re
   await asOwner(`select public.owner_mark_deposit_paid($1, 'bank_transfer')`, [a.id]);
   const paid = await appt(r.reference);
   assert.deepEqual([paid.status, paid.whatsapp_reminder_sent_at], ['confirmed', null]);
+});
+
+// ---------------------------------------------------------------------------
+// The booking page's own words: tagline, strapline, add-ons menu, safety note, socials
+// ---------------------------------------------------------------------------
+
+const PAGE_TEXT = {
+  tagline: 'Happy hands, happy you',
+  strapline: 'Gel, BIAB, Nail art',
+  extras_menu: 'Nail art\nSimple nail art | 50p per nail\n> Just ask!\nExtras\nChrome powder | £5',
+  safety_note: 'Tools are cleaned between every client.',
+  instagram_handle: 'your.nail_studio',
+  tiktok_handle: 'your.nails',
+  facebook_handle: 'YourNailStudio',
+};
+const PAGE_KEYS = Object.keys(PAGE_TEXT);
+const setPageText = (values) =>
+  asOwner(`update public.settings set ${PAGE_KEYS.map((k, i) => `${k} = $${i + 1}`).join(', ')} where id = 1`,
+    PAGE_KEYS.map((k) => values[k]));
+
+test('the booking page gets its tagline, strapline, add-ons menu, safety note and social links', async () => {
+  const empty = (await asAnon(`select public.public_booking_info() as i`)).rows[0].i;
+  for (const k of PAGE_KEYS) assert.ok(k in empty && empty[k] === null, `${k} is there, and empty until she fills it in`);
+
+  await db.query(`update public.settings set address = '1 Secret Street', owner_phone = '07700 900000' where id = 1`);
+  await setPageText(PAGE_TEXT);
+  const info = (await asAnon(`select public.public_booking_info() as i`)).rows[0].i;
+  for (const k of PAGE_KEYS) assert.equal(info[k], PAGE_TEXT[k], k);
+  const text = JSON.stringify(info);
+  for (const secret of ['12345678', '00-00-00', 'Secret Street', '07700 900000', 'email_secret', 'email_last_poll']) {
+    assert.ok(!text.includes(secret), `leaked ${secret}`);
+  }
+
+  // The manage page shows the same header and footer.
+  const svc = await addService();
+  const r = await book(svc, await londonAt(4, '10:00'));
+  const m = await getBooking((await appt(r.reference)).public_token);
+  for (const k of PAGE_KEYS) assert.equal(m.info[k], PAGE_TEXT[k], `manage page ${k}`);
+});
+
+test('the booking page settings are checked: handles only, and the text kept short', async () => {
+  const bad = [
+    ['instagram_handle', '@your.nails'], ['instagram_handle', 'https://instagram.com/your.nails'],
+    ['instagram_handle', 'a'.repeat(31)], ['instagram_handle', ''], ['instagram_handle', 'your nails'],
+    ['instagram_handle', 'your.nails\n'], ['instagram_handle', 'javascript:alert(1)'],
+    ['tiktok_handle', 'a'], ['tiktok_handle', 'a'.repeat(25)], ['tiktok_handle', '@your.nails'],
+    ['facebook_handle', 'Nail'], ['facebook_handle', 'Your_Nail_Studio'], ['facebook_handle', 'a'.repeat(51)],
+    ['facebook_handle', 'profile.php?id=1000123'],
+    ['tagline', 'x'.repeat(121)], ['strapline', 'x'.repeat(81)], ['extras_menu', 'x'.repeat(2001)],
+    ['safety_note', 'x'.repeat(301)],
+  ];
+  for (const [k, v] of bad) {
+    await rejects(asOwner(`update public.settings set ${k} = $1 where id = 1`, [v]), `violates check constraint "settings_${k}_check"`);
+  }
+  // Right up to the limits is fine, and so is clearing them again.
+  await setPageText({
+    tagline: 'x'.repeat(120), strapline: 'x'.repeat(80), extras_menu: 'x'.repeat(2000), safety_note: 'x'.repeat(300),
+    instagram_handle: 'a', tiktok_handle: 'a'.repeat(24), facebook_handle: 'a.b.c',
+  });
+  await setPageText({ ...PAGE_TEXT, instagram_handle: 'a'.repeat(30), tiktok_handle: 'ab', facebook_handle: 'a'.repeat(50) });
+  await setPageText(Object.fromEntries(PAGE_KEYS.map((k) => [k, null])));
+  const s = (await db.query(`select ${PAGE_KEYS.join(', ')} from public.settings`)).rows[0];
+  assert.deepEqual(Object.values(s), PAGE_KEYS.map(() => null));
+});
+
+test('only the owner can change the booking page settings; the public key still can’t read the table', async () => {
+  await setPageText(PAGE_TEXT);
+  await rejects(asAnon(`select tagline, instagram_handle from public.settings`), 'permission denied');
+  await rejects(asAnon(`update public.settings set tagline = 'Hacked' where id = 1`), 'permission denied');
+  // A signed-in stranger's update finds no row to change.
+  assert.equal((await asStranger(`update public.settings set tagline = 'Hacked', instagram_handle = 'someone.else'`)).rowCount, 0);
+  assert.equal((await asStranger(`select * from public.settings`)).rows.length, 0);
+  const s = (await db.query(`select tagline, instagram_handle from public.settings`)).rows[0];
+  assert.deepEqual(s, { tagline: PAGE_TEXT.tagline, instagram_handle: PAGE_TEXT.instagram_handle });
+});
+
+test('an install from before the booking page settings gets them, with their checks, when the schema is run again', async () => {
+  const old = `booking_upgrade_${process.pid}`;
+  await admin.query(`drop database if exists ${old}`);
+  await admin.query(`create database ${old}`);
+  const c = new pg.Client({ host: PGHOST, user: PGUSER, database: old });
+  await c.connect();
+  try {
+    await c.query(SHIM);
+    await c.query(SCHEMA);
+    // As it was before: none of the new columns.
+    await c.query(`alter table public.settings ${PAGE_KEYS.map((k) => `drop column ${k}`).join(', ')}`);
+    await c.query(`update public.settings set business_name = 'Kept Studio' where id = 1`);
+    await c.query(SCHEMA);
+    const s = (await c.query(`select business_name, ${PAGE_KEYS.join(', ')} from public.settings`)).rows[0];
+    assert.deepEqual(s, { business_name: 'Kept Studio', ...Object.fromEntries(PAGE_KEYS.map((k) => [k, null])) });
+    await assert.rejects(c.query(`update public.settings set instagram_handle = '@nope'`), /settings_instagram_handle_check/);
+    await assert.rejects(c.query(`update public.settings set extras_menu = repeat('x', 2001)`), /settings_extras_menu_check/);
+    await c.query(`update public.settings set tagline = 'Hello', facebook_handle = 'YourNailStudio'`);
+    const info = (await c.query(`select public.public_booking_info() as i`)).rows[0].i;
+    assert.deepEqual([info.tagline, info.facebook_handle], ['Hello', 'YourNailStudio']);
+  } finally {
+    await c.end();
+    await admin.query(`drop database if exists ${old}`);
+  }
 });

@@ -118,9 +118,18 @@ Open the app and go to **Settings**:
    - Her email, where new-booking alerts go and which the privacy notice uses as the contact address.
    - Her mobile (optional).
    - **This app's web address**: tap *Use …netlify.app*.
-2. **Opening hours**: the days and times clients can book, and any lunch break.
-3. **Treatments & prices**: add each service, with how long it really takes (including removal).
-4. **Deposits & cancellations**:
+2. **Booking page** (optional): the words that dress up her booking page. Anything left blank is left off.
+   - A **tagline** in pink handwriting under the business name, and a **strapline**: a few words in
+     spaced capitals, separated by commas.
+   - The **add-ons menu**, e.g. nail art and extras priced per nail. One per line: `Name | price` is an
+     item, a line starting with `>` is a note, and any other line is a heading. A preview under the box
+     shows how it will read. It's for information only: clients add these on the day, not online.
+   - A **safety note** for the PPE and hygiene badge.
+   - Her **Instagram, TikTok and Facebook** names. She can type the handle or paste the link to her profile.
+   - **Preview booking page** shows the result once it's saved.
+3. **Opening hours**: the days and times clients can book, and any lunch break.
+4. **Treatments & prices**: add each service, with how long it really takes (including removal).
+5. **Deposits & cancellations**:
    - The deposit for new clients (e.g. £10) and how many hours they have to pay it.
    - Whether unpaid bookings are released automatically. This is off by default: late ones are just flagged.
    - The account name, sort code and account number. These are only ever sent to clients who owe a deposit.
@@ -137,11 +146,11 @@ Open the app and go to **Settings**:
      Once a client has changed a booking inside the 48 hours, cancelling it later still counts as
      late, and the amount payable stays at the price before the change. So moving late, or switching
      to something cheaper, can't be used to dodge or shrink the charge.
-5. **Booking rules**: the gap between clients (clean-up time), the minimum notice, how far ahead people
+6. **Booking rules**: the gap between clients (clean-up time), the minimum notice, how far ahead people
    can book, and when reminders go out. Reminders are set to **72 hours (3 days) before**, for both the
    email and the WhatsApp list. That gives clients a full day to change their plans before the 48-hour
    cut-off.
-6. **WhatsApp messages** (optional): the wording of the reminder, deposit and confirmation messages.
+7. **WhatsApp messages** (optional): the wording of the reminder, deposit and confirmation messages.
    The reminder already includes the client's change/cancel link and the date to change by.
 
 Until the essentials are done, the **Today** screen shows a "Finish setting up" list.
@@ -302,5 +311,6 @@ So nobody is surprised later:
 | The email script says the secret was refused | App → Settings → Email → **Make a new secret**, then paste it into Script Properties → `EMAIL_SECRET`. |
 | "This diary already has an owner" | Someone signed in with a different email. Sign out and use the email from step 1.6. |
 | Forgot the password | On the sign-in screen, tap **Forgotten password?** |
+| **Settings → Booking page** won't save ("Could not find the … column") | The app is newer than the database. Run [`supabase/schema.sql`](supabase/schema.sql) again in the SQL Editor (it keeps all her data and settings), then save again. |
 | Changed the web address | Update **Settings → Business details → This app's web address**, and Supabase → Authentication → URL Configuration. |
 | Wants it to look different, or a new feature | Everything is in this folder. See [README.md](README.md). |

@@ -36,7 +36,7 @@ create table if not exists public.settings (
   id                     int primary key default 1 check (id = 1),
   business_name          text not null default 'My Nail Studio' check (length(business_name) between 1 and 80),
   booking_intro          text check (length(booking_intro) <= 1000),
-  -- Shown publicly on the booking page, e.g. "South Woodham Ferrers — full address in your confirmation".
+  -- Shown publicly on the booking page, e.g. "Home studio near the high street — full address in your confirmation".
   location_note          text check (length(location_note) <= 200),
   -- Full address: only ever sent in confirmation emails, never shown publicly.
   address                text check (length(address) <= 300),
@@ -68,6 +68,20 @@ create table if not exists public.settings (
   cancel_notice_hours    int  not null default 48 check (cancel_notice_hours between 0 and 336),
   -- Clients can change or cancel their own booking from the link in their emails.
   client_self_service    boolean not null default true,
+  -- The booking page's look, all shown publicly (Settings → Booking page):
+  -- a handwritten line under the name, spaced capitals with hearts between,
+  -- an add-ons price list, the PPE and hygiene badge, and social links.
+  -- extras_menu is plain text, one entry per line: "Name | price" is an item,
+  -- a line starting with ">" is a note, any other line is a heading. Add-ons
+  -- are for information only ("added on the day"): never booked or charged here.
+  tagline                text check (length(tagline) <= 120),
+  strapline              text check (length(strapline) <= 80),
+  extras_menu            text check (length(extras_menu) <= 2000),
+  safety_note            text check (length(safety_note) <= 300),
+  -- Handles only (no @, no web address), so a link can only ever go to that site.
+  instagram_handle       text check (instagram_handle ~ '^[A-Za-z0-9._]{1,30}$'),
+  tiktok_handle          text check (tiktok_handle ~ '^[A-Za-z0-9._]{2,24}$'),
+  facebook_handle        text check (facebook_handle ~ '^[A-Za-z0-9.]{5,50}$'),
   -- sha256 (hex) of the secret the email sender presents. The secret itself is never stored.
   email_secret_hash      text check (email_secret_hash ~ '^[0-9a-f]{64}$'),
   email_last_poll_at     timestamptz,
@@ -333,6 +347,16 @@ alter table public.appointments add column if not exists moved_at timestamptz;
 alter table public.appointments add column if not exists late_fee_pence int check (late_fee_pence >= 0);
 alter table public.appointments add column if not exists booking_phone text check (length(booking_phone) <= 30);
 alter table public.email_outbox add column if not exists resend boolean not null default false;
+alter table public.settings add column if not exists tagline text check (length(tagline) <= 120);
+alter table public.settings add column if not exists strapline text check (length(strapline) <= 80);
+alter table public.settings add column if not exists extras_menu text check (length(extras_menu) <= 2000);
+alter table public.settings add column if not exists safety_note text check (length(safety_note) <= 300);
+alter table public.settings add column if not exists instagram_handle text
+  check (instagram_handle ~ '^[A-Za-z0-9._]{1,30}$');
+alter table public.settings add column if not exists tiktok_handle text
+  check (tiktok_handle ~ '^[A-Za-z0-9._]{2,24}$');
+alter table public.settings add column if not exists facebook_handle text
+  check (facebook_handle ~ '^[A-Za-z0-9.]{5,50}$');
 alter table public.email_outbox drop constraint if exists email_outbox_kind_check;
 alter table public.email_outbox add constraint email_outbox_kind_check
   check (kind in ('booking_received', 'deposit_received', 'reminder', 'cancelled', 'changed',
@@ -505,6 +529,14 @@ returns jsonb language sql stable security definer set search_path = public as $
     -- For the privacy notice: who the controller is and how to contact them.
     'legal_name',             s.legal_name,
     'contact_email',          s.owner_email,
+    -- The page's header, add-ons menu, safety badge and social links.
+    'tagline',                s.tagline,
+    'strapline',              s.strapline,
+    'extras_menu',            s.extras_menu,
+    'safety_note',            s.safety_note,
+    'instagram_handle',       s.instagram_handle,
+    'tiktok_handle',          s.tiktok_handle,
+    'facebook_handle',        s.facebook_handle,
     'hours', (select coalesce(jsonb_agg(jsonb_build_object(
                 'weekday', h.weekday, 'is_open', h.is_open,
                 'open_time', to_char(h.open_time, 'HH24:MI'), 'close_time', to_char(h.close_time, 'HH24:MI'),
