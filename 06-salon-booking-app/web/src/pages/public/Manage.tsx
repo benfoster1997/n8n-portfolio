@@ -5,7 +5,7 @@ import { SlotPicker, useFreeSlots } from '../../components/SlotPicker';
 import { BrandFooter, BrandHero, ScriptTitle } from '../../components/brand';
 import { TreatmentMenu, TreatmentRow } from '../../components/public/menu';
 import {
-  Celebration, ChosenTreatment, DateTile, GroupHead, GroupIcon, PolicyCard, PublicLoading, PublicProblem, RefStub, StickyAction, Steps, Ticket,
+  Celebration, ChosenTreatment, DateTile, GroupHead, GroupIcon, NextArrow, PolicyCard, PublicLoading, PublicProblem, RefStub, StickyAction, Steps, Ticket,
 } from '../../components/public/parts';
 import { ErrorBox, Field, Icon, Sheet, Spinner, useAction, useLoad } from '../../components/ui';
 import { openDays } from '../../lib/slots';
@@ -224,9 +224,9 @@ function ManageBooking({ m, token, reload, setData }: {
       {mode === 'view' && (
         <>
           <Ticket iso={b.starts_at} tz={tz} muted={!live} className="appt-card"
-            kicker="Your appointment" aside={<span className={`chip ${status.cls}`}>{status.label}</span>}
+            aside={<span className={`chip ${status.cls}`}>{status.label}</span>}
             title={b.service_name} titleAs="h2" titleFocusable titleRef={b.status === 'cancelled' ? undefined : focusHere}
-            lines={[`${fmtTime(b.starts_at, tz)} · ${minutesLabel(b.duration_min)}`]}>
+            lines={[`${fmtTime(b.starts_at, tz)} – ${fmtTime(b.ends_at, tz)}`]}>
             <dl className="kv appt-kv">
               <div className="appt-kv-when"><dt>When</dt><dd>{when(b.starts_at)}</dd></div>
               <div><dt>Length</dt><dd>{minutesLabel(b.duration_min)}</dd></div>
@@ -337,8 +337,8 @@ function ManageBooking({ m, token, reload, setData }: {
               {slot && !moved && (
                 <p className="sub slot-same">{switched ? 'Your current time is still free for this treatment.' : 'That’s your current time — pick a new one, or go back to choose a different treatment.'}</p>
               )}
-              <StickyAction>
-                <button className="btn primary block" disabled={!slot || (!moved && !switched)} onClick={() => go('confirm')}>Continue</button>
+              <StickyAction when={slot} tz={tz}>
+                <button className="btn primary block" disabled={!slot || (!moved && !switched)} onClick={() => go('confirm')}>Continue <NextArrow /></button>
               </StickyAction>
             </>
           )}

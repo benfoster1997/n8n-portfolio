@@ -110,7 +110,7 @@
     'time dot meta chips chev';
 }
 .appt-row.two-chips .appt-chips { flex-direction: column; align-items: flex-end; }
-.appt-meta .flag { white-space: nowrap; }
+.appt-meta .flag, .appt-meta .nw { white-space: nowrap; }
 
 /* where it sits against the clock */
 .appt-row.is-past .appt-dot { background: var(--line-strong); box-shadow: inset 0 0 0 2.5px var(--line-strong), 0 0 0 3px var(--surface); }
@@ -120,7 +120,7 @@
   background: var(--pink);
   box-shadow: 0 0 0 3px var(--surface), 0 0 0 6px color-mix(in srgb, var(--pink) 28%, transparent);
 }
-.appt-row.is-now .appt-clock { color: var(--accent); }
+.appt-row.is-now .appt-clock { color: var(--accent-text); }
 /* cancelled: quiet, the chips say why */
 .appt-row.is-cancelled .appt-dot { background: var(--surface); box-shadow: inset 0 0 0 2px var(--line-strong), 0 0 0 3px var(--surface); }
 .appt-row.is-cancelled .appt-clock,
@@ -139,7 +139,7 @@
     color-mix(in srgb, var(--lilac) 5%, var(--surface)) 6px 13px); }
 .appt-row.is-off .appt-dot { border-radius: 3px; transform: rotate(45deg) scale(0.85); box-shadow: inset 0 0 0 2.5px var(--lilac), 0 0 0 3px var(--surface); }
 .appt-row.is-off .appt-chips { align-self: center; grid-row: 1 / 3; }
-.appt-row.is-off .appt-chips .btn { min-height: 34px; padding: 0 14px; }
+.appt-row.is-off .appt-chips .btn { min-height: 36px; padding: 0 14px; }
 
 /* dividers start at the text, so they never cross the rail */
 .card.tight > .list > li.appt-li + li.appt-li,
@@ -452,6 +452,26 @@
 @media (hover: hover) { .td-link-btns .btn:hover { border-color: var(--line-strong); background: var(--surface-3); } }
 .td-link-hint { margin: 12px 0 0; font-size: 0.85rem; color: var(--muted); }
 
+@media (max-width: 359px) {
+  .td-tiles { gap: 6px; grid-template-columns: 1.22fr 1fr 1fr; }
+  .td-tile { padding: 10px 9px 9px; }
+  .td-tile-label { font-size: 0.7rem; }
+  .td-tile-note { font-size: 0.72rem; }
+  .list-row.td-late-row {
+    padding-left: 16px;
+    grid-template-areas:
+      'name name chev'
+      'when when chev'
+      'owed owed chev'
+      'chip chip chev';
+  }
+  .td-late-chip { margin-top: 6px; }
+  .td-wa { font-size: 0.94rem; padding: 0 14px; }
+  .td-chg-ico { width: 30px; height: 30px; }
+  .td-link-btns .btn { padding: 0 10px; }
+  .td-badge { width: 58px; height: 58px; }
+}
+
 /* ==========================================================================
    Diary
    ========================================================================== */
@@ -465,6 +485,7 @@
 }
 .dy-month-name {
   min-width: 0;
+  white-space: nowrap;
   font-size: 1.15rem;
   font-weight: 800;
   color: var(--ink-strong);
@@ -518,6 +539,9 @@
 @media (max-width: 359px) {
   .date-strip.dy-strip { gap: 4px; }
   .dy-strip .date-pill { flex-basis: 36px; }
+  .dy-month-name { font-size: 1rem; }
+  .dy-nav .icon-btn { width: 40px; }
+  .dy-today { padding: 0 11px; }
 }
 
 .dy-page .day-head { align-items: center; margin: 18px 4px 10px; }
@@ -601,15 +625,21 @@
   letter-spacing: 0.03em;
 }
 .rm-who {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    'time chip'
+    'name name'
+    'svc svc';
+  column-gap: 8px;
+  align-items: center;
   min-width: 0;
-  padding-top: 1px;
   color: inherit;
   font-weight: inherit;
   text-decoration: none;
 }
-.rm-line { color: var(--ink-strong); }
 .rm-time {
-  display: block;
+  grid-area: time;
   font-size: 0.86rem;
   font-weight: 800;
   line-height: 1.2;
@@ -617,10 +647,19 @@
   color: var(--accent);
   font-variant-numeric: tabular-nums;
 }
-.rm-name { display: block; margin-top: 1px; font-size: 1.04rem; font-weight: 800; line-height: 1.3; overflow-wrap: anywhere; }
-.rm-svc { margin-top: 1px; font-size: 0.88rem; line-height: 1.35; color: var(--muted); }
-.rm-chips { flex: none; display: flex; flex-direction: column; align-items: flex-end; gap: 5px; margin-top: 3px; }
-.rm-check { text-decoration: none; }
+.rm-name {
+  grid-area: name;
+  margin-top: 1px;
+  font-size: 1.04rem;
+  font-weight: 800;
+  line-height: 1.3;
+  color: var(--ink-strong);
+  overflow-wrap: anywhere;
+}
+.rm-svc { grid-area: svc; margin-top: 1px; font-size: 0.88rem; line-height: 1.35; color: var(--muted); }
+.rm-who > .chip { grid-area: chip; justify-self: end; }
+.rm-check { position: relative; text-decoration: none; }
+.rm-check::after { content: ''; position: absolute; inset: -11px -4px; }
 .rm-bottom {
   display: flex;
   flex-wrap: wrap;
@@ -691,7 +730,11 @@
 }
 .rm-card .empty.rm-empty::before { width: 16px; height: 16px; margin: 0; }
 @media (max-width: 359px) {
+  .rm-card .list > li.rm-item { padding-left: 14px; padding-right: 12px; }
+  .rm-top { gap: 10px; }
+  .rm-avatar { width: 40px; height: 40px; }
   .rm-bottom { padding-left: 0; }
+  .rm-bottom > .btn { flex: 1 1 100%; }
 }
 
 /* ==========================================================================

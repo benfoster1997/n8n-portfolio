@@ -51,8 +51,26 @@ export function ChosenTreatment({ name, durationMin, pricePence, onChange }: {
 }
 
 /** The main action of a step, kept within thumb's reach at the bottom of the screen. */
-export function StickyAction({ children }: { children: ReactNode }) {
-  return <div className="pub-sticky">{children}</div>;
+export function StickyAction({ children, when, tz }: { children: ReactNode; when?: Date | null; tz?: string }) {
+  return (
+    <div className={cx('pub-sticky', when !== undefined && 'pub-sticky--note')}>
+      {when !== undefined && (
+        <div className={cx('pub-sticky-note', !when && 'empty')}>
+          {when && tz ? <><b>{fmt(when, 'HH:mm', tz)}</b><span>{fmt(when, 'EEE d MMM', tz)}</span></> : <span>Choose a time</span>}
+        </div>
+      )}
+      {children}
+    </div>
+  );
+}
+
+/** The arrow on a "Continue" button. */
+export function NextArrow() {
+  return (
+    <svg className="pub-next-arrow" aria-hidden="true" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M5 12h13M13 6l6 6-6 6" />
+    </svg>
+  );
 }
 
 /* ------------------------------------------------------- the ticket */
@@ -92,7 +110,7 @@ export function Ticket({ iso, tz, muted, kicker, aside, title, titleAs: T = 'div
           )}
           <T className="ticket-title" ref={titleRef as never} tabIndex={titleFocusable ? -1 : undefined}>
             <span className="ticket-name">{title}</span>
-            {price && <><span className="ticket-sep"> · </span><span className="ticket-price">{price}</span></>}
+            {price && <span className="ticket-tail"><span className="ticket-sep"> · </span><span className="ticket-price">{price}</span></span>}
           </T>
           {lines?.map((l, i) => <div key={i} className={i === 0 ? 'ticket-when' : 'ticket-line'}>{l}</div>)}
         </div>

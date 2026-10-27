@@ -30,8 +30,8 @@ export function ApptRow({ a, tz, showDate }: { a: Appointment; tz: string; showD
         <div className="title appt-name">{a.client?.full_name ?? a.booking_name ?? 'Client'}</div>
         <div className="meta appt-meta">
           {a.service_name}
-          {a.price_pence > 0 && <> · <span className="appt-price">{money(a.price_pence)}</span></>}
-          {a.is_new_client && <> · <span className="appt-new">New</span></>}
+          {a.price_pence > 0 && <span className="nw"> · <span className="appt-price">{money(a.price_pence)}</span></span>}
+          {a.is_new_client && <span className="nw"> · <span className="appt-new">New</span></span>}
           {a.is_new_client && !a.has_form && a.status !== 'completed' && a.status !== 'cancelled' && <span className="flag"> · No form</span>}
         </div>
         <div className="appt-chips">

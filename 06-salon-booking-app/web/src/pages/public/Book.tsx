@@ -7,7 +7,7 @@ import { useClientManifest } from '../../components/clientManifest';
 import { Badge, BrandFooter, BrandHero, Heart, ScriptTitle } from '../../components/brand';
 import { AddOnsMenu, InfoBadges, TreatmentMenu, TreatmentRow } from '../../components/public/menu';
 import {
-  Celebration, ChosenTreatment, GroupHead, GroupIcon, PolicyCard, PublicLoading, PublicProblem, RefStub, StickyAction, Steps, Ticket,
+  Celebration, ChosenTreatment, GroupHead, GroupIcon, NextArrow, PolicyCard, PublicLoading, PublicProblem, RefStub, StickyAction, Steps, Ticket,
 } from '../../components/public/parts';
 import { ErrorBox, Field, Icon, Spinner, useAction, useLoad } from '../../components/ui';
 import { blankAnswers, validateAnswers } from '../../lib/consultation';
@@ -158,8 +158,8 @@ function BookingFlow({ info }: { info: BookingInfo }) {
             <>
               <SlotPicker days={daysWithSlots} slotsByDay={slotsByDay} day={day} slot={slot} tz={tz}
                 onDay={(d) => { setDay(d); setSlot(null); }} onSlot={setSlot} />
-              <StickyAction>
-                <button className="btn primary block" disabled={!slot} onClick={() => setStep('details')}>Continue</button>
+              <StickyAction when={slot} tz={tz}>
+                <button className="btn primary block" disabled={!slot} onClick={() => setStep('details')}>Continue <NextArrow /></button>
               </StickyAction>
             </>
           )}
@@ -234,7 +234,8 @@ function BookingFlow({ info }: { info: BookingInfo }) {
       {step === 'done' && result && service && (
         <div className="stack pub-done">
           <Celebration />
-          <h2 className="pub-done-title">Booking received — thank you!</h2>
+          {/* the no-break space keeps the dash with "received" when the title wraps */}
+          <h2 className="pub-done-title">Booking received&nbsp;— thank you!</h2>
           <Ticket iso={result.starts_at} tz={tz} kicker="Your appointment" title={service.name} price={money(service.price_pence)}
             lines={[`${fmtDayLong(result.starts_at, tz)} at ${fmtTime(result.starts_at, tz)}`, minutesLabel(service.duration_min)]}
             stub={<RefStub reference={result.reference} />} />

@@ -68,22 +68,21 @@ export function Reminders() {
                         <div className="rm-top">
                           <span className="rm-avatar" aria-hidden="true"><span>{initials(a)}</span></span>
                           <Link to={`/appointments/${a.id}`} className="rm-who grow">
-                            <div className="rm-line"><span className="rm-time">{fmtTime(a.starts_at, tz)}</span><span className="visually-hidden"> · </span><span className="rm-name">{a.client?.full_name}</span></div>
-                            <div className="rm-svc">{a.service_name}</div>
+                            <span className="rm-time">{fmtTime(a.starts_at, tz)}</span><span className="visually-hidden"> · </span>
+                            <span className="rm-name">{a.client?.full_name}</span>
+                            <span className="rm-svc">{a.service_name}</span>
+                            <StatusChip status={a.status} />
                           </Link>
-                          <div className="rm-chips">
+                        </div>
+                        <div className="rm-bottom">
+                          <span className="rm-state">
                             {a.booking_phone && (
                               <Link className="chip warn rm-check" to={`/appointments/${a.id}`}
                                 title={`They gave ${a.booking_phone} when booking, not the number on their record`}>Check mobile</Link>
                             )}
-                            <StatusChip status={a.status} />
-                          </div>
-                        </div>
-                        <div className="rm-bottom">
-                          <span className="rm-state">
                             {a.whatsapp_reminder_sent_at && <span className="rm-done"><span className="visually-hidden">✓ </span>WhatsApp opened</span>}
                             {a.reminder_email_sent_at && <span className="rm-done"><span className="visually-hidden">✓ </span>Email sent</span>}
-                            {!sent && due.has(a.id) && <span className="rm-todo">Ready to send</span>}
+                            {!sent && !a.booking_phone && due.has(a.id) && <span className="rm-todo">Ready to send</span>}
                           </span>
                           <WhatsAppButton small a={a} s={s} label={a.status === 'pending_deposit' ? 'Ask for deposit' : 'Send reminder'} onSent={() => markSent(a)} />
                         </div>

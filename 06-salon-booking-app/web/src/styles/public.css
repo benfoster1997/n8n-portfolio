@@ -93,27 +93,30 @@
 
 /* ---------- the cancellation policy: a calm note, not an alarm ---------- */
 .card.policy.policy-card {
-  display: flex;
-  align-items: flex-start;
-  gap: 14px;
-  padding: 16px 18px 16px 16px;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 10px 12px;
+  padding: 14px 18px 18px 16px;
 }
 .card.policy.policy-card::after { top: auto; bottom: 12px; right: 14px; width: 14px; height: 14px; opacity: 0.55; }
 .policy-ring {
   flex: none;
   display: grid;
   place-items: center;
-  width: 42px;
-  height: 42px;
+  width: 38px;
+  height: 38px;
   border-radius: 50%;
   color: var(--pink);
   background: var(--surface);
   border: 1.5px solid var(--pink);
   box-shadow: inset 0 0 0 3px var(--surface), inset 0 0 0 4px var(--line-strong);
 }
-.policy-body { flex: 1; min-width: 0; }
+/* the ring and the title share the first row; the text runs the full width beneath */
+.policy-body { display: contents; }
+.policy-body > :not(.policy-title) { grid-column: 1 / -1; }
 .card.policy .policy-title {
-  margin: 1px 0 4px;
+  margin: 0;
   padding: 0;
   font-size: 0.72rem;
   font-weight: 800;
@@ -122,10 +125,10 @@
   color: var(--accent-text);
 }
 .policy-body p { margin: 0; font-size: 0.95rem; line-height: 1.55; color: var(--ink); }
-.policy-body p + p { margin-top: 8px; }
+.policy-body p + p { margin-top: -2px; }
 .policy-text { white-space: pre-wrap; }
 .policy-body .policy-small { font-size: 0.86rem; color: var(--muted); }
-.policy-check { margin-top: 8px; padding: 12px 0 2px; border-top: 1px dashed var(--line-strong); font-weight: 650; color: var(--ink-strong); }
+.policy-check { margin-top: 2px; padding: 12px 0 0; border-top: 1px dashed var(--line-strong); font-weight: 650; color: var(--ink-strong); }
 .card.policy.late .policy-ring {
   color: var(--warn);
   border-color: var(--lemon-deep);
@@ -259,10 +262,6 @@
 /* ---------- add-ons ---------- */
 .addons { display: flex; flex-direction: column; gap: 14px; }
 .addons-intro {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
   margin: 8px 0 -2px;
   font-size: 0.92rem;
   font-weight: 650;
@@ -270,9 +269,10 @@
   text-align: center;
   text-wrap: balance;
 }
-.addons-intro-icon { color: var(--pink); }
+.addons-intro-icon { margin: 0 6px 0 0; vertical-align: -3px; color: var(--pink); }
 .addon-card { position: relative; padding: 16px 18px 16px; }
-.addon-card .script-title { margin: 0 0 10px; font-size: 1.85rem; }
+.addon-card .script-title { margin: 0 0 10px; }
+.page-public .addon-card h2.script-title { font-size: min(1.85rem, 7.4vw); }
 .addon-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
 .addon-row .menu-name { font-weight: 650; font-size: 0.98rem; color: var(--ink); }
 .addon-row .menu-price {
@@ -335,6 +335,8 @@
 .chosen-change { flex: none; }
 
 .step-title { margin-top: 2px; }
+/* script headings shrink a little on small phones, so they stay on one line */
+.page-public h2.script-title { font-size: min(2rem, 7.9vw); }
 .step-sub { margin: -10px 2px 0; }
 
 /* ---------- day strip and times ---------- */
@@ -424,6 +426,21 @@
   box-shadow: 0 1px 0 rgba(255, 255, 255, 0.5) inset, 0 10px 30px -8px rgba(214, 21, 111, 0.26), 0 2px 8px rgba(46, 51, 80, 0.06);
 }
 .pub-sticky .btn { min-height: 52px; }
+.pub-sticky--note { display: flex; align-items: center; gap: 10px; padding-left: 20px; }
+.pub-sticky--note .btn { flex: 1 1 auto; width: auto; min-width: 0; }
+.pub-sticky-note {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  min-width: 76px;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+.pub-sticky-note b { font-size: 1.22rem; font-weight: 800; color: var(--ink-strong); }
+.pub-sticky-note span { font-size: 0.78rem; font-weight: 700; color: var(--muted); white-space: nowrap; }
+.pub-sticky-note.empty span { font-size: 0.86rem; white-space: normal; max-width: 70px; }
+.pub-next-arrow { margin-right: -4px; transition: transform 0.2s var(--ease); }
+.btn:not([disabled]):active .pub-next-arrow { transform: translateX(3px); }
 
 /* ---------- the appointment ticket ---------- */
 .card.ticket {
@@ -449,8 +466,9 @@
   display: flex;
   align-items: flex-start;
   gap: 14px;
-  padding: 16px 40px 16px 16px;
+  padding: 16px 18px 16px 16px;
 }
+.ticket-top, .ticket-title { padding-right: 26px; }
 .ticket-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .ticket-top { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 4px 8px; }
 .ticket-title {
@@ -462,7 +480,8 @@
   overflow-wrap: anywhere;
 }
 .ticket-sep { color: var(--muted); font-weight: 600; }
-.ticket-price { color: var(--accent); white-space: nowrap; }
+.ticket-tail { white-space: nowrap; }
+.ticket-price { color: var(--accent); }
 .ticket-when { font-weight: 650; color: var(--ink); line-height: 1.4; }
 .ticket-line { font-size: 0.9rem; color: var(--muted); }
 .ticket-perf {
@@ -805,6 +824,7 @@
 .compare > .to { border-top: 1px dashed var(--line-strong); padding: 20px 18px 16px; margin-top: -1px; }
 .compare > .to b { font-size: 1.1rem; color: var(--ink-strong); }
 .compare .to > span:not(.label):not(.sub) { font-weight: 650; color: var(--ink-strong); }
+.compare .to > span.changed { color: var(--accent); }
 .compare .to .changed { color: var(--accent); }
 
 .cancel-sheet { gap: 14px; }
@@ -847,7 +867,7 @@
   position: relative;
   isolation: isolate;
   overflow: hidden;
-  padding: 78px 22px 70px;
+  padding: 78px 22px 84px;
   text-align: center;
 }
 .pub-problem-sprig { width: 112px; z-index: -1; }
@@ -865,7 +885,12 @@
 
 /* small phones */
 @media (max-width: 360px) {
+  .menu-go { display: none; }
+  .menu-leader { min-width: 10px; flex-basis: 10px; }
   .menu-meta { padding-right: 4px; }
+  .chosen-art { display: none; }
+  .chosen { padding-left: 16px; }
+  .ticket-slice { top: -36px; right: -36px; }
   .ticket-main { gap: 12px; padding-right: 30px; }
   .date-tile { width: 52px; }
   .addon-card--bottle .addon-foot { padding-right: 78px; }
