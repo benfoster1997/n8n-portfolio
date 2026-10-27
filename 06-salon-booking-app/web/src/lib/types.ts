@@ -272,7 +272,7 @@ export interface BookingChangeResult {
   starts_at: string;
   service_name: string;
   price_pence: number;
-  /** The time moved inside the notice period. */
+  /** Made inside the notice period (a move or a treatment switch). */
   late: boolean;
 }
 

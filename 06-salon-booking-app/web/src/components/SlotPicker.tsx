@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { availableSlots } from '../lib/slots';
 import { fmt, fmtDayLong, fmtTime } from '../lib/time';
 import type { BookingInfo, BusyRange } from '../lib/types';
@@ -25,9 +25,20 @@ export function SlotPicker({ days, slotsByDay, day, slot, tz, onDay, onSlot }: {
   onDay: (d: string) => void;
   onSlot: (d: Date) => void;
 }) {
+  // Bring the chosen day into view in the strip (centred) when it isn't already, e.g. a booking a
+  // fortnight out. Only the strip scrolls: the page itself stays where it is.
+  const strip = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = strip.current;
+    const pill = el?.querySelector<HTMLElement>('.date-pill.on');
+    if (!el || !pill) return;
+    const s = el.getBoundingClientRect(), p = pill.getBoundingClientRect();
+    if (p.left >= s.left && p.right <= s.right) return;
+    el.scrollLeft += p.left + p.width / 2 - (s.left + s.width / 2);
+  }, [day, days]);
   return (
     <>
-      <div className="date-strip" role="listbox" aria-label="Days">
+      <div className="date-strip" role="listbox" aria-label="Days" ref={strip}>
         {days.map((d) => (
           <button key={d} role="option" aria-selected={d === day} className={`date-pill${d === day ? ' on' : ''}`} onClick={() => onDay(d)}>
             <div className="dow">{fmt(d + 'T12:00:00Z', 'EEE', tz)}</div>

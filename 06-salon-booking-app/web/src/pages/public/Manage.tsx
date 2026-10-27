@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../../api';
 import { SlotPicker, useFreeSlots } from '../../components/SlotPicker';
@@ -22,6 +22,28 @@ type Mode = 'view' | 'service' | 'time' | 'confirm' | 'done';
 interface Choice { id: string | null; name: string; duration_min: number; price_pence: number }
 
 const hours = (n: number) => `${n} hour${n === 1 ? '' : 's'}`;
+/** "less than 48 hours’ notice" */
+const shortNotice = (n: number) => (n > 0 ? `less than ${n} hour${n === 1 ? '’s' : 's’'} notice` : 'short notice');
+
+/**
+ * The time now, kept fresh while `on`: every 30 seconds, when the page is shown again, and just
+ * after `at` (when the notice period starts), so a warning appears without them reloading.
+ */
+function useNow(on: boolean, at: string | null): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!on) return;
+    const tick = () => setNow(Date.now());
+    tick();
+    const every = window.setInterval(tick, 30e3);
+    // A timer can't wait more than about 24 days; the interval covers anything further off.
+    const wait = at ? new Date(at).getTime() - Date.now() + 100 : -1;
+    const once = wait > 0 && wait < 2 ** 31 - 1 ? window.setTimeout(tick, wait) : undefined;
+    document.addEventListener('visibilitychange', tick);
+    return () => { window.clearInterval(every); window.clearTimeout(once); document.removeEventListener('visibilitychange', tick); };
+  }, [on, at]);
+  return now;
+}
 
 /** A client's own page for their booking, from the private link in their emails: move it, switch treatment or cancel. */
 export function Manage() {
@@ -64,9 +86,15 @@ function ManageBooking({ m, token, reload, setData }: {
 
   const startMs = new Date(b.starts_at).getTime();
   const live = b.status === 'pending_deposit' || b.status === 'confirmed';
-  const upcoming = live && startMs > Date.now();
-  // Inside the notice period: cancelling (or moving) now falls under the policy.
-  const late = !!b.free_until && Date.now() > new Date(b.free_until).getTime();
+  // Ticks while the booking can still be changed, so a sheet or step left open notices the deadline passing.
+  const now = useNow(live, b.free_until);
+  const upcoming = live && startMs > now;
+  // Inside the notice period: the deadline has passed, or they've already changed it inside the
+  // period (which keeps the policy in force). Cancelling, or changing it again, then falls under the policy.
+  const pastDeadline = !!b.free_until && now > new Date(b.free_until).getTime();
+  const late = pastDeadline || b.late_fee_pence != null;
+  // Payable if they cancel: the full price, or the price before a late change if that was higher.
+  const fee = Math.max(b.late_fee_pence ?? 0, b.price_pence);
   const canCancel = upcoming && m.client_self_service;
   const canChange = canCancel && b.changes_left > 0 && info.booking_enabled;
   const current: Choice = { id: b.service_id, name: b.service_name, duration_min: b.duration_min, price_pence: b.price_pence };
@@ -86,6 +114,10 @@ function ManageBooking({ m, token, reload, setData }: {
 
   const moved = !!slot && slot.getTime() !== startMs;
   const switched = !!choice && choice.id !== b.service_id;
+  // The new time is itself inside the notice period (moving from outside it into it).
+  const newInside = !!slot && notice > 0 && slot.getTime() - notice * 3600e3 < now;
+  // Payable if they cancel after this change: a late change keeps the price before it in force.
+  const feeAfter = Math.max(b.late_fee_pence ?? 0, pastDeadline ? b.price_pence : 0, choice?.price_pence ?? 0);
 
   // Start on the current day and time when they're still free for the chosen treatment.
   useEffect(() => {
@@ -96,43 +128,73 @@ function ManageBooking({ m, token, reload, setData }: {
     setDay(cur ? curDay : daysWithSlots[0] ?? null);
     setSlot(cur);
   }, [mode, choice, busyTimes, day, slotsByDay, daysWithSlots, b.starts_at, tz, startMs]);
-  useEffect(() => { window.scrollTo(0, 0); }, [mode]);
+
+  // Each step starts at the top with focus on its heading, so keyboard and VoiceOver users start
+  // there too; after cancelling, focus goes to the "cancelled" notice.
+  const focusNext = useRef(false);
+  const focusTarget = useRef<HTMLElement | null>(null);
+  const focusHere = useCallback((el: HTMLElement | null) => { focusTarget.current = el; }, []);
+  useEffect(() => {
+    if (!focusNext.current) return;
+    focusNext.current = false;
+    window.scrollTo(0, 0);
+    focusTarget.current?.focus({ preventScroll: true });
+  });
+  function go(next: Mode) {
+    focusNext.current = true;
+    setMode(next);
+  }
 
   function startChange() {
     change.setError(null);
     setChoice(null);
-    setMode('service');
+    go('service');
   }
   function choose(c: Choice) {
     setChoice(c);
     setDay(null);
     setSlot(null);
     change.setError(null);
-    setMode('time');
+    go('time');
   }
 
   async function confirmChange() {
     if (!choice || !slot) return;
     const ok = await change.run(async () => {
+      let r: BookingChangeResult;
       try {
-        setResult(await api.changeBooking(token, { service_id: switched ? choice.id : null, starts_at: moved ? slot.toISOString() : null }));
+        r = await api.changeBooking(token, { service_id: switched ? choice.id : null, starts_at: moved ? slot.toISOString() : null });
       } catch (e) {
         // The time may have just gone: refresh what's free and go back to pick another.
         reloadBusy();
-        if (/slot_taken|too_soon/.test(e instanceof Error ? e.message : '')) { setSlot(null); setMode('time'); }
+        if (/slot_taken|too_soon/.test(e instanceof Error ? e.message : '')) { setSlot(null); go('time'); }
         throw e;
       }
+      setResult(r);
+      // Show the new details straight away, and keep them if the refresh below doesn't get through.
+      const start = new Date(r.starts_at).getTime();
+      setData({ ...m, booking: {
+        ...b,
+        starts_at: r.starts_at,
+        ends_at: new Date(start + choice.duration_min * 60e3).toISOString(),
+        service_id: choice.id, service_name: r.service_name, price_pence: r.price_pence, duration_min: choice.duration_min,
+        changes_left: Math.max(0, b.changes_left - 1),
+        free_until: notice > 0 ? new Date(start - notice * 3600e3).toISOString() : null,
+        late_fee_pence: r.late ? Math.max(b.late_fee_pence ?? 0, b.price_pence) : b.late_fee_pence,
+        deposit_due_at: b.deposit_due_at && new Date(b.deposit_due_at).getTime() > start ? r.starts_at : b.deposit_due_at,
+      } });
     });
     reload();
-    if (ok) setMode('done');
+    if (ok) go('done');
   }
 
   async function confirmCancel() {
     const ok = await cancel.run(async () => {
       const r = await api.cancelBooking(token, reason.trim() || null);
-      setData({ ...m, booking: { ...b, status: 'cancelled', cancelled_at: new Date().toISOString(), cancelled_by: 'client', cancelled_late: r.late } });
+      setData({ ...m, booking: { ...b, status: 'cancelled', cancelled_at: new Date().toISOString(), cancelled_by: 'client',
+        cancelled_late: r.late, late_fee_pence: r.late ? fee : null } });
     });
-    if (ok) { setCancelling(false); window.scrollTo(0, 0); }
+    if (ok) { focusNext.current = true; setCancelling(false); }
     reload();
   }
   const closeCancel = () => { setCancelling(false); cancel.setError(null); };
@@ -140,6 +202,8 @@ function ManageBooking({ m, token, reload, setData }: {
   const when = (iso: string | Date) => `${fmtDayLong(iso, tz)} at ${fmtTime(iso, tz)}`;
   const stepIndex = ['service', 'time', 'confirm'].indexOf(mode);
   const status = STATUS[b.status];
+  // A late cancellation they made themselves: inside the notice period, or after changing it inside it.
+  const cancelledInside = !!b.free_until && !!b.cancelled_at && new Date(b.cancelled_at).getTime() > new Date(b.free_until).getTime();
 
   return (
     <>
@@ -154,7 +218,7 @@ function ManageBooking({ m, token, reload, setData }: {
         <>
           <div className="card stack">
             <div className="row spread booking-head">
-              <h2 className="grow">{b.service_name}</h2>
+              <h2 className="grow" tabIndex={-1} ref={b.status === 'cancelled' ? undefined : focusHere}>{b.service_name}</h2>
               <span className={`chip ${status.cls}`}>{status.label}</span>
             </div>
             <dl className="kv">
@@ -179,9 +243,16 @@ function ManageBooking({ m, token, reload, setData }: {
           {upcoming && (
             <div className={`card policy stack${late ? ' late' : ''}`} style={{ gap: 4 }} role="note" aria-label="Cancellation policy">
               <h2>Cancellation policy</h2>
-              {!b.free_until ? <p>You can change or cancel free of charge any time before your appointment.</p>
-                : !late ? <p>You can change or cancel free of charge until <b>{fmtDay(b.free_until, tz)} at {fmtTime(b.free_until, tz)}</b>.</p>
-                : <p>It’s now less than {hours(notice)} before your appointment, so under the policy the full price ({money(b.price_pence)}) is payable if you cancel. You can still move it, but that’s also inside the notice period.</p>}
+              {pastDeadline ? (
+                <p>
+                  It’s now less than {hours(notice)} before your appointment, so under the policy the full price ({money(fee)}) is payable if you cancel.
+                  {canChange ? ' You can still move it, but that’s also inside the notice period.'
+                    : ' To move it, please get in touch — that’s also inside the notice period.'}
+                </p>
+              ) : late ? (
+                <p>Just so you know: as this booking was changed with {shortNotice(notice)}, the cancellation policy applies if you cancel it, and the full price ({money(fee)}) would be payable.</p>
+              ) : !b.free_until ? <p>You can change or cancel free of charge any time before your appointment.</p>
+                : <p>You can change or cancel free of charge until <b>{fmtDay(b.free_until, tz)} at {fmtTime(b.free_until, tz)}</b>.</p>}
               {policy && <p className="sub" style={{ whiteSpace: 'pre-wrap' }}>{policy}</p>}
             </div>
           )}
@@ -205,11 +276,20 @@ function ManageBooking({ m, token, reload, setData }: {
           )}
 
           {b.status === 'cancelled' && (
-            <div className="notice stack" style={{ gap: 6 }} role="status">
+            <div className="notice stack" style={{ gap: 6 }} role="status" tabIndex={-1} ref={focusHere}>
               <b>This appointment has been cancelled.</b>
-              {b.cancelled_by === 'client' && b.cancelled_late && (
-                <span>As it was cancelled less than {hours(notice)} before the appointment, under the cancellation policy the full price ({money(b.price_pence)}) may be payable. {business} will be in touch.</span>
-              )}
+              {b.cancelled_late && (b.cancelled_by === 'client' ? (
+                <span>
+                  {cancelledInside ? `As it was cancelled less than ${hours(notice)} before the appointment` : `As it had been changed with ${shortNotice(notice)}`},
+                  under the cancellation policy the full price ({money(fee)}) may be payable. {business} will be in touch.
+                </span>
+              ) : (
+                // Cancelled by the owner and marked late: the same words as the client's email.
+                <span>
+                  As this was cancelled {notice > 0 ? `less than ${hours(notice)} before the appointment` : 'at short notice'}, the
+                  cancellation policy applies — {business} will be in touch.
+                </span>
+              ))}
             </div>
           )}
           {live && !upcoming && <div className="notice">This appointment has already started, so it can no longer be changed online.</div>}
@@ -222,8 +302,8 @@ function ManageBooking({ m, token, reload, setData }: {
 
       {mode === 'service' && (
         <>
-          <button className="btn ghost small" style={{ alignSelf: 'flex-start' }} onClick={() => setMode('view')}><Icon name="back" size={18} /> Your booking</button>
-          <h2>Choose a treatment</h2>
+          <button className="btn ghost small" style={{ alignSelf: 'flex-start' }} onClick={() => go('view')}><Icon name="back" size={18} /> Your booking</button>
+          <h2 tabIndex={-1} ref={focusHere}>Choose a treatment</h2>
           <p className="sub">To just move the time, choose your current treatment.</p>
           {!currentListed && <TreatmentButton c={current} on={!choice || choice.id === current.id} current onClick={() => choose(current)} />}
           {info.services.map((s) => (s.id === b.service_id
@@ -234,8 +314,8 @@ function ManageBooking({ m, token, reload, setData }: {
 
       {mode === 'time' && choice && (
         <>
-          <button className="btn ghost small" style={{ alignSelf: 'flex-start' }} onClick={() => setMode('service')}><Icon name="back" size={18} /> {choice.name}</button>
-          <h2>Pick a day and time</h2>
+          <button className="btn ghost small" style={{ alignSelf: 'flex-start' }} onClick={() => go('service')}><Icon name="back" size={18} /> {choice.name}</button>
+          <h2 tabIndex={-1} ref={focusHere}>Pick a day and time</h2>
           <p className="sub">Your appointment is now {fmtDay(b.starts_at, tz)} at {fmtTime(b.starts_at, tz)}.</p>
           <ErrorBox error={busyError ?? change.error} />
           {busyError ? null : !busyTimes ? <Spinner /> : daysWithSlots.length === 0 ? (
@@ -247,7 +327,7 @@ function ManageBooking({ m, token, reload, setData }: {
               {slot && !moved && (
                 <p className="sub">{switched ? 'Your current time is still free for this treatment.' : 'That’s your current time — pick a new one, or go back to choose a different treatment.'}</p>
               )}
-              <button className="btn primary block" disabled={!slot || (!moved && !switched)} onClick={() => setMode('confirm')}>Continue</button>
+              <button className="btn primary block" disabled={!slot || (!moved && !switched)} onClick={() => go('confirm')}>Continue</button>
             </>
           )}
         </>
@@ -255,8 +335,8 @@ function ManageBooking({ m, token, reload, setData }: {
 
       {mode === 'confirm' && choice && slot && (
         <>
-          <button className="btn ghost small" style={{ alignSelf: 'flex-start' }} onClick={() => setMode('time')}><Icon name="back" size={18} /> Change time</button>
-          <h2>Check your new booking</h2>
+          <button className="btn ghost small" style={{ alignSelf: 'flex-start' }} onClick={() => go('time')}><Icon name="back" size={18} /> Change time</button>
+          <h2 tabIndex={-1} ref={focusHere}>Check your new booking</h2>
           <div className="card compare">
             <div className="was">
               <span className="label">From</span>
@@ -271,15 +351,25 @@ function ManageBooking({ m, token, reload, setData }: {
               <span className="sub">{minutesLabel(choice.duration_min)} · <span className={choice.price_pence !== b.price_pence ? 'changed' : ''}>{money(choice.price_pence)}</span></span>
             </div>
           </div>
-          {moved && late && (
-            <div className="notice warn stack" style={{ gap: 6 }} role="note" aria-label="Moving inside the notice period">
-              <span>As this is less than {hours(notice)} before your appointment, moving it falls under the cancellation policy.</span>
+          {late ? (
+            // Any change inside the notice period (a move or a switch) keeps the policy in force.
+            <div className="notice warn stack" style={{ gap: 6 }} role="note" aria-label="Changing inside the notice period">
+              <span>
+                {pastDeadline ? `As it’s less than ${hours(notice)} before your appointment, this change falls under the cancellation policy`
+                  : `As this booking was already changed with ${shortNotice(notice)}, the cancellation policy still applies`}:
+                if you cancel after this, the full price ({money(feeAfter)}) is payable.
+              </span>
               {policy && <span style={{ whiteSpace: 'pre-wrap' }}>{policy}</span>}
+            </div>
+          ) : moved && newInside && (
+            <div className="notice warn" role="note" aria-label="Your new time is inside the notice period">
+              Your new time is less than {hours(notice)} away, so if you need to cancel or move it after this, the full price
+              ({money(choice.price_pence)}) is payable under the cancellation policy.
             </div>
           )}
           <ErrorBox error={change.error} />
           <button className="btn primary block" disabled={change.busy} onClick={confirmChange}>{change.busy ? 'Saving…' : 'Confirm change'}</button>
-          <button className="btn ghost block" onClick={() => setMode('view')}>Keep my booking as it is</button>
+          <button className="btn ghost block" onClick={() => go('view')}>Keep my booking as it is</button>
         </>
       )}
 
@@ -288,14 +378,14 @@ function ManageBooking({ m, token, reload, setData }: {
           <svg className="big-tick" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
             <circle cx="12" cy="12" r="10" /><path d="M7 12.5l3.2 3.2L17 9" />
           </svg>
-          <h2>Your booking has been changed</h2>
+          <h2 tabIndex={-1} ref={focusHere}>Your booking has been changed</h2>
           <div className="card" style={{ textAlign: 'left' }}>
             <div style={{ fontWeight: 600 }}>{result.service_name} · {money(result.price_pence)}</div>
             <div className="sub">{when(result.starts_at)}</div>
             <div className="sub">Reference <b className="mono">{result.reference}</b></div>
           </div>
           {b.has_email && <p>We’ve emailed you the new details.</p>}
-          <button className="btn" onClick={() => setMode('view')}>Back to my booking</button>
+          <button className="btn" onClick={() => go('view')}>Back to my booking</button>
         </div>
       )}
 
@@ -308,8 +398,8 @@ function ManageBooking({ m, token, reload, setData }: {
           <p>{b.service_name} on {when(b.starts_at)}.</p>
           {late && (
             <div className="notice warn" role="note">
-              As it’s less than {hours(notice)} before your appointment, under the cancellation policy the full price
-              ({money(b.price_pence)}) is payable if you cancel. {business} will be in touch about it.
+              {pastDeadline ? `As it’s less than ${hours(notice)} before your appointment` : `As this booking was changed with ${shortNotice(notice)}`},
+              under the cancellation policy the full price ({money(fee)}) is payable if you cancel. {business} will be in touch about it.
             </div>
           )}
           <Field label="Reason (optional)" hint={`Only ${business} sees this.`}>
@@ -326,6 +416,7 @@ function ManageBooking({ m, token, reload, setData }: {
     </>
   );
 }
+
 
 function TreatmentButton({ c, description, on, current, onClick }: {
   c: Pick<Choice, 'name' | 'duration_min' | 'price_pence'>; description?: string | null; on: boolean; current?: boolean; onClick: () => void;

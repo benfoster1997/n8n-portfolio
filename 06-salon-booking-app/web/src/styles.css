@@ -386,6 +386,8 @@ fieldset { border: 0; padding: 0; margin: 0; }
 }
 .sheet .grabber { width: 40px; height: 5px; border-radius: 3px; background: var(--line); margin: 0 auto 10px; }
 .sheet h2 { margin-bottom: 10px; }
+/* Focus is moved to the sheet itself and to step headings for screen readers; they aren't controls, so no ring. */
+.sheet:focus, .manage [tabindex='-1']:focus { outline: none; }
 @media (min-width: 700px) {
   .sheet-backdrop { align-items: center; }
   .sheet { border-radius: 20px; }

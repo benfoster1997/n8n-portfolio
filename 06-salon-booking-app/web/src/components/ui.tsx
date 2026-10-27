@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { ApptStatus } from '../lib/types';
 import { friendlyError } from '../lib/text';
@@ -89,19 +89,54 @@ export function ErrorBox({ error }: { error: unknown }) {
 // ---------------------------------------------------------------------------
 // Bottom sheet
 // ---------------------------------------------------------------------------
+const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), '
+  + 'textarea:not([disabled]), [tabindex]:not([tabindex="-1"]), [contenteditable="true"]';
+
+/**
+ * A modal sheet. While it's open, focus moves into it and Tab stays inside, so keyboard and
+ * VoiceOver users don't wander behind the backdrop; Escape closes it, and focus then goes
+ * back to whatever opened it.
+ */
 export function Sheet({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
+  const box = useRef<HTMLDivElement>(null);
+  const titleId = useId();
+  // The latest onClose, so a new function each render doesn't re-run the effect (and move focus again).
+  const close = useRef(onClose);
+  close.current = onClose;
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    const el = box.current!;
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    if (!el.contains(document.activeElement)) el.focus({ preventScroll: true }); // a field with autoFocus keeps it
+    const onKey = (e: KeyboardEvent) => {
+      // Only the top sheet answers, if one ever opens over another.
+      const sheets = document.querySelectorAll('.sheet');
+      if (sheets[sheets.length - 1] !== el) return;
+      if (e.key === 'Escape') { e.preventDefault(); close.current(); return; }
+      if (e.key !== 'Tab') return;
+      const items = Array.from(el.querySelectorAll<HTMLElement>(FOCUSABLE)).filter((x) => x.getClientRects().length > 0);
+      const at = document.activeElement;
+      if (!items.length) { e.preventDefault(); el.focus(); return; }
+      const first = items[0], last = items[items.length - 1];
+      if (e.shiftKey && (at === first || at === el || !el.contains(at))) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && (at === last || !el.contains(at))) { e.preventDefault(); first.focus(); }
+    };
     window.addEventListener('keydown', onKey);
     const prev = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
-    return () => { window.removeEventListener('keydown', onKey); document.body.style.overflow = prev; };
-  }, [onClose]);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.body.style.overflow = prev;
+      // Back where they were, unless that's gone or something else has taken focus since.
+      const now = document.activeElement;
+      if (opener?.isConnected && (!now || now === document.body || el.contains(now))) opener.focus();
+    };
+  }, []);
   return (
     <div className="sheet-backdrop" onClick={onClose}>
-      <div className="sheet" role="dialog" aria-modal="true" aria-label={title} onClick={(e) => e.stopPropagation()}>
+      <div ref={box} className="sheet" role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1}
+        onClick={(e) => e.stopPropagation()}>
         <div className="grabber" />
-        <h2>{title}</h2>
+        <h2 id={titleId}>{title}</h2>
         {children}
       </div>
     </div>
