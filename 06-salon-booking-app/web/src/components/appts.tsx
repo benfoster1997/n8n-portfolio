@@ -4,28 +4,40 @@ import { fmtDayTime, fmtTime, minutesLabel } from '../lib/time';
 import { fillTemplate, money, templateFor, whatsappLink } from '../lib/text';
 import { Icon, LateChip, StatusChip } from './ui';
 
+/** Where an appointment sits against the clock, for the timeline dot: done, happening now, or still to come. */
+export function apptPhase(a: Pick<Appointment, 'status' | 'starts_at' | 'ends_at'>, now = Date.now()): 'cancelled' | 'past' | 'now' | 'future' {
+  if (a.status === 'cancelled') return 'cancelled';
+  if (a.status === 'completed' || a.status === 'no_show' || new Date(a.ends_at).getTime() <= now) return 'past';
+  return new Date(a.starts_at).getTime() <= now ? 'now' : 'future';
+}
+
+/**
+ * One appointment as a timeline row: the time in bold figures, a dot on a thin pink rail
+ * (the rail joins up through a list), the client, treatment and price, and the status.
+ */
 export function ApptRow({ a, tz, showDate }: { a: Appointment; tz: string; showDate?: (iso: string) => string }) {
   const overdue = a.status === 'pending_deposit' && a.deposit_due_at && new Date(a.deposit_due_at) < new Date();
+  const phase = apptPhase(a);
+  const lateCancel = a.status === 'cancelled' && a.cancelled_late;
   return (
-    <li>
-      <Link className="list-row" to={`/appointments/${a.id}`}>
-        <div className="time-col">
-          {fmtTime(a.starts_at, tz)}
-          <small>{showDate ? showDate(a.starts_at) : minutesLabel(a.duration_min)}</small>
+    <li className="appt-li">
+      <Link className={`list-row appt-row is-${phase} st-${a.status}${overdue || lateCancel ? ' two-chips' : ''}`} to={`/appointments/${a.id}`}>
+        <div className="appt-time">
+          <span className="appt-clock">{fmtTime(a.starts_at, tz)}</span>
+          <small title={minutesLabel(a.duration_min)}>{showDate ? showDate(a.starts_at) : `to ${fmtTime(a.ends_at, tz)}`}</small>
         </div>
-        <div className="grow">
-          <div className="title">{a.client?.full_name ?? a.booking_name ?? 'Client'}</div>
-          <div className="meta">
-            {a.service_name}
-            {a.price_pence > 0 && ` · ${money(a.price_pence)}`}
-            {a.is_new_client && ' · New'}
-            {a.is_new_client && !a.has_form && a.status !== 'completed' && a.status !== 'cancelled' && <span className="flag"> · No form</span>}
-          </div>
+        <span className="appt-dot" aria-hidden="true" />
+        <div className="title appt-name">{a.client?.full_name ?? a.booking_name ?? 'Client'}</div>
+        <div className="meta appt-meta">
+          {a.service_name}
+          {a.price_pence > 0 && <> · <span className="appt-price">{money(a.price_pence)}</span></>}
+          {a.is_new_client && <> · <span className="appt-new">New</span></>}
+          {a.is_new_client && !a.has_form && a.status !== 'completed' && a.status !== 'cancelled' && <span className="flag"> · No form</span>}
         </div>
-        <div className="stack" style={{ gap: 4, alignItems: 'flex-end' }}>
+        <div className="appt-chips">
           <StatusChip status={a.status} />
           {overdue && <span className="chip danger">Overdue</span>}
-          {a.status === 'cancelled' && a.cancelled_late && <LateChip>Late cancel</LateChip>}
+          {lateCancel && <LateChip>Late cancel</LateChip>}
         </div>
         <span className="chev"><Icon name="chev" size={18} /></span>
       </Link>
@@ -79,7 +91,7 @@ export function WhatsAppButton({ a, s, kind, label, onSent, small }: {
     return <Link className={`btn${small ? ' small' : ''}`} to={`/appointments/${a.id}`}>Check mobile first</Link>;
   }
   const phone = a.client?.phone_e164;
-  if (!phone) return <span className="sub">No mobile number saved</span>;
+  if (!phone) return <span className="sub wa-none">No mobile number saved</span>;
   return (
     <a className={`btn wa${small ? ' small' : ''}`} href={whatsappLink(phone, whatsappMessageFor(a, s, kind))}
       target="_blank" rel="noreferrer" onClick={() => onSent?.()}>

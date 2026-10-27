@@ -5,6 +5,8 @@ import { ErrorBox, Field, Icon, Seg, Sheet, Spinner, TopBar, useAction, useLoad,
 import { fmt, todayInZone } from '../../lib/time';
 import { downloadText, friendlyError, money, moneyPlain, parsePounds, taxYearOf, toCsv } from '../../lib/text';
 import type { PayKind, PayMethod, Payment } from '../../lib/types';
+import { Heart, LemonSlice } from '../../components/brand';
+import { Glyph } from './Clients';
 
 const KIND_LABEL: Record<PayKind, string> = { deposit: 'Deposit', payment: 'Payment', tip: 'Tip', refund: 'Refund', other: 'Other income' };
 const METHOD_LABEL: Record<PayMethod, string> = { cash: 'Cash', bank_transfer: 'Bank transfer' };
@@ -44,7 +46,10 @@ export function Money() {
   const bank = sum((p) => p.method === 'bank_transfer');
   const tips = sum((p) => p.kind === 'tip');
   const refunds = sum((p) => p.kind === 'refund');
-  const label = view === 'month' ? fmt(`${month}-15T12:00:00Z`, 'MMMM yyyy', tz) : `Tax year ${ty.label} (6 Apr ${ty.from.slice(0, 4)} – 5 Apr ${ty.to.slice(0, 4)})`;
+  const label = view === 'month' ? fmt(`${month}-15T12:00:00Z`, 'MMMM yyyy', tz) : `Tax year ${ty.label}`;
+  const labelSub = view === 'month' ? null : `6 Apr ${ty.from.slice(0, 4)} – 5 Apr ${ty.to.slice(0, 4)}`;
+  // How the takings split between cash and bank transfer, for the little bar under the total.
+  const cashShare = cash > 0 || bank > 0 ? Math.round((Math.max(cash, 0) / (Math.max(cash, 0) + Math.max(bank, 0))) * 100) : null;
 
   function exportCsv() {
     const lines = [['Date', 'Client', 'Description', 'Type', 'Paid by', 'Amount (£)', 'Note']];
@@ -61,40 +66,56 @@ export function Money() {
   for (const p of rows) byDay.set(p.paid_on, [...(byDay.get(p.paid_on) ?? []), p]);
 
   return (
-    <div className="page">
+    <div className="page od od-money">
       <TopBar title="Money" right={<button className="icon-btn" aria-label="Add income or refund" onClick={() => setAdding(true)}><Icon name="plus" /></button>} />
       <Seg label="Period" value={view} onChange={setView} options={[{ value: 'month', label: 'Month' }, { value: 'year', label: 'Tax year' }]} />
-      <div className="row spread" style={{ margin: '10px 0' }}>
+      <div className="od-period">
         <button className="icon-btn" aria-label="Previous" onClick={() => (view === 'month' ? setMonth(shiftMonth(month, -1)) : setYearOf(`${Number(ty.from.slice(0, 4)) - 1}-06-01`))}><Icon name="left" /></button>
-        <strong className="centre" style={{ flex: 1 }}>{label}</strong>
+        <div className="od-period-label">
+          <strong>{label}</strong>
+          {labelSub && <span className="od-period-sub">{labelSub}</span>}
+        </div>
         <button className="icon-btn" aria-label="Next" onClick={() => (view === 'month' ? setMonth(shiftMonth(month, 1)) : setYearOf(`${Number(ty.from.slice(0, 4)) + 1}-06-01`))}><Icon name="right" /></button>
       </div>
       <ErrorBox error={error} />
       {!current ? <Spinner /> : (
         <>
-          <div className="stat-grid">
-            <div className="stat" style={{ gridColumn: '1 / -1' }}><div className="label">Money received</div><div className="value">{money(total)}</div></div>
-            <div className="stat"><div className="label">Cash</div><div className="value">{money(cash)}</div></div>
-            <div className="stat"><div className="label">Bank transfer</div><div className="value">{money(bank)}</div></div>
-            <div className="stat"><div className="label">Tips</div><div className="value">{money(tips)}</div></div>
-            <div className="stat"><div className="label">Refunds</div><div className="value">{money(refunds)}</div></div>
+          <div className="stat-grid od-stats">
+            <div className="stat od-stat-total" style={{ gridColumn: '1 / -1' }}>
+              <LemonSlice size={92} className="od-stat-lemon" />
+              <div className="label">Money received</div>
+              <div className="value">{money(total)}</div>
+              {cashShare !== null && (
+                <div className="od-split" aria-hidden="true">
+                  <span className="od-split-cash" style={{ width: `${cashShare}%` }} />
+                  <span className="od-split-bank" style={{ width: `${100 - cashShare}%` }} />
+                </div>
+              )}
+            </div>
+            <div className="stat od-stat-cash"><div className="label">Cash</div><div className="od-stat-row"><div className="value">{money(cash)}</div><span className="od-stat-ic" aria-hidden="true"><Glyph name="cash" size={18} /></span></div></div>
+            <div className="stat od-stat-bank"><div className="label">Bank transfer</div><div className="od-stat-row"><div className="value">{money(bank)}</div><span className="od-stat-ic" aria-hidden="true"><Glyph name="bank" size={18} /></span></div></div>
+            <div className="stat od-stat-tips"><div className="label">Tips</div><div className="od-stat-row"><div className="value">{money(tips)}</div><span className="od-stat-ic" aria-hidden="true"><Heart size={16} /></span></div></div>
+            <div className="stat od-stat-refunds"><div className="label">Refunds</div><div className="od-stat-row"><div className="value">{money(refunds)}</div><span className="od-stat-ic" aria-hidden="true"><Glyph name="refund" size={18} /></span></div></div>
           </div>
-          <button className="btn block" style={{ marginTop: 12 }} disabled={!rows.length || loading} onClick={exportCsv}>Download spreadsheet (CSV)</button>
-          <p className="sub" style={{ marginTop: 8 }}>
+          <button className="btn block od-export" disabled={!rows.length || loading} onClick={exportCsv}><Glyph name="download" size={20} /> Download spreadsheet (CSV)</button>
+          <p className="od-tax-note">
             This is your record of money received, for your Self Assessment. Keep receipts for your expenses (products, training, insurance) separately — they reduce your tax bill.
           </p>
           {[...byDay.entries()].map(([day, list]) => (
-            <div key={day}>
-              <div className="day-head"><h2>{fmt(`${day}T12:00:00Z`, 'EEE d MMM', tz)}</h2><span className="sub">{money(list.reduce((n, p) => n + p.amount_pence, 0))}</span></div>
+            <div key={day} className="od-day">
+              <div className="day-head"><h2>{fmt(`${day}T12:00:00Z`, 'EEE d MMM', tz)}</h2><span className="od-day-total">{money(list.reduce((n, p) => n + p.amount_pence, 0))}</span></div>
               <div className="card tight"><ul className="list">
                 {list.map((p) => (
-                  <li key={p.id} className="list-row">
+                  <li key={p.id} className={`list-row od-pay${p.amount_pence < 0 ? ' od-pay-out' : ''}`}>
+                    <span className={`od-ic small ${p.kind === 'refund' ? 'danger' : p.kind === 'tip' ? 'pink' : p.method === 'cash' ? 'lemon' : 'lilac'}`} aria-hidden="true">
+                      {p.kind === 'refund' ? <Glyph name="refund" size={18} /> : p.kind === 'tip' ? <Heart size={16} /> : <Glyph name={p.method === 'cash' ? 'cash' : 'bank'} size={18} />}
+                    </span>
                     <div className="grow">
                       <div className="title">{p.client_name || p.description || KIND_LABEL[p.kind]}</div>
                       <div className="meta">{[p.client_name ? p.description : null, KIND_LABEL[p.kind], METHOD_LABEL[p.method], p.note].filter(Boolean).join(' · ')}</div>
                     </div>
-                    <strong style={{ fontVariantNumeric: 'tabular-nums' }}>{money(p.amount_pence)}</strong>
-                    <button className="icon-btn" aria-label="Delete entry"
+                    <strong className="od-amt">{money(p.amount_pence)}</strong>
+                    <button className="icon-btn od-del" aria-label="Delete entry"
                       onClick={async () => {
                         if (!window.confirm('Delete this entry from your takings?')) return;
                         try { await api.deletePayment(p.id); reload(); } catch (e) { toast(friendlyError(e)); }
@@ -135,7 +156,7 @@ function AddPaymentSheet({ tz, onClose, onSaved }: { tz: string; onClose: () => 
         <Field label="Date"><input type="date" value={f.paid_on} onChange={(e) => setF({ ...f, paid_on: e.target.value })} /></Field>
         <Field label="What for"><input type="text" value={f.description} maxLength={200} placeholder={kind === 'refund' ? 'e.g. Deposit refund' : 'e.g. Cuticle oil'} onChange={(e) => setF({ ...f, description: e.target.value })} /></Field>
         <Field label="Client (optional)"><input type="text" value={f.client_name} maxLength={100} onChange={(e) => setF({ ...f, client_name: e.target.value })} /></Field>
-        <Field label={kind === 'refund' ? 'Amount refunded (£)' : 'Amount (£)'}><input type="text" inputMode="decimal" value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} /></Field>
+        <div className="od-amount"><Field label={kind === 'refund' ? 'Amount refunded (£)' : 'Amount (£)'}><input type="text" inputMode="decimal" value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} /></Field></div>
         <Seg label="Paid by" value={f.method} onChange={(method) => setF({ ...f, method })} options={[{ value: 'cash', label: 'Cash' }, { value: 'bank_transfer', label: 'Bank transfer' }]} />
         <ErrorBox error={error} />
         <button className="btn primary block" disabled={busy} onClick={save}>{busy ? 'Saving…' : 'Add'}</button>

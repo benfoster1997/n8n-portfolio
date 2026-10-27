@@ -5,6 +5,8 @@ import { resetDemo } from '../../api/demoApi';
 import { useOwner } from '../../components/owner';
 import { BlockTimeSheet } from './Diary';
 import { ErrorBox, Field, Icon, Sheet, Spinner, TopBar, useAction, useLoad, useToast } from '../../components/ui';
+import { BrandIcon, Heart, LemonSlice, ScriptTitle, Strapline } from '../../components/brand';
+import { Glyph } from './Clients';
 import {
   DEFAULT_TEMPLATES, TEMPLATE_PLACEHOLDERS, checkHandle, downloadText, friendlyError, isPlausibleEmail, money, parseMenu, parsePounds,
   socialLink, type SocialSite,
@@ -12,39 +14,64 @@ import {
 import { WEEKDAY_NAMES, fmtDayTime, minutesLabel, todayInZone } from '../../lib/time';
 import type { OpeningHours, Service, Settings as S } from '../../lib/types';
 
-const SECTIONS = [
-  { to: 'business', label: 'Business details', sub: 'Name, booking page text, your email' },
-  { to: 'booking-page', label: 'Booking page', sub: 'Tagline, add-ons, safety note, socials' },
-  { to: 'hours', label: 'Opening hours', sub: 'When clients can book' },
-  { to: 'services', label: 'Treatments & prices', sub: 'What clients can book' },
-  { to: 'time-off', label: 'Time off', sub: 'Holidays and blocked time' },
-  { to: 'rules', label: 'Booking rules', sub: 'Notice, gaps, how far ahead' },
-  { to: 'deposits', label: 'Deposits & cancellations', sub: 'Deposits, bank details, cancellation policy' },
-  { to: 'messages', label: 'WhatsApp messages', sub: 'Wording of reminders' },
-  { to: 'email', label: 'Email confirmations & reminders', sub: 'Free, sent from your Gmail' },
-  { to: 'backup', label: 'Back up your data', sub: 'Download everything' },
-  { to: 'account', label: 'Account', sub: 'Password, sign out' },
+type Group = 'business' | 'bookings' | 'messages' | 'data';
+const SECTIONS: { to: string; label: string; sub: string; icon: ReactNode; group: Group }[] = [
+  { to: 'business', label: 'Business details', sub: 'Name, booking page text, your email', icon: <Glyph name="store" />, group: 'business' },
+  { to: 'booking-page', label: 'Booking page', sub: 'Tagline, add-ons, safety note, socials', icon: <BrandIcon name="sparkle" size={20} />, group: 'business' },
+  { to: 'hours', label: 'Opening hours', sub: 'When clients can book', icon: <Glyph name="clock" />, group: 'business' },
+  { to: 'services', label: 'Treatments & prices', sub: 'What clients can book', icon: <Glyph name="polish" />, group: 'business' },
+  { to: 'time-off', label: 'Time off', sub: 'Holidays and blocked time', icon: <Glyph name="calendarOff" />, group: 'business' },
+  { to: 'rules', label: 'Booking rules', sub: 'Notice, gaps, how far ahead', icon: <Glyph name="sliders" />, group: 'bookings' },
+  { to: 'deposits', label: 'Deposits & cancellations', sub: 'Deposits, bank details, cancellation policy', icon: <Glyph name="pound" />, group: 'bookings' },
+  { to: 'messages', label: 'WhatsApp messages', sub: 'Wording of reminders', icon: <Icon name="whatsapp" size={20} />, group: 'messages' },
+  { to: 'email', label: 'Email confirmations & reminders', sub: 'Free, sent from your Gmail', icon: <Icon name="mail" size={20} />, group: 'messages' },
+  { to: 'backup', label: 'Back up your data', sub: 'Download everything', icon: <Glyph name="download" />, group: 'data' },
+  { to: 'account', label: 'Account', sub: 'Password, sign out', icon: <Glyph name="user" />, group: 'data' },
 ];
+const GROUPS: { id: Group; title: string }[] = [
+  { id: 'business', title: 'Your business' },
+  { id: 'bookings', title: 'Bookings & payments' },
+  { id: 'messages', title: 'Messages' },
+  { id: 'data', title: 'Your data' },
+];
+
+/** One row of the settings list: an icon in a pink circle, the name and a hint. */
+function SettingsRow({ to, label, sub, icon }: { to: string; label: string; sub: ReactNode; icon: ReactNode }) {
+  return (
+    <li><Link className="list-row od-set-row" to={to}>
+      <span className="od-ic" aria-hidden="true">{icon}</span>
+      <div className="grow"><div className="title">{label}</div><div className="meta">{sub}</div></div>
+      <span className="chev"><Icon name="chev" size={18} /></span>
+    </Link></li>
+  );
+}
 
 export function SettingsHome() {
   const { session, settings: s } = useOwner();
   return (
-    <div className="page">
+    <div className="page od od-settings">
       <TopBar title="Settings" />
-      <div className="card tight"><ul className="list">
-        {SECTIONS.map((x) => (
-          <li key={x.to}><Link className="list-row" to={`/settings/${x.to}`}>
-            <div className="grow"><div className="title">{x.label}</div><div className="meta">{x.sub}</div></div>
-            <span className="chev"><Icon name="chev" size={18} /></span>
-          </Link></li>
-        ))}
-      </ul></div>
+      <div className="card od-biz">
+        <span className="od-biz-badge" aria-hidden="true"><LemonSlice size={44} /></span>
+        <div className="grow">
+          <div className="od-biz-name">{s.business_name}</div>
+          <span className={`chip ${s.booking_enabled ? 'ok' : 'warn'}`}>{s.booking_enabled ? 'Taking online bookings' : 'Online bookings paused'}</span>
+        </div>
+      </div>
+      {GROUPS.map((g) => (
+        <div key={g.id}>
+          <div className="section-title">{g.title}</div>
+          <div className="card tight od-set-list"><ul className="list">
+            {SECTIONS.filter((x) => x.group === g.id).map((x) => <SettingsRow key={x.to} to={`/settings/${x.to}`} label={x.label} sub={x.sub} icon={x.icon} />)}
+          </ul></div>
+        </div>
+      ))}
       <div className="section-title">For clients</div>
-      <div className="card tight"><ul className="list">
-        <li><Link className="list-row" to="/book"><div className="grow"><div className="title">Your booking page</div><div className="meta">{s.booking_enabled ? 'Open for bookings' : 'Paused'}</div></div><span className="chev"><Icon name="chev" size={18} /></span></Link></li>
-        <li><Link className="list-row" to="/privacy"><div className="grow"><div className="title">Privacy notice</div><div className="meta">What clients are told about their data</div></div><span className="chev"><Icon name="chev" size={18} /></span></Link></li>
+      <div className="card tight od-set-list"><ul className="list">
+        <SettingsRow to="/book" label="Your booking page" sub={s.booking_enabled ? 'Open for bookings' : 'Paused'} icon={<Glyph name="globe" />} />
+        <SettingsRow to="/privacy" label="Privacy notice" sub="What clients are told about their data" icon={<BrandIcon name="shield-heart" size={20} />} />
       </ul></div>
-      <p className="sub centre" style={{ marginTop: 16 }}>Signed in as {session.email}</p>
+      <p className="od-signed-in">Signed in as {session.email}</p>
     </div>
   );
 }
@@ -61,7 +88,21 @@ function useSettingsForm<K extends keyof S>(keys: K[]) {
 }
 
 function Page({ title, children }: { title: string; children: ReactNode }) {
-  return <div className="page stack"><TopBar title={title} back="/settings" />{children}</div>;
+  return <div className="page stack od od-set-page"><TopBar title={title} back="/settings" />{children}</div>;
+}
+
+/** A titled group of settings in a card. */
+function SetCard({ icon, title, intro, children, className }: { icon?: ReactNode; title: string; intro?: ReactNode; children: ReactNode; className?: string }) {
+  return (
+    <section className={`card stack od-set-card${className ? ` ${className}` : ''}`}>
+      <div className="od-panel-head">
+        {icon && <span className="od-ic small" aria-hidden="true">{icon}</span>}
+        <h2 className="od-set-title">{title}</h2>
+      </div>
+      {intro && <p className="sub od-set-intro">{intro}</p>}
+      {children}
+    </section>
+  );
 }
 
 const txt = (v: string | null | undefined) => v ?? '';
@@ -78,23 +119,31 @@ export function BusinessSettings() {
   }
   return (
     <Page title="Business details">
-      <Field label="Business name"><input type="text" value={d.business_name} maxLength={80} onChange={(e) => f.set('business_name', e.target.value)} /></Field>
-      <Field label="Your legal name" hint="Shown in the privacy notice as the person responsible for client data.">
-        <input type="text" autoComplete="name" value={txt(d.legal_name)} maxLength={100} onChange={(e) => f.set('legal_name', e.target.value)} />
-      </Field>
-      <Field label="Booking page welcome" hint="A line or two shown above your treatments."><textarea value={txt(d.booking_intro)} maxLength={1000} onChange={(e) => f.set('booking_intro', e.target.value)} /></Field>
-      <Field label="Area (shown publicly)" hint="e.g. “Home studio near the high street — full address in your confirmation”">
-        <input type="text" value={txt(d.location_note)} maxLength={200} onChange={(e) => f.set('location_note', e.target.value)} />
-      </Field>
-      <Field label="Full address (only in confirmation emails)"><textarea value={txt(d.address)} maxLength={300} onChange={(e) => f.set('address', e.target.value)} /></Field>
-      <Field label="Your email" hint="New booking alerts go here, and clients’ replies come here."><input type="email" value={txt(d.owner_email)} onChange={(e) => f.set('owner_email', e.target.value)} /></Field>
-      <Field label="Your mobile (optional)" hint="Shown in emails so clients can WhatsApp you."><input type="tel" value={txt(d.owner_phone)} onChange={(e) => f.set('owner_phone', e.target.value)} /></Field>
-      <Field label="This app’s web address" hint="Used for the booking and form links in emails.">
-        <input type="text" inputMode="url" value={txt(d.public_site_url)} placeholder="https://…" onChange={(e) => f.set('public_site_url', e.target.value)} />
-      </Field>
-      <button className="btn small" onClick={() => f.set('public_site_url', window.location.origin)}>Use {window.location.host}</button>
-      <label className="check"><input type="checkbox" checked={d.booking_enabled} onChange={(e) => f.set('booking_enabled', e.target.checked)} />
-        <span>Online booking is open<br /><span className="sub">Untick to pause new online bookings (e.g. while you’re away).</span></span></label>
+      <SetCard icon={<Glyph name="store" size={18} />} title="Your business">
+        <Field label="Business name"><input type="text" value={d.business_name} maxLength={80} onChange={(e) => f.set('business_name', e.target.value)} /></Field>
+        <Field label="Your legal name" hint="Shown in the privacy notice as the person responsible for client data.">
+          <input type="text" autoComplete="name" value={txt(d.legal_name)} maxLength={100} onChange={(e) => f.set('legal_name', e.target.value)} />
+        </Field>
+      </SetCard>
+      <SetCard icon={<BrandIcon name="sparkle" size={18} />} title="On your booking page">
+        <Field label="Booking page welcome" hint="A line or two shown above your treatments."><textarea value={txt(d.booking_intro)} maxLength={1000} onChange={(e) => f.set('booking_intro', e.target.value)} /></Field>
+        <Field label="Area (shown publicly)" hint="e.g. “Home studio near the high street — full address in your confirmation”">
+          <input type="text" value={txt(d.location_note)} maxLength={200} onChange={(e) => f.set('location_note', e.target.value)} />
+        </Field>
+        <label className="check od-check-row"><input type="checkbox" checked={d.booking_enabled} onChange={(e) => f.set('booking_enabled', e.target.checked)} />
+          <span>Online booking is open<br /><span className="sub">Untick to pause new online bookings (e.g. while you’re away).</span></span></label>
+      </SetCard>
+      <SetCard icon={<Icon name="mail" size={18} />} title="Contact details">
+        <Field label="Full address (only in confirmation emails)"><textarea value={txt(d.address)} maxLength={300} onChange={(e) => f.set('address', e.target.value)} /></Field>
+        <Field label="Your email" hint="New booking alerts go here, and clients’ replies come here."><input type="email" value={txt(d.owner_email)} onChange={(e) => f.set('owner_email', e.target.value)} /></Field>
+        <Field label="Your mobile (optional)" hint="Shown in emails so clients can WhatsApp you."><input type="tel" value={txt(d.owner_phone)} onChange={(e) => f.set('owner_phone', e.target.value)} /></Field>
+      </SetCard>
+      <SetCard icon={<Glyph name="globe" size={18} />} title="This app">
+        <Field label="This app’s web address" hint="Used for the booking and form links in emails.">
+          <input type="text" inputMode="url" value={txt(d.public_site_url)} placeholder="https://…" onChange={(e) => f.set('public_site_url', e.target.value)} />
+        </Field>
+        <button className="btn small od-use-host" onClick={() => f.set('public_site_url', window.location.origin)}>Use {window.location.host}</button>
+      </SetCard>
       <ErrorBox error={f.error} />
       <button className="btn primary block" disabled={f.busy} onClick={submit}>{f.busy ? 'Saving…' : 'Save'}</button>
     </Page>
@@ -115,14 +164,21 @@ function MenuPreview({ text }: { text: string | null }) {
   const sections = parseMenu(text);
   if (!sections.length) return null;
   return (
-    <div className="card stack" role="group" aria-label="How your add-ons will read">
+    <div className="card od-menu" role="group" aria-label="How your add-ons will read">
       {sections.map((sec, i) => (
-        <div className="stack" key={i} style={{ gap: 6 }}>
-          {sec.title && <strong>{sec.title}</strong>}
-          {sec.items.map((it, j) => (
-            <div className="row" key={j}><span className="grow">{it.name}</span><strong>{it.price}</strong></div>
-          ))}
-          {sec.notes.map((n, j) => <div className="sub" key={j}>{n}</div>)}
+        <div className="od-menu-sec" key={i}>
+          {sec.title && <ScriptTitle as="p" className="od-menu-title">{sec.title}</ScriptTitle>}
+          {sec.items.length > 0 && (
+            <ul className="od-menu-items">
+              {sec.items.map((it, j) => (
+                <li key={j} className={it.price ? '' : 'od-no-price'}>
+                  <span className="od-mi-name">{it.name}</span>
+                  {it.price && <span className="od-mi-price">{it.price}</span>}
+                </li>
+              ))}
+            </ul>
+          )}
+          {sec.notes.map((n, j) => <p className="od-menu-note" key={j}>{n}</p>)}
         </div>
       ))}
     </div>
@@ -150,43 +206,54 @@ export function BookingPageSettings() {
   }
   return (
     <Page title="Booking page">
-      <p className="sub">These dress up your booking page. Leave any of them blank to leave it off.</p>
-      <Field label="Tagline" hint="A short line in pink handwriting under your business name, e.g. “Happy hands, happy you”.">
-        <input type="text" value={txt(d.tagline)} maxLength={120} onChange={(e) => f.set('tagline', e.target.value)} />
-      </Field>
-      <Field label="Strapline" hint="A few words in spaced capitals with little hearts between, e.g. “Gel, BIAB, Nail art”. Separate them with commas.">
-        <input type="text" value={txt(d.strapline)} maxLength={80} onChange={(e) => f.set('strapline', e.target.value)} />
-      </Field>
+      <p className="sub od-page-intro">These dress up your booking page. Leave any of them blank to leave it off.</p>
+      <SetCard icon={<Heart size={17} />} title="Your words">
+        <Field label="Tagline" hint="A short line in pink handwriting under your business name, e.g. “Happy hands, happy you”.">
+          <input type="text" value={txt(d.tagline)} maxLength={120} onChange={(e) => f.set('tagline', e.target.value)} />
+        </Field>
+        <Field label="Strapline" hint="A few words in spaced capitals with little hearts between, e.g. “Gel, BIAB, Nail art”. Separate them with commas.">
+          <input type="text" value={txt(d.strapline)} maxLength={80} onChange={(e) => f.set('strapline', e.target.value)} />
+        </Field>
+        {(d.strapline?.trim() || d.tagline?.trim()) && (
+          <div className="od-words-preview" aria-hidden="true">
+            {d.strapline?.trim() && <Strapline text={d.strapline} />}
+            {d.tagline?.trim() && <p className="od-tagline">{d.tagline}<Heart size={16} /></p>}
+          </div>
+        )}
+      </SetCard>
 
-      <div className="section-title">Add-ons</div>
-      <Field label="Add-ons menu" hint={<>
-        One per line. <strong>Name | price</strong> is an item, a line starting with <strong>&gt;</strong> is a note, and any other
-        line is a heading. Shown for information: clients add these on the day, they don’t book them online. For example:
-        <span className="mono" style={{ display: 'block', whiteSpace: 'pre-line', marginTop: 6 }}>{MENU_EXAMPLE}</span>
-      </>}>
-        <textarea value={txt(d.extras_menu)} maxLength={2000} style={{ minHeight: 300 }} onChange={(e) => f.set('extras_menu', e.target.value)} />
-      </Field>
-      {priceAsHeading && (
-        <div className="notice warn">“{priceAsHeading}” will show as a heading. To make it an item, put a | between the name and the price.</div>
-      )}
-      {d.extras_menu?.trim() && <><div className="sub">How it reads on your booking page:</div><MenuPreview text={d.extras_menu} /></>}
+      <SetCard icon={<BrandIcon name="gift" size={18} />} title="Add-ons">
+        <Field label="Add-ons menu" hint={<>
+          One per line. <strong>Name | price</strong> is an item, a line starting with <strong>&gt;</strong> is a note, and any other
+          line is a heading. Shown for information: clients add these on the day, they don’t book them online. For example:
+          <span className="mono od-example">{MENU_EXAMPLE}</span>
+        </>}>
+          <textarea className="od-menu-text" value={txt(d.extras_menu)} maxLength={2000} style={{ minHeight: 300 }} onChange={(e) => f.set('extras_menu', e.target.value)} />
+        </Field>
+        {priceAsHeading && (
+          <div className="notice warn">“{priceAsHeading}” will show as a heading. To make it an item, put a | between the name and the price.</div>
+        )}
+        {d.extras_menu?.trim() && <><div className="od-preview-label"><Glyph name="eye" size={16} /> How it reads on your booking page:</div><MenuPreview text={d.extras_menu} /></>}
+      </SetCard>
 
-      <div className="section-title">Safety</div>
-      <Field label="Safety note" hint="Shown in a badge on your booking page, e.g. how you keep tools clean and the PPE you use.">
-        <textarea value={txt(d.safety_note)} maxLength={300} onChange={(e) => f.set('safety_note', e.target.value)} />
-      </Field>
+      <SetCard icon={<BrandIcon name="shield-heart" size={18} />} title="Safety">
+        <Field label="Safety note" hint="Shown in a badge on your booking page, e.g. how you keep tools clean and the PPE you use.">
+          <textarea value={txt(d.safety_note)} maxLength={300} onChange={(e) => f.set('safety_note', e.target.value)} />
+        </Field>
+      </SetCard>
 
-      <div className="section-title">Social links</div>
-      {SOCIAL_FIELDS.map((x) => {
-        const r = checkHandle(x.site, d[x.key]);
-        return (
-          <Field key={x.key} label={x.label}
-            hint={r.handle ? `Links to ${socialLink(x.site, r.handle).replace(/^https:\/\/(www\.)?/, '')}` : 'Your handle, or paste the link to your profile.'}>
-            <input type="text" value={txt(d[x.key])} maxLength={200} autoCapitalize="none" autoCorrect="off" spellCheck={false}
-              placeholder={x.site === 'facebook' ? 'YourNailStudio' : '@yournailstudio'} onChange={(e) => f.set(x.key, e.target.value)} />
-          </Field>
-        );
-      })}
+      <SetCard icon={<BrandIcon name="instagram" size={18} />} title="Social links">
+        {SOCIAL_FIELDS.map((x) => {
+          const r = checkHandle(x.site, d[x.key]);
+          return (
+            <Field key={x.key} label={x.label}
+              hint={r.handle ? `Links to ${socialLink(x.site, r.handle).replace(/^https:\/\/(www\.)?/, '')}` : 'Your handle, or paste the link to your profile.'}>
+              <input type="text" value={txt(d[x.key])} maxLength={200} autoCapitalize="none" autoCorrect="off" spellCheck={false}
+                placeholder={x.site === 'facebook' ? 'YourNailStudio' : '@yournailstudio'} onChange={(e) => f.set(x.key, e.target.value)} />
+            </Field>
+          );
+        })}
+      </SetCard>
       <ErrorBox error={f.error} />
       <button className="btn primary block" disabled={f.busy} onClick={submit}>{f.busy ? 'Saving…' : 'Save'}</button>
       <Link className="btn block" to="/book">Preview booking page</Link>
@@ -211,6 +278,13 @@ const RULES: { k: RuleKey; label: string; hint: string; min: number; max: number
     min: 2, max: 168, error: 'Reminders must be a whole number of hours from 2 to 168.' },
 ];
 
+/** How the rules are grouped on the page. */
+const RULE_GROUPS: { title: string; icon: ReactNode; keys: RuleKey[] }[] = [
+  { title: 'Your diary', icon: <Glyph name="calendar" size={18} />, keys: ['slot_interval_min', 'buffer_min'] },
+  { title: 'When clients can book', icon: <Glyph name="clock" size={18} />, keys: ['min_notice_hours', 'max_days_ahead'] },
+  { title: 'Reminders', icon: <Icon name="bell" size={18} />, keys: ['reminder_hours_before'] },
+];
+
 export function RulesSettings() {
   const f = useSettingsForm(RULES.map((r) => r.k));
   // As typed, so an emptied box isn't quietly saved as 0.
@@ -226,11 +300,15 @@ export function RulesSettings() {
   }
   return (
     <Page title="Booking rules">
-      {RULES.map((r) => (
-        <Field key={r.k} label={r.label} hint={r.hint}>
-          <input type="number" inputMode="numeric" min={r.min} max={r.max} step={r.step ?? 1} value={text[r.k]}
-            onChange={(e) => setText((t) => ({ ...t, [r.k]: e.target.value }))} />
-        </Field>
+      {RULE_GROUPS.map((g) => (
+        <SetCard key={g.title} icon={g.icon} title={g.title}>
+          {RULES.filter((r) => g.keys.includes(r.k)).map((r) => (
+            <Field key={r.k} label={r.label} hint={r.hint}>
+              <input type="number" inputMode="numeric" min={r.min} max={r.max} step={r.step ?? 1} value={text[r.k]}
+                onChange={(e) => setText((t) => ({ ...t, [r.k]: e.target.value }))} />
+            </Field>
+          ))}
+        </SetCard>
       ))}
       <ErrorBox error={f.error} />
       <button className="btn primary block" disabled={f.busy} onClick={submit}>{f.busy ? 'Saving…' : 'Save'}</button>
@@ -255,35 +333,41 @@ export function DepositSettings() {
   }
   return (
     <Page title="Deposits & cancellations">
-      <p className="sub">New clients (anyone who hasn’t had a completed appointment) are asked for this deposit by bank transfer. Returning clients aren’t. Set £0 to switch deposits off.</p>
-      <Field label="Deposit (£)"><input type="text" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} /></Field>
-      <Field label="Pay within (hours)" hint="Shown to the client."><input type="number" inputMode="numeric" min={1} max={336} value={d.deposit_deadline_hours} onChange={(e) => f.set('deposit_deadline_hours', Number(e.target.value))} /></Field>
-      <label className="check">
-        <input type="checkbox" checked={d.auto_cancel_unpaid} onChange={(e) => f.set('auto_cancel_unpaid', e.target.checked)} />
-        <span>Release the slot automatically if the deposit hasn’t arrived in time<br />
-          <span className="sub">The client is emailed. Leave this off to decide yourself — late ones are flagged on Today. Remember to mark deposits received promptly if it’s on.</span></span>
-      </label>
-      <div className="section-title">Bank details (sent only to clients who owe a deposit)</div>
-      <Field label="Account name"><input type="text" value={txt(d.bank_account_name)} maxLength={80} onChange={(e) => f.set('bank_account_name', e.target.value)} /></Field>
-      <div className="row">
-        <Field label="Sort code"><input type="text" inputMode="numeric" value={txt(d.bank_sort_code)} maxLength={20} placeholder="00-00-00" onChange={(e) => f.set('bank_sort_code', e.target.value)} /></Field>
-        <Field label="Account number"><input type="text" inputMode="numeric" value={txt(d.bank_account_number)} maxLength={20} onChange={(e) => f.set('bank_account_number', e.target.value)} /></Field>
-      </div>
-      <div className="section-title">Cancellations</div>
-      <Field label="Cancellation policy" hint="Shown at the top of your booking page and in every confirmation and reminder email. Clients must tick to agree to it before they can book, and each booking keeps a copy of the wording they agreed to.">
-        <textarea value={txt(d.cancellation_policy)} maxLength={1000} style={{ minHeight: 110 }} onChange={(e) => f.set('cancellation_policy', e.target.value)} />
-      </Field>
-      <Field label="Notice needed to cancel (hours)" hint="Clients can still change or cancel online after this, but it’s flagged as a late cancellation so you can charge under your policy. 0 = no notice needed, so nothing counts as late.">
-        <input type="number" inputMode="numeric" min={0} max={336} value={d.cancel_notice_hours} onChange={(e) => f.set('cancel_notice_hours', Number(e.target.value))} />
-      </Field>
-      {Number.isFinite(policyHours) && policyHours !== d.cancel_notice_hours && (
-        <div className="notice warn">Your policy wording says {policyHours} hours, but the notice here is {d.cancel_notice_hours} hours. Make them match so clients aren’t confused.</div>
-      )}
-      <label className="check">
-        <input type="checkbox" checked={d.client_self_service} onChange={(e) => f.set('client_self_service', e.target.checked)} />
-        <span>Clients can change or cancel their booking online<br />
-          <span className="sub">Their confirmation and reminder emails include a private link to do it. Untick to have them get in touch with you instead.</span></span>
-      </label>
+      <SetCard icon={<Glyph name="pound" size={18} />} title="New-client deposit"
+        intro="New clients (anyone who hasn’t had a completed appointment) are asked for this deposit by bank transfer. Returning clients aren’t. Set £0 to switch deposits off.">
+        <div className="row">
+          <Field label="Deposit (£)"><input type="text" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} /></Field>
+          <Field label="Pay within (hours)" hint="Shown to the client."><input type="number" inputMode="numeric" min={1} max={336} value={d.deposit_deadline_hours} onChange={(e) => f.set('deposit_deadline_hours', Number(e.target.value))} /></Field>
+        </div>
+        <label className="check od-check-row">
+          <input type="checkbox" checked={d.auto_cancel_unpaid} onChange={(e) => f.set('auto_cancel_unpaid', e.target.checked)} />
+          <span>Release the slot automatically if the deposit hasn’t arrived in time<br />
+            <span className="sub">The client is emailed. Leave this off to decide yourself — late ones are flagged on Today. Remember to mark deposits received promptly if it’s on.</span></span>
+        </label>
+      </SetCard>
+      <SetCard icon={<Glyph name="bank" size={18} />} title="Bank details" intro="Sent only to clients who owe a deposit.">
+        <Field label="Account name"><input type="text" value={txt(d.bank_account_name)} maxLength={80} onChange={(e) => f.set('bank_account_name', e.target.value)} /></Field>
+        <div className="row">
+          <Field label="Sort code"><input type="text" inputMode="numeric" value={txt(d.bank_sort_code)} maxLength={20} placeholder="00-00-00" onChange={(e) => f.set('bank_sort_code', e.target.value)} /></Field>
+          <Field label="Account number"><input type="text" inputMode="numeric" value={txt(d.bank_account_number)} maxLength={20} onChange={(e) => f.set('bank_account_number', e.target.value)} /></Field>
+        </div>
+      </SetCard>
+      <SetCard icon={<Glyph name="calendarOff" size={18} />} title="Cancellations" className="od-set-cancel">
+        <Field label="Cancellation policy" hint="Shown at the top of your booking page and in every confirmation and reminder email. Clients must tick to agree to it before they can book, and each booking keeps a copy of the wording they agreed to.">
+          <textarea value={txt(d.cancellation_policy)} maxLength={1000} style={{ minHeight: 110 }} onChange={(e) => f.set('cancellation_policy', e.target.value)} />
+        </Field>
+        <Field label="Notice needed to cancel (hours)" hint="Clients can still change or cancel online after this, but it’s flagged as a late cancellation so you can charge under your policy. 0 = no notice needed, so nothing counts as late.">
+          <input type="number" inputMode="numeric" min={0} max={336} value={d.cancel_notice_hours} onChange={(e) => f.set('cancel_notice_hours', Number(e.target.value))} />
+        </Field>
+        {Number.isFinite(policyHours) && policyHours !== d.cancel_notice_hours && (
+          <div className="notice warn">Your policy wording says {policyHours} hours, but the notice here is {d.cancel_notice_hours} hours. Make them match so clients aren’t confused.</div>
+        )}
+        <label className="check od-check-row">
+          <input type="checkbox" checked={d.client_self_service} onChange={(e) => f.set('client_self_service', e.target.checked)} />
+          <span>Clients can change or cancel their booking online<br />
+            <span className="sub">Their confirmation and reminder emails include a private link to do it. Untick to have them get in touch with you instead.</span></span>
+        </label>
+      </SetCard>
       <ErrorBox error={f.error} />
       <button className="btn primary block" disabled={f.busy} onClick={submit}>{f.busy ? 'Saving…' : 'Save'}</button>
     </Page>
@@ -311,10 +395,10 @@ export function HoursSettings() {
     <Page title="Opening hours">
       <ErrorBox error={error} />
       {list.map((r, i) => (
-        <div className="card stack" key={r.weekday}>
-          <label className="check" style={{ padding: 0 }}>
+        <div className={`card stack od-day-card${r.is_open ? '' : ' od-day-closed'}`} key={r.weekday}>
+          <label className="check od-day-toggle">
             <input type="checkbox" checked={r.is_open} onChange={(e) => upd(i, { is_open: e.target.checked })} />
-            <strong>{WEEKDAY_NAMES[r.weekday]}</strong>{!r.is_open && <span className="sub">Closed</span>}
+            <strong>{WEEKDAY_NAMES[r.weekday]}</strong>{!r.is_open && <span className="sub od-closed-tag">Closed</span>}
           </label>
           {r.is_open && (
             <>
@@ -322,7 +406,7 @@ export function HoursSettings() {
                 <Field label="Opens"><input type="time" step={300} value={r.open_time} onChange={(e) => upd(i, { open_time: e.target.value })} /></Field>
                 <Field label="Closes"><input type="time" step={300} value={r.close_time} onChange={(e) => upd(i, { close_time: e.target.value })} /></Field>
               </div>
-              <div className="row">
+              <div className="row od-break">
                 <Field label="Break from"><input type="time" step={300} value={r.break_start ?? ''} onChange={(e) => upd(i, { break_start: e.target.value || null })} /></Field>
                 <Field label="Break to"><input type="time" step={300} value={r.break_end ?? ''} onChange={(e) => upd(i, { break_end: e.target.value || null })} /></Field>
               </div>
@@ -348,12 +432,13 @@ export function ServicesSettings() {
       <button className="btn primary block" onClick={() => setEdit({ name: '', duration_min: 60, price_pence: 0, online_bookable: true, is_active: true, sort_order: (data?.length ?? 0) + 1 })}>
         <Icon name="plus" size={20} /> Add a treatment
       </button>
-      <div className="card tight">
+      <div className="card od-pricelist">
+        <ScriptTitle as="p" className="od-pricelist-title">Price List</ScriptTitle>
         {active.length === 0 ? <div className="empty">No treatments yet.</div> : (
-          <ul className="list">{active.map((v) => (
-            <li key={v.id}><button className="list-row" onClick={() => setEdit(v)}>
-              <div className="grow"><div className="title">{v.name}</div><div className="meta">{minutesLabel(v.duration_min)} · {money(v.price_pence)}{!v.online_bookable && ' · not bookable online'}</div></div>
-              <span className="chev"><Icon name="chev" size={18} /></span>
+          <ul className="od-pl">{active.map((v) => (
+            <li key={v.id}><button className="od-pl-row" onClick={() => setEdit(v)}>
+              <span className="od-pl-line"><span className="od-pl-name">{v.name}</span><span className="od-pl-price">{money(v.price_pence)}</span></span>
+              <span className="od-pl-meta">{minutesLabel(v.duration_min)}{!v.online_bookable && ' · not bookable online'}</span>
             </button></li>
           ))}</ul>
         )}
@@ -420,7 +505,8 @@ export function TimeOffSettings() {
       <div className="card tight">
         {(data ?? []).length === 0 ? <div className="empty">No time off coming up.</div> : (
           <ul className="list">{(data ?? []).map((t) => (
-            <li key={t.id} className="list-row">
+            <li key={t.id} className="list-row od-off-row">
+              <span className="od-ic small lemon" aria-hidden="true"><Glyph name="calendarOff" size={18} /></span>
               <div className="grow"><div className="title">{t.note || 'Time off'}</div><div className="meta">{fmtDayTime(t.starts_at, tz)} → {fmtDayTime(t.ends_at, tz)}</div></div>
               <button className="icon-btn" aria-label="Remove" onClick={async () => {
                 if (!window.confirm('Remove this time off? Clients will be able to book it.')) return;
@@ -439,17 +525,21 @@ export function MessageSettings() {
   const f = useSettingsForm(['wa_template_reminder', 'wa_template_deposit', 'wa_template_confirmed']);
   const d = f.draft;
   const box = (k: 'wa_template_reminder' | 'wa_template_deposit' | 'wa_template_confirmed', label: string, def: string) => (
-    <Field label={label}>
-      <textarea style={{ minHeight: 130 }} value={d[k] ?? def} maxLength={1000} onChange={(e) => f.set(k, e.target.value)} />
-      <button className="btn ghost small" style={{ alignSelf: 'flex-start' }} onClick={() => f.set(k, null)}>Reset to default</button>
-    </Field>
+    <section className="card od-template">
+      <Field label={label}>
+        <textarea style={{ minHeight: 130 }} value={d[k] ?? def} maxLength={1000} onChange={(e) => f.set(k, e.target.value)} />
+        <button className="btn ghost small" style={{ alignSelf: 'flex-start' }} onClick={() => f.set(k, null)}>Reset to default</button>
+      </Field>
+    </section>
   );
   return (
     <Page title="WhatsApp messages">
-      <p className="sub">These fill in automatically when you tap a WhatsApp button. Words in curly brackets are swapped for the real details:</p>
-      <p className="mono" style={{ fontSize: '0.82rem' }}>{TEMPLATE_PLACEHOLDERS.join(' ')}</p>
-      <p className="sub"><span className="mono">{'{change_note}'}</span> tells the client how to change or cancel. Usually that’s their own link and the time to do it by. Once it’s inside your notice period, it gives the link and says your cancellation policy now applies. If they’ve already changed the booking inside your notice period, it gives the link and says the policy applies if they cancel, even when the appointment is now further off. With no notice period it’s just the link, and if clients can’t change bookings online (Deposits &amp; cancellations), it asks them to get in touch.</p>
-      <p className="sub"><span className="mono">{'{manage_link}'}</span> is the link on its own, and <span className="mono">{'{change_by}'}</span> is the last time to change without it counting as late — for a booking already inside your notice period that time has passed, so <span className="mono">{'{change_note}'}</span> is usually better.</p>
+      <section className="card stack od-set-card od-placeholders">
+        <p className="sub">These fill in automatically when you tap a WhatsApp button. Words in curly brackets are swapped for the real details:</p>
+        <p className="od-ph-list">{TEMPLATE_PLACEHOLDERS.map((x) => <code key={x}>{x}</code>)}</p>
+        <p className="sub"><span className="mono">{'{change_note}'}</span> tells the client how to change or cancel. Usually that’s their own link and the time to do it by. Once it’s inside your notice period, it gives the link and says your cancellation policy now applies. If they’ve already changed the booking inside your notice period, it gives the link and says the policy applies if they cancel, even when the appointment is now further off. With no notice period it’s just the link, and if clients can’t change bookings online (Deposits &amp; cancellations), it asks them to get in touch.</p>
+        <p className="sub"><span className="mono">{'{manage_link}'}</span> is the link on its own, and <span className="mono">{'{change_by}'}</span> is the last time to change without it counting as late — for a booking already inside your notice period that time has passed, so <span className="mono">{'{change_note}'}</span> is usually better.</p>
+      </section>
       {[d.wa_template_reminder, d.wa_template_deposit, d.wa_template_confirmed].some((t) => t && /\{(manage_link|change_by)\}/.test(t)) && (
         <div className="notice warn">Your wording uses {'{manage_link}'} or {'{change_by}'}. These go out as they are, even when the time to change by has passed or clients can’t change bookings online. Use {'{change_note}'} to have that worded for you.</div>
       )}
@@ -499,20 +589,22 @@ export function EmailSettings() {
   const healthy = lastPoll && Date.now() - lastPoll.getTime() < 3 * 3600e3;
   return (
     <Page title="Email confirmations & reminders">
-      <div className={`notice${s.email_secret_hash && !healthy ? ' warn' : ''}`}>
+      <div className={`notice od-status${!s.email_secret_hash ? ' od-status-off' : healthy ? ' od-status-ok' : ' warn'}`}>
         {!s.email_secret_hash ? 'Not set up yet.' : lastPoll ? <>Email sender last checked in {fmtDayTime(lastPoll, s.timezone)}{healthy ? ' — working.' : ' — that’s a while ago; check the script is still running.'}</> : 'Secret created — waiting for the email script to check in.'}
       </div>
-      <p>Emails are sent free from your own Gmail by a small Google script that checks for new emails every 10 minutes. Clients get:</p>
-      <ul className="sub">
-        <li>a booking confirmation (with bank details if they owe a deposit, and the consultation form link if they’re new)</li>
-        <li>a “you’re confirmed” email when you mark their deposit received</li>
-        <li>a reminder {s.reminder_hours_before} hours before</li>
-        <li>a “your booking has changed” email when they change it online, or when you move it and tick the box to tell them</li>
-        <li>a cancellation email when they cancel online, or when you cancel and tick the box to tell them</li>
-      </ul>
-      <p>You get an email for every new online booking, and whenever a client changes or cancels online{s.owner_email ? ` (to ${s.owner_email})` : ' — add your email in Business details'}.</p>
+      <section className="card stack od-set-card">
+        <p>Emails are sent free from your own Gmail by a small Google script that checks for new emails every 10 minutes. Clients get:</p>
+        <ul className="sub od-hearts">
+          <li>a booking confirmation (with bank details if they owe a deposit, and the consultation form link if they’re new)</li>
+          <li>a “you’re confirmed” email when you mark their deposit received</li>
+          <li>a reminder {s.reminder_hours_before} hours before</li>
+          <li>a “your booking has changed” email when they change it online, or when you move it and tick the box to tell them</li>
+          <li>a cancellation email when they cancel online, or when you cancel and tick the box to tell them</li>
+        </ul>
+        <p>You get an email for every new online booking, and whenever a client changes or cancels online{s.owner_email ? ` (to ${s.owner_email})` : ' — add your email in Business details'}.</p>
+      </section>
       <div className="section-title">Set-up values for the script</div>
-      <div className="card stack">
+      <div className="card stack od-setup">
         <div><div className="sub">SUPABASE_URL</div><div className="mono" style={{ overflowWrap: 'anywhere' }}>{url || '— (demo mode)'}</div></div>
         {url && <button className="btn small" onClick={() => copy(url, 'URL')}>Copy URL</button>}
         <div><div className="sub">SUPABASE_ANON_KEY</div><div className="mono" style={{ overflowWrap: 'anywhere', fontSize: '0.75rem' }}>{key ? `${key.slice(0, 24)}…` : '— (demo mode)'}</div></div>
@@ -535,8 +627,11 @@ export function BackupSettings() {
   const toast = useToast();
   return (
     <Page title="Back up your data">
-      <p>Download everything — clients, appointments, forms, patch tests, takings and settings — as one file. Keep it somewhere private (it contains health information). Photos aren’t included in the file.</p>
-      <p className="sub">The free database plan keeps its own backups only for a short time, so download one now and then, e.g. at the start of each month.</p>
+      <section className="card stack od-set-card od-backup">
+        <span className="od-ic od-backup-ic" aria-hidden="true"><Glyph name="download" size={24} /></span>
+        <p>Download everything — clients, appointments, forms, patch tests, takings and settings — as one file. Keep it somewhere private (it contains health information). Photos aren’t included in the file.</p>
+        <p className="sub">The free database plan keeps its own backups only for a short time, so download one now and then, e.g. at the start of each month.</p>
+      </section>
       <ErrorBox error={error} />
       <button className="btn primary block" disabled={busy} onClick={() => run(async () => {
         const all = await api.exportAll();
@@ -555,7 +650,10 @@ export function AccountSettings() {
   const toast = useToast();
   return (
     <Page title="Account">
-      <div className="card"><dl className="kv"><dt>Signed in as</dt><dd>{session.email}</dd></dl></div>
+      <div className="card od-account">
+        <span className="od-ic" aria-hidden="true"><Glyph name="user" size={22} /></span>
+        <dl className="od-account-who"><dt>Signed in as</dt><dd>{session.email}</dd></dl>
+      </div>
       <button className="btn" onClick={() => setSheet(true)}>Change password</button>
       <button className="btn danger" onClick={() => api.signOut()}>Sign out</button>
       {api.mode === 'demo' && (

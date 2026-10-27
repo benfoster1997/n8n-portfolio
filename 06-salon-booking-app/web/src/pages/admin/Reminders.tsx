@@ -2,7 +2,7 @@ import { Link } from 'react-router-dom';
 import { api } from '../../api';
 import { WhatsAppButton } from '../../components/appts';
 import { useOwner } from '../../components/owner';
-import { ErrorBox, Spinner, StatusChip, TopBar, useLoad } from '../../components/ui';
+import { ErrorBox, Icon, Spinner, StatusChip, TopBar, useLoad } from '../../components/ui';
 import { addDays, fmtDayLong, fmtTime, startOfDayInstant, todayInZone } from '../../lib/time';
 import { dueWhatsAppReminders, reminderDates, reminderRange } from '../../lib/reminders';
 import type { Appointment } from '../../lib/types';
@@ -35,49 +35,65 @@ export function Reminders() {
     try { await api.updateAppointment(a.id, { whatsapp_reminder_sent_at: when }); } catch { /* shown as not sent next time */ }
   }
 
+  const initials = (a: Appointment) => (a.client?.full_name ?? a.booking_name ?? '?')
+    .split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]!.toUpperCase()).join('');
+
   return (
-    <div className="page">
+    <div className="page rm-page">
       <TopBar title="WhatsApp reminders" back />
-      <p className="sub">
-        Reminders for {span}, from your <Link to="/settings/rules">reminder setting</Link> ({s.reminder_hours_before} hours).
-        Tap a button: WhatsApp opens with the message written for you — just press send. Free, and it comes from your own number.
-      </p>
+      <div className="rm-intro">
+        <span className="rm-intro-ico" aria-hidden="true"><Icon name="whatsapp" size={22} /></span>
+        <p>
+          Reminders for {span}, from your <Link to="/settings/rules">reminder setting</Link> ({s.reminder_hours_before} hours).
+          Tap a button: WhatsApp opens with the message written for you — just press send. Free, and it comes from your own number.
+        </p>
+      </div>
       <ErrorBox error={error} />
       {loading && !data ? <Spinner /> : days.map((d) => {
         const list = live.filter((a) => a.starts_at >= startOfDayInstant(d, tz).toISOString() && a.starts_at < startOfDayInstant(addDays(d, 1), tz).toISOString());
         const toSend = list.filter((a) => due.has(a.id)).length;
         return (
-          <div key={d}>
-            <div className="day-head">
+          <section key={d} className={`rm-day${d === today ? ' is-today' : ''}`}>
+            <div className="day-head rm-day-head">
               <h2>{d === today ? 'Today' : d === addDays(today, 1) ? 'Tomorrow' : fmtDayLong(d + 'T12:00:00Z', tz)}</h2>
-              <span className="sub">{!list.length ? '' : d === today ? `${list.length} still to come` : `${list.length} booked${toSend ? ` · ${toSend} to send` : ''}`}</span>
+              <span className={`rm-day-sub${toSend && d !== today ? ' has-due' : ''}`}>{!list.length ? '' : d === today ? `${list.length} still to come` : `${list.length} booked${toSend ? ` · ${toSend} to send` : ''}`}</span>
             </div>
-            <div className="card tight">
-              {list.length === 0 ? <div className="empty">{d === today ? 'Nothing else today.' : 'No appointments.'}</div> : (
+            <div className="card tight rm-card">
+              {list.length === 0 ? <div className="empty rm-empty">{d === today ? 'Nothing else today.' : 'No appointments.'}</div> : (
                 <ul className="list">
-                  {list.map((a) => (
-                    <li key={a.id} style={{ padding: '12px 16px' }}>
-                      <div className="row spread">
-                        <Link to={`/appointments/${a.id}`} style={{ color: 'inherit', textDecoration: 'none' }} className="grow">
-                          <div style={{ fontWeight: 600 }}>{fmtTime(a.starts_at, tz)} · {a.client?.full_name}</div>
-                          <div className="sub">{a.service_name}</div>
-                        </Link>
-                        {a.booking_phone && (
-                          <Link className="chip warn" to={`/appointments/${a.id}`} style={{ textDecoration: 'none' }}
-                            title={`They gave ${a.booking_phone} when booking, not the number on their record`}>Check mobile</Link>
-                        )}
-                        <StatusChip status={a.status} />
-                      </div>
-                      <div className="row" style={{ marginTop: 8, justifyContent: 'space-between' }}>
-                        <span className="sub">{[a.whatsapp_reminder_sent_at && '✓ WhatsApp opened', a.reminder_email_sent_at && '✓ Email sent'].filter(Boolean).join(' · ')}</span>
-                        <WhatsAppButton small a={a} s={s} label={a.status === 'pending_deposit' ? 'Ask for deposit' : 'Send reminder'} onSent={() => markSent(a)} />
-                      </div>
-                    </li>
-                  ))}
+                  {list.map((a) => {
+                    const sent = !!(a.whatsapp_reminder_sent_at || a.reminder_email_sent_at);
+                    return (
+                      <li key={a.id} className={`rm-item${a.whatsapp_reminder_sent_at ? ' is-sent' : due.has(a.id) ? ' is-due' : ''}`}>
+                        <div className="rm-top">
+                          <span className="rm-avatar" aria-hidden="true"><span>{initials(a)}</span></span>
+                          <Link to={`/appointments/${a.id}`} className="rm-who grow">
+                            <div className="rm-line"><span className="rm-time">{fmtTime(a.starts_at, tz)}</span><span className="visually-hidden"> · </span><span className="rm-name">{a.client?.full_name}</span></div>
+                            <div className="rm-svc">{a.service_name}</div>
+                          </Link>
+                          <div className="rm-chips">
+                            {a.booking_phone && (
+                              <Link className="chip warn rm-check" to={`/appointments/${a.id}`}
+                                title={`They gave ${a.booking_phone} when booking, not the number on their record`}>Check mobile</Link>
+                            )}
+                            <StatusChip status={a.status} />
+                          </div>
+                        </div>
+                        <div className="rm-bottom">
+                          <span className="rm-state">
+                            {a.whatsapp_reminder_sent_at && <span className="rm-done"><span className="visually-hidden">✓ </span>WhatsApp opened</span>}
+                            {a.reminder_email_sent_at && <span className="rm-done"><span className="visually-hidden">✓ </span>Email sent</span>}
+                            {!sent && due.has(a.id) && <span className="rm-todo">Ready to send</span>}
+                          </span>
+                          <WhatsAppButton small a={a} s={s} label={a.status === 'pending_deposit' ? 'Ask for deposit' : 'Send reminder'} onSent={() => markSent(a)} />
+                        </div>
+                      </li>
+                    );
+                  })}
                 </ul>
               )}
             </div>
-          </div>
+          </section>
         );
       })}
     </div>

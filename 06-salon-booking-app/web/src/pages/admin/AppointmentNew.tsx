@@ -7,6 +7,7 @@ import { availableSlots } from '../../lib/slots';
 import { addDays, fmtTime, minutesLabel, startOfDayInstant, todayInZone, zonedToInstant } from '../../lib/time';
 import { isPlausibleEmail, isPlausiblePhone, money, parsePounds } from '../../lib/text';
 import type { Client } from '../../lib/types';
+import { Avatar } from './Clients';
 
 export function AppointmentNew() {
   const { settings: s } = useOwner();
@@ -115,14 +116,15 @@ export function AppointmentNew() {
   const hasEmail = newClient ? !!nc.email.trim() : !!client?.email;
 
   return (
-    <div className="page stack">
+    <div className="page stack od od-new">
       <TopBar title="New appointment" back />
 
-      <div className="card stack">
-        <h3>Client</h3>
+      <div className={`card stack od-step${(client && !newClient) ? ' done' : ''}`}>
+        <div className="od-step-head"><StepNum n={1} /><h3>Client</h3></div>
         {client && !newClient ? (
-          <div className="row spread">
-            <div><div style={{ fontWeight: 600 }}>{client.full_name}</div><div className="sub">{client.phone || client.email || ''}{visits !== null && ` · ${visits ? `${visits} visit${visits === 1 ? '' : 's'}` : client.is_regular ? 'Regular' : 'New client'}`}</div></div>
+          <div className="od-picked">
+            <Avatar name={client.full_name} />
+            <div className="grow"><div className="od-picked-name">{client.full_name}</div><div className="sub">{client.phone || client.email || ''}{visits !== null && ` · ${visits ? `${visits} visit${visits === 1 ? '' : 's'}` : client.is_regular ? 'Regular' : 'New client'}`}</div></div>
             <button className="btn small" onClick={() => setClientId(null)}>Change</button>
           </div>
         ) : newClient ? (
@@ -138,21 +140,23 @@ export function AppointmentNew() {
               <input type="search" value={search} autoFocus onChange={(e) => setSearch(e.target.value)} placeholder="e.g. Amelia or 07700" />
             </Field>
             {matches.length > 0 && (
-              <ul className="list card tight">
+              <ul className="list card tight od-matches">
                 {matches.map((c) => (
                   <li key={c.id}><button className="list-row" onClick={() => { setClientId(c.id); setSearch(''); }}>
+                    <Avatar name={c.full_name} size="sm" />
                     <div className="grow"><div className="title">{c.full_name}</div><div className="meta">{c.phone || c.email}</div></div>
+                    <span className="chev"><Icon name="chev" size={18} /></span>
                   </button></li>
                 ))}
               </ul>
             )}
-            <button className="btn" onClick={() => { setNewClient(true); setNc({ ...nc, full_name: search }); }}><Icon name="plus" size={20} /> New client</button>
+            <button className="btn od-new-client" onClick={() => { setNewClient(true); setNc({ ...nc, full_name: search }); }}><Icon name="plus" size={20} /> New client</button>
           </>
         )}
       </div>
 
-      <div className="card stack">
-        <h3>Treatment</h3>
+      <div className="card stack od-step done">
+        <div className="od-step-head"><StepNum n={2} /><h3>Treatment</h3></div>
         <Field label="Treatment">
           <select value={serviceId} onChange={(e) => { setServiceId(e.target.value); setTime(''); }}>
             {data.services.map((v) => <option key={v.id} value={v.id}>{v.name} · {minutesLabel(v.duration_min)} · {money(v.price_pence)}</option>)}
@@ -170,8 +174,8 @@ export function AppointmentNew() {
         )}
       </div>
 
-      <div className="card stack">
-        <h3>When</h3>
+      <div className={`card stack od-step${time ? ' done' : ''}`}>
+        <div className="od-step-head"><StepNum n={3} /><h3>When</h3></div>
         <Field label="Date"><input type="date" value={day} onChange={(e) => { setDay(e.target.value); setTime(''); }} /></Field>
         {anyTime ? (
           <Field label="Start time" hint="Any time you like — the diary still stops double-bookings.">
@@ -179,7 +183,7 @@ export function AppointmentNew() {
           </Field>
         ) : (
           <>
-            <span className="sub">Free times for a {minutesLabel(duration || 0)} appointment:</span>
+            <span className="od-slots-label">Free times for a {minutesLabel(duration || 0)} appointment:</span>
             {slots.length ? (
               <div className="slot-grid">
                 {slots.map((d) => {
@@ -187,13 +191,14 @@ export function AppointmentNew() {
                   return <button key={t} className={`slot${time === t ? ' on' : ''}`} onClick={() => setTime(t)}>{t}</button>;
                 })}
               </div>
-            ) : <div className="sub">No free times inside opening hours.</div>}
+            ) : <div className="sub od-no-slots">No free times inside opening hours.</div>}
           </>
         )}
-        <button className="btn ghost small" onClick={() => setAnyTime(!anyTime)}>{anyTime ? 'Show free times' : 'Outside opening hours / pick any time'}</button>
+        <button className="btn ghost small od-any-time" onClick={() => setAnyTime(!anyTime)}>{anyTime ? 'Show free times' : 'Outside opening hours / pick any time'}</button>
       </div>
 
-      <div className="card stack">
+      <div className="card stack od-step">
+        <div className="od-step-head"><StepNum n={4} /><h3>Last details</h3></div>
         {s.deposit_amount_pence > 0 && (
           <label className="check">
             <input type="checkbox" checked={depositOn} onChange={(e) => setAskDeposit(e.target.checked)} />
@@ -210,7 +215,12 @@ export function AppointmentNew() {
       </div>
 
       <ErrorBox error={error} />
-      <button className="btn primary block" disabled={busy} onClick={save}>{busy ? 'Saving…' : 'Add to diary'}</button>
+      <button className="btn primary block od-add" disabled={busy} onClick={save}><Icon name="plus" size={20} /> {busy ? 'Saving…' : 'Add to diary'}</button>
     </div>
   );
+}
+
+/** The step's number in a pink circle (a tick once the step is filled in). Decorative: the heading names the step. */
+function StepNum({ n }: { n: number }) {
+  return <span className="od-step-num" aria-hidden="true"><span>{n}</span></span>;
 }

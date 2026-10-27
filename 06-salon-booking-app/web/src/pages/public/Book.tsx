@@ -4,6 +4,11 @@ import { api } from '../../api';
 import { ConsultationFields } from '../../components/ConsultationFields';
 import { SlotPicker, useFreeSlots } from '../../components/SlotPicker';
 import { useClientManifest } from '../../components/clientManifest';
+import { Badge, BrandFooter, BrandHero, Heart, ScriptTitle } from '../../components/brand';
+import { AddOnsMenu, InfoBadges, TreatmentMenu, TreatmentRow } from '../../components/public/menu';
+import {
+  Celebration, ChosenTreatment, GroupHead, GroupIcon, PolicyCard, PublicLoading, PublicProblem, RefStub, StickyAction, Steps, Ticket,
+} from '../../components/public/parts';
 import { ErrorBox, Field, Icon, Spinner, useAction, useLoad } from '../../components/ui';
 import { blankAnswers, validateAnswers } from '../../lib/consultation';
 import { openDays } from '../../lib/slots';
@@ -17,14 +22,28 @@ export function Book() {
   useClientManifest();
   const { data: info, error, loading } = useLoad(() => api.getBookingInfo(), []);
   useEffect(() => { if (info) document.title = `Book · ${info.business_name}`; }, [info]);
-  if (loading) return <Spinner />;
-  if (!info) return <div className="page page-public"><ErrorBox error={error ?? new Error('Booking is not available right now.')} /></div>;
+  if (loading) return <PublicLoading />;
+  if (!info) {
+    return (
+      <PublicProblem title="Booking">
+        <ErrorBox error={error ?? new Error('Booking is not available right now.')} />
+        <button className="btn primary block" onClick={() => window.location.reload()}>Try again</button>
+      </PublicProblem>
+    );
+  }
   if (!info.booking_enabled) {
     return (
-      <div className="page page-public stack">
-        <div className="hero"><h1>{info.business_name}</h1></div>
-        <div className="notice">Online booking is paused at the moment. Please get in touch directly to book.</div>
+      <>
+      {api.mode === 'demo' && <div className="demo-banner">Demo — bookings here aren’t real and go nowhere</div>}
+      <div className="page page-public stack book">
+        <BrandHero name={info.business_name} tagline={info.tagline} strapline={info.strapline} location={info.location_note} />
+        <Badge icon="clock" title="Booking paused" titleAs="h2" className="book-paused">
+          <p>Online booking is paused at the moment. Please get in touch directly to book.</p>
+        </Badge>
+        <InfoBadges safety={info.safety_note} />
+        <BrandFooter instagram={info.instagram_handle} tiktok={info.tiktok_handle} facebook={info.facebook_handle} />
       </div>
+      </>
     );
   }
   return <BookingFlow info={info} />;
@@ -94,46 +113,44 @@ function BookingFlow({ info }: { info: BookingInfo }) {
   }
 
   const stepIndex = { service: 0, time: 1, details: 2, done: 3 }[step];
+  const socials = { instagram: info.instagram_handle, tiktok: info.tiktok_handle, facebook: info.facebook_handle };
 
   return (
     <>
     {api.mode === 'demo' && <div className="demo-banner">Demo — bookings here aren’t real and go nowhere</div>}
-    <div className="page page-public stack" ref={topRef}>
-      <div className="hero">
-        <h1>{info.business_name}</h1>
-        {info.booking_intro && step === 'service' && <p>{info.booking_intro}</p>}
-        {info.location_note && <p className="sub">{info.location_note}</p>}
-      </div>
-      {step !== 'done' && <div className="steps" aria-hidden>{[0, 1, 2].map((i) => <span key={i} className={i <= stepIndex ? 'on' : ''} />)}</div>}
+    <div className={`page page-public stack book book--${step}`} ref={topRef}>
+      <BrandHero name={info.business_name} compact={step !== 'service'}
+        tagline={step === 'service' || step === 'done' ? info.tagline : null}
+        strapline={step === 'service' ? info.strapline : null}
+        intro={step === 'service' ? info.booking_intro : null}
+        location={step === 'service' ? info.location_note : null} />
+      {step !== 'done' && <Steps labels={['Treatment', 'Time', 'Details']} current={stepIndex} />}
 
       {step === 'service' && policy && (
-        <div className="card policy" role="note" aria-label="Cancellation policy">
-          <h2>Cancellation policy</h2>
-          <p style={{ whiteSpace: 'pre-wrap' }}>{policy}</p>
-        </div>
+        <PolicyCard note>
+          <p className="policy-text">{policy}</p>
+        </PolicyCard>
       )}
 
       {step === 'service' && (
         <>
-          <h2>Choose a treatment</h2>
-          {info.services.length === 0 && <div className="notice">No treatments are bookable online yet.</div>}
-          {info.services.map((s) => (
-            <button key={s.id} className={`service${serviceId === s.id ? ' on' : ''}`} onClick={() => { setServiceId(s.id); setSlot(null); setStep('time'); }}>
-              <div className="grow">
-                <div style={{ fontWeight: 600 }}>{s.name}</div>
-                <div className="sub">{minutesLabel(s.duration_min)}{s.description ? ` · ${s.description}` : ''}</div>
-              </div>
-              <div className="price">{money(s.price_pence)}</div>
-              <span className="chev"><Icon name="chev" size={18} /></span>
-            </button>
-          ))}
+          <TreatmentMenu hint={info.services.length > 0 ? 'Tap a treatment to see the free times.' : null}>
+            {info.services.length === 0 && <li className="notice">No treatments are bookable online yet.</li>}
+            {info.services.map((s) => (
+              <TreatmentRow key={s.id} name={s.name} durationMin={s.duration_min} pricePence={s.price_pence} description={s.description}
+                on={serviceId === s.id} onClick={() => { setServiceId(s.id); setSlot(null); setStep('time'); }} />
+            ))}
+          </TreatmentMenu>
+          <AddOnsMenu text={info.extras_menu} />
+          <InfoBadges safety={info.safety_note} location={info.location_note} />
+          <BrandFooter {...socials} />
         </>
       )}
 
       {step === 'time' && service && (
         <>
-          <button className="btn ghost small" style={{ alignSelf: 'flex-start' }} onClick={() => setStep('service')}><Icon name="back" size={18} /> {service.name}</button>
-          <h2>Pick a day and time</h2>
+          <ChosenTreatment name={service.name} durationMin={service.duration_min} pricePence={service.price_pence} onChange={() => setStep('service')} />
+          <ScriptTitle className="step-title">Pick a day and time</ScriptTitle>
           <ErrorBox error={busyError} />
           {!busyTimes ? <Spinner /> : daysWithSlots.length === 0 ? (
             <div className="notice">Sorry — there are no free times in the next {info.max_days_ahead} days. Please get in touch directly.</div>
@@ -141,7 +158,9 @@ function BookingFlow({ info }: { info: BookingInfo }) {
             <>
               <SlotPicker days={daysWithSlots} slotsByDay={slotsByDay} day={day} slot={slot} tz={tz}
                 onDay={(d) => { setDay(d); setSlot(null); }} onSlot={setSlot} />
-              <button className="btn primary block" disabled={!slot} onClick={() => setStep('details')}>Continue</button>
+              <StickyAction>
+                <button className="btn primary block" disabled={!slot} onClick={() => setStep('details')}>Continue</button>
+              </StickyAction>
             </>
           )}
         </>
@@ -149,75 +168,85 @@ function BookingFlow({ info }: { info: BookingInfo }) {
 
       {step === 'details' && service && slot && (
         <>
-          <button className="btn ghost small" style={{ alignSelf: 'flex-start' }} onClick={() => setStep('time')}><Icon name="back" size={18} /> Change time</button>
-          <div className="card">
-            <div style={{ fontWeight: 600 }}>{service.name} · {money(service.price_pence)}</div>
-            <div className="sub">{fmtDayLong(slot, tz)} at {fmtTime(slot, tz)} ({minutesLabel(service.duration_min)})</div>
-          </div>
-          <h2>Your details</h2>
-          <Field label="Full name"><input type="text" autoComplete="name" value={details.full_name} maxLength={100} onChange={(e) => setDetails({ ...details, full_name: e.target.value })} /></Field>
-          <Field label="Email" hint="Your confirmation is sent here."><input type="email" autoComplete="email" value={details.email} onChange={(e) => setDetails({ ...details, email: e.target.value })} /></Field>
-          <Field label="Mobile"><input type="tel" autoComplete="tel" value={details.phone} onChange={(e) => setDetails({ ...details, phone: e.target.value })} /></Field>
-          <Field label="Anything to add? (optional)" hint="e.g. colour ideas, or if you need a removal">
-            <textarea value={details.notes} maxLength={1000} onChange={(e) => setDetails({ ...details, notes: e.target.value })} />
-          </Field>
-          <div className="visually-hidden" aria-hidden>
-            <label>Website<input type="text" tabIndex={-1} autoComplete="off" value={website} onChange={(e) => setWebsite(e.target.value)} /></label>
-          </div>
-          <fieldset className="field">
-            <legend style={{ marginBottom: 6 }}>Is this your first visit?</legend>
-            <div className="seg" role="radiogroup" aria-label="Is this your first visit?">
-              <button type="button" role="radio" aria-checked={firstVisit === true} className={firstVisit === true ? 'on' : ''} onClick={() => setFirstVisit(true)}>Yes, first time</button>
-              <button type="button" role="radio" aria-checked={firstVisit === false} className={firstVisit === false ? 'on' : ''} onClick={() => setFirstVisit(false)}>I’ve been before</button>
+          <button className="btn ghost small pub-back" onClick={() => setStep('time')}><Icon name="back" size={18} /> Change time</button>
+          <Ticket iso={slot} tz={tz} kicker="Your appointment" title={service.name} price={money(service.price_pence)}
+            lines={[`${fmtDayLong(slot, tz)} at ${fmtTime(slot, tz)}`, minutesLabel(service.duration_min)]} />
+          <section className="pub-group">
+            <GroupHead icon="user">Your details</GroupHead>
+            <Field label="Full name"><input type="text" autoComplete="name" value={details.full_name} maxLength={100} onChange={(e) => setDetails({ ...details, full_name: e.target.value })} /></Field>
+            <Field label="Email" hint="Your confirmation is sent here."><input type="email" autoComplete="email" value={details.email} onChange={(e) => setDetails({ ...details, email: e.target.value })} /></Field>
+            <Field label="Mobile"><input type="tel" autoComplete="tel" value={details.phone} onChange={(e) => setDetails({ ...details, phone: e.target.value })} /></Field>
+            <Field label="Anything to add? (optional)" hint="e.g. colour ideas, or if you need a removal">
+              <textarea value={details.notes} maxLength={1000} onChange={(e) => setDetails({ ...details, notes: e.target.value })} />
+            </Field>
+            <div className="visually-hidden" aria-hidden>
+              <label>Website<input type="text" tabIndex={-1} autoComplete="off" value={website} onChange={(e) => setWebsite(e.target.value)} /></label>
             </div>
-          </fieldset>
+          </section>
+          <div className="pub-group pub-first">
+            <fieldset className="field">
+              <legend className="group-head"><GroupIcon name="sparkle" /><span>Is this your first visit?</span></legend>
+              <div className="seg" role="radiogroup" aria-label="Is this your first visit?">
+                <button type="button" role="radio" aria-checked={firstVisit === true} className={firstVisit === true ? 'on' : ''} onClick={() => setFirstVisit(true)}>Yes, first time</button>
+                <button type="button" role="radio" aria-checked={firstVisit === false} className={firstVisit === false ? 'on' : ''} onClick={() => setFirstVisit(false)}>I’ve been before</button>
+              </div>
+            </fieldset>
+          </div>
           {firstVisit && (
-            <div className="card stack">
-              <h3>Quick health check</h3>
+            <div className="card stack pub-group pub-health">
+              <GroupHead icon="shield" as="h3">Quick health check</GroupHead>
               <p className="sub">So your treatment is safe for you. Only {info.business_name} sees your answers.</p>
               <ConsultationFields answers={answers} onChange={setAnswers} consent={consent} onConsent={setConsent}
                 signedName={signedName} onSignedName={setSignedName} businessName={info.business_name} />
             </div>
           )}
           {info.deposit_amount_pence > 0 && (
-            <div className="notice">
-              New clients pay a {money(info.deposit_amount_pence)} deposit by bank transfer to secure their appointment. If this applies to you, the bank details are in your confirmation email — please pay within {info.deposit_deadline_hours} hours. The deposit comes off your bill.
-            </div>
+            <section className="pub-group pub-deposit">
+              <GroupHead icon="bank" as="h3">Deposit for new clients</GroupHead>
+              <p>
+                New clients pay a {money(info.deposit_amount_pence)} deposit by bank transfer to secure their appointment. If this applies to you, the bank details are in your confirmation email — please pay within {info.deposit_deadline_hours} hours. The deposit comes off your bill.
+              </p>
+            </section>
           )}
           {policy && (
-            <div className="card policy stack" style={{ gap: 4 }}>
-              <h3>Cancellation policy</h3>
-              <p style={{ whiteSpace: 'pre-wrap' }}>{policy}</p>
-              <label className="check">
+            <PolicyCard titleAs="h3" className="pub-agree">
+              <p className="policy-text">{policy}</p>
+              <label className="check policy-check">
                 <input type="checkbox" checked={policyOk} onChange={(e) => setPolicyOk(e.target.checked)} />
                 <span>I’ve read and agree to the cancellation policy.</span>
               </label>
-            </div>
+            </PolicyCard>
           )}
-          <label className="check">
-            <input type="checkbox" checked={ageOk} onChange={(e) => setAgeOk(e.target.checked)} />
-            <span>I’m 16 or over, or I’m a parent or guardian booking for my child.</span>
-          </label>
+          <div className="pub-group pub-age">
+            <label className="check">
+              <input type="checkbox" checked={ageOk} onChange={(e) => setAgeOk(e.target.checked)} />
+              <span>I’m 16 or over, or I’m a parent or guardian booking for my child.</span>
+            </label>
+          </div>
           <ErrorBox error={error ? new Error(friendlyError(error)) : null} />
-          <button className="btn primary block" disabled={busy} onClick={submit}>{busy ? 'Booking…' : 'Confirm booking'}</button>
+          <button className="btn primary block pub-confirm" disabled={busy} onClick={submit}>
+            {busy ? 'Booking…' : <>Confirm booking <Heart size={18} className="pub-confirm-heart" /></>}
+          </button>
           <p className="sub centre">How your information is used: <Link to="/privacy">privacy notice</Link>.</p>
         </>
       )}
 
       {step === 'done' && result && service && (
-        <div className="stack centre">
-          <svg className="big-tick" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-            <circle cx="12" cy="12" r="10" /><path d="M7 12.5l3.2 3.2L17 9" />
-          </svg>
-          <h2>Booking received — thank you!</h2>
-          <div className="card" style={{ textAlign: 'left' }}>
-            <div style={{ fontWeight: 600 }}>{service.name}</div>
-            <div className="sub">{fmtDayLong(result.starts_at, tz)} at {fmtTime(result.starts_at, tz)}</div>
-            <div className="sub">Reference <b className="mono">{result.reference}</b></div>
-          </div>
-          <p>A confirmation is on its way to <b>{details.email.trim()}</b> (check your junk folder). {info.deposit_amount_pence > 0 && 'If you’re a new client, it has the bank details for your deposit — use your reference so it can be matched.'}</p>
-          <p className="sub">Need to change or cancel? Use the link in your confirmation email.</p>
-          <button className="btn" onClick={() => window.location.reload()}>Book another appointment</button>
+        <div className="stack pub-done">
+          <Celebration />
+          <h2 className="pub-done-title">Booking received — thank you!</h2>
+          <Ticket iso={result.starts_at} tz={tz} kicker="Your appointment" title={service.name} price={money(service.price_pence)}
+            lines={[`${fmtDayLong(result.starts_at, tz)} at ${fmtTime(result.starts_at, tz)}`, minutesLabel(service.duration_min)]}
+            stub={<RefStub reference={result.reference} />} />
+          <ul className="pub-next" role="list">
+            <li><GroupIcon name="mail" /><span>A confirmation is on its way to <b>{details.email.trim()}</b> (check your junk folder).</span></li>
+            {info.deposit_amount_pence > 0 && (
+              <li><GroupIcon name="bank" /><span>If you’re a new client, it has the bank details for your deposit — use your reference so it can be matched.</span></li>
+            )}
+            <li><GroupIcon name="calendar" /><span>Need to change or cancel? Use the link in your confirmation email.</span></li>
+          </ul>
+          <button className="btn block" onClick={() => window.location.reload()}>Book another appointment</button>
+          <BrandFooter {...socials} />
         </div>
       )}
     </div>

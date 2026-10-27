@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api } from '../../api';
 import { ApptRow } from '../../components/appts';
+import { BrandIcon } from '../../components/brand';
 import { useOwner } from '../../components/owner';
 import { ErrorBox, Field, Icon, Seg, Sheet, Spinner, TopBar, useAction, useLoad, useToast } from '../../components/ui';
 import { addDays, dateInZone, fmt, fmtDayLong, fmtTime, isoWeekday, startOfDayInstant, startOfWeek, todayInZone, zonedToInstant } from '../../lib/time';
@@ -32,47 +33,69 @@ export function Diary() {
   const hours = data?.hours.find((h) => h.weekday === isoWeekday(day));
   const countFor = (d: string) => (data?.appts ?? []).filter((a) => a.status !== 'cancelled' && dateInZone(a.starts_at, tz) === d).length;
 
+  // Blocked time and appointments in one line-up, in time order, so the rail reads down the day.
+  const items = [
+    ...off.map((t) => ({ at: t.starts_at <= dayStart ? '' : t.starts_at, off: t, a: null })),
+    ...active.map((a) => ({ at: a.starts_at, off: null, a })),
+  ].sort((x, y) => x.at.localeCompare(y.at));
+  const dots = (n: number) => Array.from({ length: Math.min(n, 4) }, (_, i) => <i key={i} />);
+
   return (
-    <div className="page">
+    <div className="page dy-page">
       <TopBar title="Diary" right={<>
-        <button className="btn small" onClick={() => setBlocking(true)}>Block time</button>
+        <button className="btn small dy-block" onClick={() => setBlocking(true)}>Block time</button>
         <Link className="icon-btn" to={`/appointments/new?d=${day}`} aria-label="New appointment"><Icon name="plus" /></Link>
       </>} />
-      <div className="row spread" style={{ marginBottom: 8 }}>
-        <button className="icon-btn" aria-label="Previous week" onClick={() => pick(addDays(week, -7))}><Icon name="left" /></button>
-        <button className="btn ghost small" onClick={() => pick(today)}>{fmt(week + 'T12:00:00Z', 'MMMM yyyy', tz)} · Today</button>
-        <button className="icon-btn" aria-label="Next week" onClick={() => pick(addDays(week, 7))}><Icon name="right" /></button>
+      <div className="dy-month">
+        <div className="dy-month-name">{fmt(week + 'T12:00:00Z', 'MMMM', tz)} <span>{fmt(week + 'T12:00:00Z', 'yyyy', tz)}</span></div>
+        <div className="dy-nav">
+          <button className="icon-btn" aria-label="Previous week" onClick={() => pick(addDays(week, -7))}><Icon name="left" size={20} /></button>
+          <button className={`dy-today${day === today ? ' is-here' : ''}`} onClick={() => pick(today)}>Today</button>
+          <button className="icon-btn" aria-label="Next week" onClick={() => pick(addDays(week, 7))}><Icon name="right" size={20} /></button>
+        </div>
       </div>
-      <div className="date-strip" style={{ justifyContent: 'space-between' }}>
+      <div className="date-strip dy-strip">
         {Array.from({ length: 7 }, (_, i) => addDays(week, i)).map((d) => {
           const n = countFor(d);
           return (
-            <button key={d} className={`date-pill${d === day ? ' on' : ''}${d === today ? ' today' : ''}`} style={{ width: 'auto', flex: '1 0 44px' }}
+            <button key={d} className={`date-pill dy-pill${d === day ? ' on' : ''}${d === today ? ' today' : ''}`}
               onClick={() => pick(d)} aria-label={`${fmtDayLong(d + 'T12:00:00Z', tz)}, ${n} appointments`}>
               <div className="dow">{fmt(d + 'T12:00:00Z', 'EEEEE', tz)}</div>
               <div className="dom">{Number(d.slice(8))}</div>
-              <div className="mon">{n ? '•'.repeat(Math.min(n, 4)) : ' '}</div>
+              <div className="dy-dots">{dots(n)}</div>
             </button>
           );
         })}
       </div>
-      <div className="day-head">
+      <div className="day-head dy-day-head">
         <h2>{fmtDayLong(day + 'T12:00:00Z', tz)}</h2>
-        <span className="sub">{hours?.is_open ? `Open ${hours.open_time}–${hours.close_time}` : 'Closed'}</span>
+        <span className={`dy-hours${hours?.is_open ? '' : ' is-closed'}`}>
+          <BrandIcon name="clock" size={15} />{hours?.is_open ? `Open ${hours.open_time}–${hours.close_time}` : 'Closed'}
+        </span>
       </div>
       <ErrorBox error={error} />
       {loading && !data ? <Spinner /> : (
-        <div className="card tight">
-          {off.length === 0 && active.length === 0 ? <div className="empty">Nothing booked.</div> : (
+        <div className="card tight dy-day">
+          {items.length === 0 ? <div className="empty">Nothing booked.</div> : (
             <ul className="list">
-              {off.map((t) => (
-                <li key={t.id} className="list-row timeoff-row">
-                  <div className="time-col">{t.starts_at <= dayStart ? 'All' : fmtTime(t.starts_at, tz)}<small>{t.ends_at >= dayEnd ? 'day' : `to ${fmtTime(t.ends_at, tz)}`}</small></div>
-                  <div className="grow"><div className="title">Blocked</div><div className="meta">{t.note || 'Time off'}</div></div>
-                  <Link className="btn small" to="/settings/time-off">Edit</Link>
+              {items.map(({ off: t, a }) => t ? (
+                <li key={t.id} className="appt-li">
+                  <div className="list-row appt-row is-off timeoff-row">
+                    <div className="appt-time">
+                      {t.starts_at <= dayStart
+                        ? <span className="appt-clock is-word">{t.ends_at >= dayEnd ? 'All day' : 'Until'}</span>
+                        : <span className="appt-clock">{fmtTime(t.starts_at, tz)}</span>}
+                      {!(t.starts_at <= dayStart && t.ends_at >= dayEnd) && (
+                        <small>{t.starts_at <= dayStart ? fmtTime(t.ends_at, tz) : t.ends_at >= dayEnd ? 'onwards' : `to ${fmtTime(t.ends_at, tz)}`}</small>
+                      )}
+                    </div>
+                    <span className="appt-dot" aria-hidden="true" />
+                    <div className="title appt-name">Blocked</div>
+                    <div className="meta appt-meta">{t.note || 'Time off'}</div>
+                    <div className="appt-chips"><Link className="btn small dy-edit" to="/settings/time-off">Edit</Link></div>
+                  </div>
                 </li>
-              ))}
-              {active.map((a) => <ApptRow key={a.id} a={a} tz={tz} />)}
+              ) : a && <ApptRow key={a.id} a={a} tz={tz} />)}
             </ul>
           )}
         </div>
@@ -80,7 +103,7 @@ export function Diary() {
       {cancelled.length > 0 && (
         <>
           <div className="section-title">Cancelled</div>
-          <div className="card tight"><ul className="list">{cancelled.map((a) => <ApptRow key={a.id} a={a} tz={tz} />)}</ul></div>
+          <div className="card tight dy-cancelled"><ul className="list">{cancelled.map((a) => <ApptRow key={a.id} a={a} tz={tz} />)}</ul></div>
         </>
       )}
       {blocking && <BlockTimeSheet day={day} tz={tz} onClose={() => setBlocking(false)} onSaved={() => { setBlocking(false); reload(); }} />}
@@ -110,7 +133,8 @@ export function BlockTimeSheet({ day, tz, onClose, onSaved }: { day: string; tz:
 
   return (
     <Sheet title="Block time" onClose={onClose}>
-      <div className="stack">
+      <div className="stack dy-sheet">
+        <p className="dy-sheet-intro">Holidays, training or a long lunch: clients can’t book blocked time online.</p>
         <Seg label="Length" value={kind} onChange={setKind} options={[{ value: 'day', label: 'Whole days' }, { value: 'hours', label: 'Part of a day' }]} />
         {kind === 'day' ? (
           <div className="row">

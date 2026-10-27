@@ -6,8 +6,9 @@ import { useOwner } from '../../components/owner';
 import { ErrorBox, Field, Icon, LateChip, Seg, Sheet, Spinner, StatusChip, TopBar, useAction, useLoad, useToast } from '../../components/ui';
 import { lateCharge, lateChargePayments } from '../../lib/reminders';
 import { availableSlots } from '../../lib/slots';
-import { addDays, dateInZone, fmtDay, fmtDayLong, fmtDayTime, fmtTime, minutesLabel, startOfDayInstant, todayInZone, zonedToInstant } from '../../lib/time';
+import { addDays, dateInZone, fmt, fmtDay, fmtDayLong, fmtDayTime, fmtTime, minutesLabel, startOfDayInstant, todayInZone, zonedToInstant } from '../../lib/time';
 import { fillTemplate, firstName, freeChangeDeadline, lateFromEarlierChange, manageLink, money, noticeLabel, parsePounds, whatsappLink } from '../../lib/text';
+import { Glyph } from './Clients';
 import type { Appointment, CancelledBy, ClientChange, EmailKind, PayMethod, Settings } from '../../lib/types';
 
 const EMAIL_LABEL: Record<EmailKind, string> = {
@@ -117,44 +118,57 @@ export function AppointmentView() {
   }
 
   return (
-    <div className="page stack">
+    <div className="page stack od od-appt">
       <TopBar title={a.client?.full_name ?? 'Appointment'} back />
 
-      <div className="card stack">
-        <div className="row spread">
-          <div>
-            <div style={{ fontWeight: 700, fontSize: '1.1rem' }}>{a.service_name}</div>
-            <div className="sub">{fmtDayLong(a.starts_at, tz)} · {fmtTime(a.starts_at, tz)}–{fmtTime(a.ends_at, tz)} ({minutesLabel(a.duration_min)})</div>
+      <div className={`card od-hero od-hero-${a.status}`}>
+        <div className="od-hero-main">
+          <DateTile iso={a.starts_at} tz={tz} />
+          <div className="od-hero-info">
+            <div className="od-hero-chips"><StatusChip status={a.status} /></div>
+            <div className="od-hero-service">{a.service_name}</div>
+            <div className="od-when">
+              <span className="od-when-day">{fmtDayLong(a.starts_at, tz)}</span>
+              <span className="visually-hidden"> · </span>
+              <span className="od-when-line">
+                <span className="od-when-time">{fmtTime(a.starts_at, tz)}–{fmtTime(a.ends_at, tz)}</span>{' '}
+                <span className="od-when-dur">{minutesLabel(a.duration_min)}</span>
+              </span>
+            </div>
           </div>
-          <StatusChip status={a.status} />
         </div>
         {a.status === 'cancelled' && (
-          <div className="notice">
-            <b>{a.cancelled_by ? CANCELLED_BY[a.cancelled_by] : 'Cancelled'}</b>{a.cancelled_at && ` · ${fmtDayTime(a.cancelled_at, tz)}`}
-            {a.cancel_reason && a.cancelled_by !== 'system' && <div>{a.cancelled_by === 'client' ? 'Their reason' : 'Reason'}: “{a.cancel_reason}”</div>}
+          <div className="od-cancelled">
+            <span className="od-cancelled-ic" aria-hidden="true" />
+            <div className="grow">
+              <b>{a.cancelled_by ? CANCELLED_BY[a.cancelled_by] : 'Cancelled'}</b>{a.cancelled_at && ` · ${fmtDayTime(a.cancelled_at, tz)}`}
+              {a.cancel_reason && a.cancelled_by !== 'system' && <div>{a.cancelled_by === 'client' ? 'Their reason' : 'Reason'}: “{a.cancel_reason}”</div>}
+            </div>
           </div>
         )}
-        <dl className="kv">
-          <dt>Price</dt><dd>{money(a.price_pence)}</dd>
-          <dt>Reference</dt><dd className="mono">{a.reference}</dd>
-          <dt>Booked</dt><dd>{a.source === 'online' ? 'Online' : 'By you'} · {fmtDayTime(a.created_at, tz)}</dd>
-          {a.is_new_client && <><dt>Client</dt><dd>New client{a.has_form ? ' · form on file' : <span className="flag"> · no consultation form</span>}</dd></>}
-          {a.deposit_required_pence > 0 && <>
-            <dt>Deposit</dt>
-            <dd>{money(a.deposit_required_pence)} · {a.deposit_paid_at ? `received ${fmtDayTime(a.deposit_paid_at, tz)}` : a.deposit_due_at ? <span className={overdue ? 'flag' : ''}>due by {fmtDayTime(a.deposit_due_at, tz)}{overdue ? ' (overdue)' : ''}</span> : 'not received'}</dd>
-          </>}
+        <dl className="od-receipt">
+          <div><dt>Price</dt><dd className="od-price">{money(a.price_pence)}</dd></div>
+          <div><dt>Reference</dt><dd className="mono od-ref">{a.reference}</dd></div>
+          <div><dt>Booked</dt><dd>{a.source === 'online' ? 'Online' : 'By you'} · {fmtDayTime(a.created_at, tz)}</dd></div>
+          {a.is_new_client && <div><dt>Client</dt><dd>New client{a.has_form ? ' · form on file' : <span className="flag"> · no consultation form</span>}</dd></div>}
+          {a.deposit_required_pence > 0 && (
+            <div>
+              <dt>Deposit</dt>
+              <dd>{money(a.deposit_required_pence)} · {a.deposit_paid_at ? `received ${fmtDayTime(a.deposit_paid_at, tz)}` : a.deposit_due_at ? <span className={overdue ? 'flag' : ''}>due by {fmtDayTime(a.deposit_due_at, tz)}{overdue ? ' (overdue)' : ''}</span> : 'not received'}</dd>
+            </div>
+          )}
         </dl>
-        {a.client_notes && <div className="notice"><b>Client’s note:</b> {a.client_notes}</div>}
+        {a.client_notes && <div className="od-quote"><b>Client’s note:</b> {a.client_notes}</div>}
         {a.cancellation_policy_agreed && (
-          <details>
-            <summary className="sub">✓ Agreed to your cancellation policy when booking</summary>
+          <details className="od-agreed">
+            <summary className="sub">Agreed to your cancellation policy when booking</summary>
             <p className="sub" style={{ whiteSpace: 'pre-wrap' }}>{a.cancellation_policy_agreed}</p>
           </details>
         )}
       </div>
 
       {checkPhone && a.client && (
-        <div className="notice warn stack" role="note" aria-label="Check their mobile">
+        <div className="notice warn stack od-check-phone" role="note" aria-label="Check their mobile">
           <div>
             {a.client.phone
               ? <>The mobile given with this booking ({a.booking_phone}) is different from {a.client.phone} on their client record.</>
@@ -169,17 +183,20 @@ export function AppointmentView() {
       )}
 
       {a.client && (
-        <div className="btn-row">
+        <div className="od-contact">
           {phone && !lateId && (live && !checkPhone ? <WhatsAppButton a={a} s={s} label="WhatsApp" />
             : <a className="btn wa" href={whatsappLink(phone, `Hi ${first}, `)} target="_blank" rel="noreferrer"><Icon name="whatsapp" size={20} /> WhatsApp</a>)}
           {a.client.phone && <a className="btn" href={`tel:${a.client.phone.replace(/\s/g, '')}`}><Icon name="phone" size={20} /> Call</a>}
-          <Link className="btn" to={`/clients/${a.client.id}`}>Client record</Link>
+          <Link className="btn" to={`/clients/${a.client.id}`}><Glyph name="user" size={20} /> Client record</Link>
         </div>
       )}
 
       {lateId && (
-        <div className="card stack attention">
-          <h3>Late cancellation</h3>
+        <div className="card stack attention od-panel">
+          <div className="od-panel-head">
+            <span className="od-ic lemon" aria-hidden="true"><Glyph name="alert" /></span>
+            <h3>Late cancellation</h3>
+          </div>
           <p style={{ margin: 0 }}>
             {lateFromChange ? `They changed this booking with less than ${noticeLabel(s.cancel_notice_hours)} earlier, so this cancellation counts as late.`
               : s.cancel_notice_hours > 0 ? `Cancelled with less than ${noticeLabel(s.cancel_notice_hours)}.` : 'Cancelled at short notice.'}{' '}
@@ -190,9 +207,9 @@ export function AppointmentView() {
           )}
           {charge.deposit > 0 && <p className="sub" style={{ margin: 0 }}>They’ve already paid a {money(charge.deposit)} deposit, so the balance is {money(Math.max(0, charge.fee - charge.deposit))}.</p>}
           {(lateReceived ?? []).map((p) => (
-            <div key={p.id} className="notice">✓ Payment recorded: {money(p.amount_pence)} by {METHOD_LABEL[p.method]}, {fmtDay(`${p.paid_on}T12:00:00Z`, tz)}</div>
+            <div key={p.id} className="od-paid">Payment recorded: {money(p.amount_pence)} by {METHOD_LABEL[p.method]}, {fmtDay(`${p.paid_on}T12:00:00Z`, tz)}</div>
           ))}
-          {owing && charge.received > 0 && <p className="sub" style={{ margin: 0 }}>Still owed: {money(charge.owed)}.</p>}
+          {owing && charge.received > 0 && <p className="od-owed" style={{ margin: 0 }}>Still owed: {money(charge.owed)}.</p>}
           {owing && phone && !checkPhone && (
             <a className="btn wa block" href={whatsappLink(phone, lateChargeMessage(a, s, charge))} target="_blank" rel="noreferrer">
               <Icon name="whatsapp" size={20} /> WhatsApp {first}
@@ -203,18 +220,39 @@ export function AppointmentView() {
       )}
 
       {a.status === 'pending_deposit' && (
-        <div className="card stack attention">
-          <h3>Waiting for the {money(a.deposit_required_pence)} deposit</h3>
-          <p className="sub">When the money shows in your bank (reference <b className="mono">{a.reference}</b>), mark it received. The client gets an email saying they’re confirmed.</p>
+        <div className="card stack attention od-panel">
+          <div className="od-panel-head">
+            <span className="od-ic lemon" aria-hidden="true"><Glyph name="clock" /></span>
+            <h3>Waiting for the {money(a.deposit_required_pence)} deposit</h3>
+          </div>
+          <p className="sub">When the money shows in your bank (reference <b className="mono od-ref-pill">{a.reference}</b>), mark it received. The client gets an email saying they’re confirmed.</p>
           <button className="btn ok block" onClick={() => setSheet('deposit')}><Icon name="tick" size={20} /> Deposit received</button>
           {checkPhone && phone && <p className="sub" style={{ margin: 0 }}>Check their mobile above before you ask on WhatsApp.</p>}
           {phone && !checkPhone && <WhatsAppButton a={a} s={s} kind="deposit" label="Ask for the deposit on WhatsApp" />}
         </div>
       )}
 
+      {live && (
+        <div className="od-actions">
+          {started && (
+            <button className="btn primary block od-finish" onClick={() => setSheet('checkout')}>
+              <Glyph name="receipt" size={21} /> Finish &amp; take payment
+            </button>
+          )}
+          <div className="od-actions-row">
+            <button className="btn" onClick={() => setSheet('move')}>Change time</button>
+            {started && <button className="btn" onClick={noShow}>No-show</button>}
+            <button className="btn danger" onClick={() => setSheet('cancel')}>Cancel</button>
+          </div>
+        </div>
+      )}
+
       {live && !a.has_form && (
-        <div className="card stack">
-          <h3>Consultation form</h3>
+        <div className="card stack od-tool">
+          <div className="od-panel-head">
+            <span className="od-ic" aria-hidden="true"><Glyph name="doc" /></span>
+            <h3>Consultation form</h3>
+          </div>
           <p className="sub">{a.is_new_client ? 'This new client hasn’t filled in the health and allergy form yet.' : 'No health and allergy form on file for this client. Send them the link to fill one in.'}</p>
           {checkPhone && phone && <p className="sub" style={{ margin: 0 }}>Check their mobile above before you send this link.</p>}
           <div className="btn-row">
@@ -229,22 +267,14 @@ export function AppointmentView() {
         </div>
       )}
 
-      {live && (
-        <div className="stack">
-          {started && <button className="btn primary block" onClick={() => setSheet('checkout')}>Finish &amp; take payment</button>}
-          <div className="btn-row">
-            <button className="btn" onClick={() => setSheet('move')}>Change time</button>
-            {started && <button className="btn" onClick={noShow}>No-show</button>}
-            <button className="btn danger" onClick={() => setSheet('cancel')}>Cancel</button>
-          </div>
-        </div>
-      )}
-
       {live && s.client_self_service && (
-        <div className="card stack">
-          <h3>Change or cancel link</h3>
+        <div className="card stack od-tool">
+          <div className="od-panel-head">
+            <span className="od-ic" aria-hidden="true"><Icon name="link" size={20} /></span>
+            <h3>Change or cancel link</h3>
+          </div>
           <p className="sub">Lets {first} change or cancel this booking themselves.</p>
-          <div className="mono" style={{ overflowWrap: 'anywhere', fontSize: '0.9rem' }}>{changeUrl}</div>
+          <div className="mono od-url">{changeUrl}</div>
           {checkPhone && phone && <p className="sub" style={{ margin: 0 }}>Check their mobile above before you send this link.</p>}
           <div className="btn-row">
             {phone && !checkPhone && (
@@ -262,24 +292,27 @@ export function AppointmentView() {
       {changes && changes.length > 0 && (
         <>
           <div className="section-title">Changes made by the client</div>
-          <div className="card tight"><ul className="list">
+          <div className="card od-timeline"><ul>
             {changes.map((c) => (
-              <li key={c.id} className="list-row" style={{ alignItems: 'flex-start' }}>
+              <li key={c.id} className={`od-tl-item${c.action === 'cancelled' ? ' od-tl-cancelled' : ''}`}>
+                <span className="od-tl-dot" aria-hidden="true" />
                 <div className="grow">
-                  <div className="title">{CHANGE_LABEL[c.action]}</div>
-                  {changeLines(c, tz).map((line) => <div key={line} className="meta">{line}</div>)}
-                  {c.note && <div className="meta">“{c.note}”</div>}
-                  <div className="meta">On {fmtDayTime(c.changed_at, tz)}</div>
+                  <div className="od-tl-head"><span className="title">{CHANGE_LABEL[c.action]}</span>{c.late && <LateChip />}</div>
+                  {changeLines(c, tz).map((line) => <div key={line} className="od-tl-line">{line}</div>)}
+                  {c.note && <div className="od-tl-note">“{c.note}”</div>}
+                  <div className="od-tl-when">On {fmtDayTime(c.changed_at, tz)}</div>
                 </div>
-                {c.late && <LateChip />}
               </li>
             ))}
           </ul></div>
         </>
       )}
 
-      <div className="card stack">
-        <h3>Your notes</h3>
+      <div className="card stack od-notes">
+        <div className="od-panel-head">
+          <span className="od-ic" aria-hidden="true"><Glyph name="pencil" /></span>
+          <h3>Your notes</h3>
+        </div>
         <textarea value={notes ?? a.owner_notes ?? ''} maxLength={2000} placeholder="Colour, shape, anything to remember…"
           onChange={(e) => setNotes(e.target.value)} />
         {notes !== null && <button className="btn primary" disabled={act.busy} onClick={saveNotes}>Save notes</button>}
@@ -288,21 +321,24 @@ export function AppointmentView() {
       <ErrorBox error={act.error} />
 
       <div className="section-title">Emails</div>
-      <div className="card tight">
+      <div className="card tight od-emails">
         {emails && emails.length ? (
           <ul className="list">
-            {emails.map((e) => (
-              <li key={e.id} className="list-row">
-                <Icon name="mail" size={20} />
-                <div className="grow">
-                  <div className="title">{EMAIL_LABEL[e.kind]}</div>
-                  <div className="meta">
-                    {e.status === 'sent' ? `Sent ${e.sent_at ? fmtDayTime(e.sent_at, tz) : ''}` : e.status === 'pending' || e.status === 'sending' ? 'Waiting to send' : e.status === 'skipped' ? 'Not needed' : 'Failed'}
-                    {e.last_error ? ` · ${e.last_error}` : ''}
+            {emails.map((e) => {
+              const state = e.status === 'sent' ? 'sent' : e.status === 'pending' || e.status === 'sending' ? 'waiting' : e.status === 'skipped' ? 'skipped' : 'failed';
+              return (
+                <li key={e.id} className={`list-row od-email od-email-${state}`}>
+                  <span className="od-ic small" aria-hidden="true"><Icon name="mail" size={18} /></span>
+                  <div className="grow">
+                    <div className="title">{EMAIL_LABEL[e.kind]}</div>
+                    <div className="meta">
+                      {e.status === 'sent' ? `Sent ${e.sent_at ? fmtDayTime(e.sent_at, tz) : ''}` : e.status === 'pending' || e.status === 'sending' ? 'Waiting to send' : e.status === 'skipped' ? 'Not needed' : 'Failed'}
+                      {e.last_error ? ` · ${e.last_error}` : ''}
+                    </div>
                   </div>
-                </div>
-              </li>
-            ))}
+                </li>
+              );
+            })}
           </ul>
         ) : <div className="empty">{a.client?.email ? 'No emails yet.' : 'No email address saved for this client.'}</div>}
       </div>
@@ -316,6 +352,17 @@ export function AppointmentView() {
         <LatePaymentSheet a={a} tz={tz} amount={charge.owed} onClose={() => setSheet(null)}
           onDone={() => { toast('Payment recorded'); setSheet(null); reloadLate(); }} />
       )}
+    </div>
+  );
+}
+
+/** A little calendar page: month on a pink band, the day, the weekday. Decorative; the date is spelled out beside it. */
+function DateTile({ iso, tz }: { iso: string; tz: string }) {
+  return (
+    <div className="od-datetile" aria-hidden="true">
+      <span className="od-dt-mon">{fmt(iso, 'MMM', tz)}</span>
+      <span className="od-dt-day">{fmt(iso, 'd', tz)}</span>
+      <span className="od-dt-dow">{fmt(iso, 'EEE', tz)}</span>
     </div>
   );
 }
@@ -380,7 +427,7 @@ function DepositSheet({ a, onClose, onDone }: { a: Appointment; onClose: () => v
     <Sheet title={`Deposit received · ${money(a.deposit_required_pence)}`} onClose={onClose}>
       <div className="stack">
         <MethodPicker value={method} onChange={setMethod} />
-        <p className="sub">This records {money(a.deposit_required_pence)} in your takings, confirms the booking and emails the client.</p>
+        <p className="sub od-sheet-note">This records {money(a.deposit_required_pence)} in your takings, confirms the booking and emails the client.</p>
         <ErrorBox error={error} />
         <button className="btn ok block" disabled={busy} onClick={async () => { if (await run(() => api.markDepositPaid(a.id, method))) onDone(); }}>
           {busy ? 'Saving…' : 'Confirm deposit received'}
@@ -406,9 +453,17 @@ function CheckoutSheet({ a, onClose, onDone }: { a: Appointment; onClose: () => 
   return (
     <Sheet title="Finish & take payment" onClose={onClose}>
       <div className="stack">
-        {depositPaid > 0 && <div className="notice">{money(depositPaid)} deposit already paid — the balance is {money(Math.max(0, a.price_pence - depositPaid))}.</div>}
-        <Field label="Amount paid today (£)"><input type="text" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} /></Field>
-        <Field label="Tip (£)" hint="Optional"><input type="text" inputMode="decimal" value={tip} placeholder="0" onChange={(e) => setTip(e.target.value)} /></Field>
+        <dl className="od-receipt od-receipt-sheet">
+          <div><dt>{a.service_name}</dt><dd>{money(a.price_pence)}</dd></div>
+          {depositPaid > 0 && <>
+            <div><dt>Deposit already paid</dt><dd>−{money(depositPaid)}</dd></div>
+            <div className="od-receipt-total"><dt>Balance</dt><dd className="od-price">{money(Math.max(0, a.price_pence - depositPaid))}</dd></div>
+          </>}
+        </dl>
+        <div className="stack od-amounts">
+          <div className="od-amount"><Field label="Amount paid today (£)"><input type="text" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} /></Field></div>
+          <div className="od-amount od-amount-tip"><Field label="Tip (£)" hint="Optional"><input type="text" inputMode="decimal" value={tip} placeholder="0" onChange={(e) => setTip(e.target.value)} /></Field></div>
+        </div>
         <MethodPicker value={method} onChange={setMethod} />
         <Field label="Note" hint="Optional — e.g. extra nail art"><input type="text" value={note} maxLength={500} onChange={(e) => setNote(e.target.value)} /></Field>
         <ErrorBox error={error} />
@@ -436,7 +491,7 @@ function LatePaymentSheet({ a, tz, amount: owed, onClose, onDone }: { a: Appoint
     <Sheet title="Record payment received" onClose={onClose}>
       <div className="stack">
         <p className="sub">For the late cancellation of {a.service_name}. It’s added to your takings in Money.</p>
-        <Field label="Amount received (£)"><input type="text" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} /></Field>
+        <div className="od-amount"><Field label="Amount received (£)"><input type="text" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} /></Field></div>
         <MethodPicker value={method} onChange={setMethod} />
         <ErrorBox error={error} />
         <button className="btn ok block" disabled={busy} onClick={save}>{busy ? 'Saving…' : 'Save'}</button>

@@ -3,6 +3,7 @@ import { NavLink, Outlet } from 'react-router-dom';
 import { api } from '../api';
 import type { Session, Settings } from '../lib/types';
 import { Icon, Spinner } from './ui';
+import { Sprig } from './brand';
 import { Login } from '../pages/admin/Login';
 
 interface OwnerCtx {
@@ -68,21 +69,22 @@ export function OwnerGate({ children }: { children: ReactNode }) {
   if (state.kind === 'signed-out') return <Login />;
   if (state.kind === 'error') {
     return (
-      <div className="page stack">
-        <h1>Can’t open the diary</h1>
-        <p className="sub">{state.error instanceof Error ? state.error.message : String(state.error)}</p>
-        <button className="btn primary" onClick={() => window.location.reload()}>Try again</button>
-        <button className="btn" onClick={() => api.signOut()}>Sign out</button>
-      </div>
+      <GateScreen icon="alert" title="Can’t open the diary"
+        actions={<>
+          <button className="btn primary block" onClick={() => window.location.reload()}>Try again</button>
+          <button className="btn block" onClick={() => api.signOut()}>Sign out</button>
+        </>}>
+        <p className="gate-text">{state.error instanceof Error ? state.error.message : String(state.error)}</p>
+        <p className="gate-note">If it keeps happening, sign out and sign in again.</p>
+      </GateScreen>
     );
   }
   if (state.kind === 'not-owner') {
     return (
-      <div className="page stack">
-        <h1>This diary already has an owner</h1>
-        <p>You’re signed in as {state.session.email}, but this app belongs to another account. Only the owner can see bookings and client records.</p>
-        <button className="btn primary" onClick={() => api.signOut()}>Sign out</button>
-      </div>
+      <GateScreen icon="lock" title="This diary already has an owner"
+        actions={<button className="btn primary block" onClick={() => api.signOut()}>Sign out</button>}>
+        <p className="gate-text">You’re signed in as <b>{state.session.email}</b>, but this app belongs to another account. Only the owner can see bookings and client records.</p>
+      </GateScreen>
     );
   }
   const value: OwnerCtx = {
@@ -95,6 +97,27 @@ export function OwnerGate({ children }: { children: ReactNode }) {
     },
   };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
+}
+
+/** The full-screen message for a signed-in account that can't use the diary: a soft card with a lemon sprig. */
+function GateScreen({ icon, title, actions, children }: { icon: 'alert' | 'lock'; title: string; actions: ReactNode; children: ReactNode }) {
+  return (
+    <div className="page gate-page">
+      <div className="card gate-card">
+        <Sprig corner="tr" size={118} className="gate-sprig" />
+        <span className="gate-ico" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width={28} height={28} fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+            {icon === 'lock'
+              ? <><rect x="5" y="10.5" width="14" height="10" rx="2.5" /><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5" /><path d="M12 14.5v2.5" /></>
+              : <><circle cx="12" cy="12" r="8.6" /><path d="M12 7.6v5.6M12 16.4v.1" /></>}
+          </svg>
+        </span>
+        <h1>{title}</h1>
+        {children}
+        <div className="gate-actions">{actions}</div>
+      </div>
+    </div>
+  );
 }
 
 const TABS = [
@@ -114,7 +137,7 @@ export function AdminLayout() {
         {TABS.map((t) => (
           <NavLink key={t.to} to={t.to} end={t.end} className={({ isActive }) => (isActive ? 'active' : '')}>
             <Icon name={t.icon} />
-            {t.label}
+            <span className="tab-label">{t.label}</span>
           </NavLink>
         ))}
       </nav>

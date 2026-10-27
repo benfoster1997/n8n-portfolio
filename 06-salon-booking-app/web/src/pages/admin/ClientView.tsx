@@ -6,10 +6,11 @@ import { useOwner } from '../../components/owner';
 import { ErrorBox, Field, Icon, Seg, Sheet, Spinner, TopBar, useAction, useLoad, useToast } from '../../components/ui';
 import { describeAnswers } from '../../lib/consultation';
 import { shrinkImage } from '../../lib/image';
-import { fmtDay, fmtDayTime, todayInZone } from '../../lib/time';
+import { fmt, fmtDay, fmtDayTime, todayInZone } from '../../lib/time';
 import { firstName, friendlyError, money, whatsappLink } from '../../lib/text';
 import type { ClientPhoto, ConsultationForm, PatchTest } from '../../lib/types';
-import { ClientSheet } from './Clients';
+import { Avatar, ClientSheet, Glyph } from './Clients';
+import { BrandIcon } from '../../components/brand';
 
 export function ClientView() {
   const { id = '' } = useParams();
@@ -62,25 +63,44 @@ export function ClientView() {
   }
 
   return (
-    <div className="page stack">
+    <div className="page stack od od-client">
       <TopBar title={c.full_name} back="/clients" right={<button className="btn small" onClick={() => setSheet('edit')}>Edit</button>} />
 
-      <div className="card">
-        <dl className="kv">
-          <dt>Mobile</dt><dd>{c.phone || '—'}</dd>
-          <dt>Email</dt><dd>{c.email || '—'}</dd>
-          <dt>Visits</dt><dd>{visits}{spent ? ` · ${money(spent)} total` : ''}</dd>
-          <dt>Client since</dt><dd>{fmtDay(c.created_at, tz)}</dd>
+      <div className="card od-profile">
+        <div className="od-profile-top">
+          <Avatar name={c.full_name} size="lg" />
+          <dl className="od-profile-contact">
+            <div><dt>Mobile</dt><dd>{c.phone || '—'}</dd></div>
+            <div><dt>Email</dt><dd>{c.email || '—'}</dd></div>
+          </dl>
+        </div>
+        <dl className="od-mini-stats">
+          <div><dt>Visits</dt><dd>{visits}</dd></div>
+          <div><dt>Spent</dt><dd>{money(spent)}</dd></div>
+          <div><dt>Client since</dt><dd>{fmtDay(c.created_at, tz)}</dd></div>
         </dl>
+        {(c.phone_e164 || c.phone || c.email) && (
+          <div className="od-contact">
+            {c.phone_e164 && <a className="btn wa" href={whatsappLink(c.phone_e164, `Hi ${firstName(c.full_name)}, `)} target="_blank" rel="noreferrer"><Icon name="whatsapp" size={20} /> WhatsApp</a>}
+            {c.phone && <a className="btn" href={`tel:${c.phone.replace(/\s/g, '')}`}><Icon name="phone" size={20} /> Call</a>}
+            {c.email && <a className="btn" href={`mailto:${c.email}`}><Icon name="mail" size={20} /> Email</a>}
+          </div>
+        )}
       </div>
-      <div className="btn-row">
-        {c.phone_e164 && <a className="btn wa" href={whatsappLink(c.phone_e164, `Hi ${firstName(c.full_name)}, `)} target="_blank" rel="noreferrer"><Icon name="whatsapp" size={20} /> WhatsApp</a>}
-        {c.phone && <a className="btn" href={`tel:${c.phone.replace(/\s/g, '')}`}><Icon name="phone" size={20} /> Call</a>}
-        {c.email && <a className="btn" href={`mailto:${c.email}`}><Icon name="mail" size={20} /> Email</a>}
-      </div>
-      <Link className="btn primary block" to={`/appointments/new?client=${c.id}`}>Book an appointment</Link>
 
-      <label className="check card" style={{ padding: '12px 16px' }}>
+      {c.allergies && allergies === null && (
+        <div className="od-allergy">
+          <span className="od-allergy-ic" aria-hidden="true" />
+          <div className="grow">
+            <div className="od-allergy-label">Allergies</div>
+            <div className="od-allergy-text">{c.allergies}</div>
+          </div>
+        </div>
+      )}
+
+      <Link className="btn primary block od-book" to={`/appointments/new?client=${c.id}`}><Icon name="plus" size={20} /> Book an appointment</Link>
+
+      <label className="check card od-regular">
         <input type="checkbox" checked={c.is_regular} disabled={act.busy}
           onChange={async (e) => { const v = e.target.checked; if (await act.run(() => api.updateClient(c.id, { is_regular: v }))) { toast(v ? 'Marked as a regular' : 'Updated'); reload(); } }} />
         <span>Regular client — never asked for a new-client deposit<br />
@@ -88,7 +108,7 @@ export function ClientView() {
       </label>
 
       <div className="section-title">Notes</div>
-      <div className="card stack">
+      <div className="card stack od-client-notes">
         {notes !== null ? (
           <>
             <Field label="Notes (shape, colours, preferences…)"><textarea value={notes} maxLength={5000} onChange={(e) => setNotes(e.target.value)} /></Field>
@@ -96,16 +116,19 @@ export function ClientView() {
           </>
         ) : (
           <>
-            {c.notes ? <p style={{ whiteSpace: 'pre-wrap' }}>{c.notes}</p> : <p className="sub">No notes yet.</p>}
-            <button className="btn small" style={{ alignSelf: 'flex-start' }} onClick={() => setNotes(c.notes ?? '')}>Edit notes</button>
+            {c.notes ? <p className="od-note-text">{c.notes}</p> : <p className="sub">No notes yet.</p>}
+            <button className="btn small" style={{ alignSelf: 'flex-start' }} onClick={() => setNotes(c.notes ?? '')}><Glyph name="pencil" size={16} /> Edit notes</button>
           </>
         )}
       </div>
 
       <div className="section-title">Health information</div>
-      <div className="card stack">
+      <div className="card stack od-health">
         {consented ? (
-          <p className="sub">✓ Consent to keep health information: {fmtDay(c.health_consent_at!, tz)}{c.health_consent_note ? ` · ${c.health_consent_note}` : ''}</p>
+          <div className="od-consent">
+            <span className="od-ic ok small" aria-hidden="true"><BrandIcon name="shield-heart" size={18} /></span>
+            <p className="sub">Consent to keep health information: {fmtDay(c.health_consent_at!, tz)}{c.health_consent_note ? ` · ${c.health_consent_note}` : ''}</p>
+          </div>
         ) : (
           <div className="notice warn">
             No consent recorded, so allergies and patch tests can’t be saved yet. New clients give consent on the online form;
@@ -113,7 +136,6 @@ export function ClientView() {
             <div style={{ marginTop: 8 }}><button className="btn small" onClick={() => setSheet('consent')}>Record consent</button></div>
           </div>
         )}
-        {c.allergies && allergies === null && <div className="error"><b>Allergies:</b> {c.allergies}</div>}
         {allergies !== null ? (
           <>
             <Field label="Allergies / sensitivities"><textarea value={allergies} maxLength={2000} onChange={(e) => setAllergies(e.target.value)} /></Field>
@@ -122,25 +144,30 @@ export function ClientView() {
         ) : consented && (
           <button className="btn small" style={{ alignSelf: 'flex-start' }} onClick={() => setAllergies(c.allergies ?? '')}>{c.allergies ? 'Edit allergies' : 'Add allergies'}</button>
         )}
-        <hr className="divider" />
-        <div className="row spread">
+
+        <div className="od-subhead">
+          <span className="od-ic small lilac" aria-hidden="true"><Glyph name="flask" size={18} /></span>
           <h3>Patch tests</h3>
           <button className="btn small" disabled={!consented} onClick={() => setSheet('test')}>Add test</button>
         </div>
-        {data!.tests.length === 0 ? <p className="sub">No patch test recorded.</p> : (
-          <ul className="list">
-            {data!.tests.map((t) => <PatchRow key={t.id} t={t} onDeleted={reload} />)}
+        {data!.tests.length === 0 ? <p className="sub od-none">No patch test recorded.</p> : (
+          <ul className="od-tests">
+            {data!.tests.map((t) => <PatchRow key={t.id} t={t} tz={tz} onDeleted={reload} />)}
           </ul>
         )}
-        {latestTest && <p className="sub">Last test {fmtDay(latestTest.tested_on + 'T12:00:00Z', tz)}.</p>}
-        <hr className="divider" />
-        <h3>Consultation forms</h3>
-        {data!.forms.length === 0 ? <p className="sub">None yet. New clients fill one in when they book online.</p> : (
-          <ul className="list">
+        {latestTest && <p className="sub od-none">Last test {fmtDay(latestTest.tested_on + 'T12:00:00Z', tz)}.</p>}
+
+        <div className="od-subhead">
+          <span className="od-ic small lilac" aria-hidden="true"><Glyph name="doc" size={18} /></span>
+          <h3>Consultation forms</h3>
+        </div>
+        {data!.forms.length === 0 ? <p className="sub od-none">None yet. New clients fill one in when they book online.</p> : (
+          <ul className="od-forms">
             {data!.forms.map((f) => {
               const flags = describeAnswers(f.answers).filter((r) => r.flag).length;
               return (
-                <li key={f.id}><button className="list-row" style={{ padding: '10px 0' }} onClick={() => setForm(f)}>
+                <li key={f.id}><button className="od-form-row" onClick={() => setForm(f)}>
+                  <span className={`od-form-ic${flags ? ' flagged' : ''}`} aria-hidden="true"><Glyph name="doc" size={20} /></span>
                   <div className="grow"><div className="title">Form · {fmtDay(f.submitted_at, tz)}</div>
                     <div className="meta">{flags ? <span className="flag">{flags} answer{flags === 1 ? '' : 's'} to check</span> : 'Nothing flagged'} · signed {f.signed_name}</div></div>
                   <span className="chev"><Icon name="chev" size={18} /></span>
@@ -150,21 +177,26 @@ export function ClientView() {
           </ul>
         )}
         {hasHealth && (
-          <button className="btn danger small" style={{ alignSelf: 'flex-start' }} onClick={() => setSheet('health-delete')}>Delete health information only</button>
+          <button className="btn danger small od-health-delete" onClick={() => setSheet('health-delete')}>Delete health information only</button>
         )}
       </div>
 
-      <div className="row spread" style={{ margin: '20px 4px 8px' }}>
-        <div className="section-title" style={{ margin: 0 }}>Nail photos · {data!.photos.length}</div>
-        <label className="btn small" style={{ cursor: 'pointer' }}>
+      <div className="od-photos-head">
+        <div className="section-title">Nail photos · {data!.photos.length}</div>
+        <label className="btn small od-add-photos">
           <Icon name="camera" size={18} /> Add photos
           <input ref={fileRef} className="visually-hidden" type="file" accept="image/*" multiple onChange={(e) => addPhotos(e.target.files)} />
         </label>
       </div>
       {act.busy && <p className="sub">Uploading…</p>}
       <ErrorBox error={act.error} />
-      {data!.photos.length === 0 ? <div className="card empty">Photos of each set appear here. Only you can see them.</div> : (
-        <div className="photo-grid">
+      {data!.photos.length === 0 ? (
+        <div className="card od-photos-empty">
+          <span className="od-ic" aria-hidden="true"><Icon name="camera" size={21} /></span>
+          <p className="sub">Photos of each set appear here. Only you can see them.</p>
+        </div>
+      ) : (
+        <div className="photo-grid od-photo-grid">
           {data!.photos.map((p) => (
             <button key={p.id} onClick={() => setPhoto(p)} aria-label={`Photo from ${p.taken_on}`}>
               {p.url ? <img src={p.url} alt="" loading="lazy" /> : null}
@@ -182,7 +214,7 @@ export function ClientView() {
         {past.length ? <ul className="list">{past.map((a) => <ApptRow key={a.id} a={a} tz={tz} showDate={(iso) => fmtDay(iso, tz)} />)}</ul> : <div className="empty">No past appointments.</div>}
       </div>
 
-      <button className="btn danger" style={{ marginTop: 24 }} onClick={() => setSheet('delete')}>Delete client and all their records</button>
+      <button className="btn danger od-delete" onClick={() => setSheet('delete')}><Icon name="trash" size={18} /> Delete client and all their records</button>
 
       {sheet === 'edit' && <ClientSheet initial={c} onClose={() => setSheet(null)} onSaved={reload} />}
       {sheet === 'test' && <PatchTestSheet clientId={c.id} tz={tz} onClose={() => setSheet(null)} onSaved={() => { setSheet(null); reload(); }} />}
@@ -214,9 +246,9 @@ export function ClientView() {
       )}
       {form && (
         <Sheet title={`Consultation form · ${fmtDay(form.submitted_at, tz)}`} onClose={() => setForm(null)}>
-          <div className="stack">
+          <div className="stack od-form-sheet">
             {describeAnswers(form.answers).map((r) => (
-              <div key={r.question}><div className="sub">{r.question}</div><div className={r.flag ? 'flag' : ''}>{r.answer}</div></div>
+              <div key={r.question} className={`od-qa${r.flag ? ' flagged' : ''}`}><div className="od-qa-q">{r.question}</div><div className={r.flag ? 'flag od-qa-a' : 'od-qa-a'}>{r.answer}</div></div>
             ))}
             <hr className="divider" />
             <p className="sub">Signed “{form.signed_name}” on {fmtDayTime(form.submitted_at, tz)}, with consent to store health information.</p>
@@ -226,7 +258,7 @@ export function ClientView() {
       {photo && (
         <Sheet title={`Photo · ${fmtDay(photo.taken_on + 'T12:00:00Z', tz)}`} onClose={() => setPhoto(null)}>
           <div className="stack">
-            {photo.url && <img src={photo.url} alt="" style={{ borderRadius: 12 }} />}
+            {photo.url && <img className="od-photo-full" src={photo.url} alt="" />}
             <button className="btn danger" disabled={act.busy}
               onClick={async () => { if (window.confirm('Delete this photo?') && await act.run(() => api.deletePhoto(photo))) { setPhoto(null); reload(); } }}>
               <Icon name="trash" size={20} /> Delete photo
@@ -238,14 +270,18 @@ export function ClientView() {
   );
 }
 
-function PatchRow({ t, onDeleted }: { t: PatchTest; onDeleted: () => void }) {
+function PatchRow({ t, tz, onDeleted }: { t: PatchTest; tz: string; onDeleted: () => void }) {
   const toast = useToast();
   const label = t.result === 'pass' ? 'No reaction' : t.result === 'reaction' ? 'Reaction' : 'Waiting for result';
+  const tone = t.result === 'pass' ? 'ok' : t.result === 'reaction' ? 'danger' : 'warn';
   return (
-    <li className="row spread" style={{ padding: '8px 0' }}>
-      <div>
-        <div style={{ fontWeight: 600 }}>{t.tested_on} · <span className={t.result === 'reaction' ? 'flag' : ''}>{label}</span></div>
-        <div className="sub">{[t.product, t.notes].filter(Boolean).join(' · ')}</div>
+    <li className={`od-test od-test-${tone}`}>
+      <div className="grow">
+        <div className="od-test-head">
+          <span className="od-test-date">{fmt(`${t.tested_on}T12:00:00Z`, 'EEE d MMM yyyy', tz)}</span>
+          <span className={`chip ${tone}`}>{label}</span>
+        </div>
+        {(t.product || t.notes) && <div className="od-test-detail">{[t.product, t.notes].filter(Boolean).join(' · ')}</div>}
       </div>
       <button className="icon-btn" aria-label="Delete patch test"
         onClick={async () => {

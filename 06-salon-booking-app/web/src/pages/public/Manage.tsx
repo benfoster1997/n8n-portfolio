@@ -2,6 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../../api';
 import { SlotPicker, useFreeSlots } from '../../components/SlotPicker';
+import { BrandFooter, BrandHero, ScriptTitle } from '../../components/brand';
+import { TreatmentMenu, TreatmentRow } from '../../components/public/menu';
+import {
+  Celebration, ChosenTreatment, DateTile, GroupHead, GroupIcon, PolicyCard, PublicLoading, PublicProblem, RefStub, StickyAction, Steps, Ticket,
+} from '../../components/public/parts';
 import { ErrorBox, Field, Icon, Sheet, Spinner, useAction, useLoad } from '../../components/ui';
 import { openDays } from '../../lib/slots';
 import { addDays, dateInZone, fmtDay, fmtDayLong, fmtTime, minutesLabel, startOfDayInstant } from '../../lib/time';
@@ -53,14 +58,13 @@ export function Manage() {
   const { data, error, loading, reload, setData } = useLoad(() => (valid ? api.getManagedBooking(token) : Promise.resolve(null)), [token]);
   useEffect(() => { if (data) document.title = `Your booking · ${data.info.business_name}`; }, [data]);
 
-  if (loading && !data) return <Spinner />;
+  if (loading && !data) return <PublicLoading />;
   if (!data) {
     return (
-      <div className="page page-public stack">
-        <h1>Your booking</h1>
+      <PublicProblem title="Your booking">
         {error ? <ErrorBox error={error} /> : <div className="notice">This link has expired or isn’t valid. Please use the link in your latest email, or get in touch.</div>}
-        <Link className="btn" to="/book">Book an appointment</Link>
-      </div>
+        <Link className="btn primary block" to="/book">Book an appointment</Link>
+      </PublicProblem>
     );
   }
   return <ManageBooking m={data} token={token} reload={reload} setData={setData} />;
@@ -207,44 +211,46 @@ function ManageBooking({ m, token, reload, setData }: {
   // period. The same test whoever cancelled, so the client and owner wording agree.
   const fromChange = lateFromEarlierChange(b, notice);
 
+  const stepTitles = ['Treatment', 'Time', 'Confirm'];
+
   return (
     <>
     {api.mode === 'demo' && <div className="demo-banner">Demo — bookings here aren’t real and go nowhere</div>}
-    <div className="page page-public stack manage">
-      <div className="hero">
-        <h1>{business}</h1>
-        {mode === 'view' && <p>Hi {b.first_name || 'there'}, here’s your booking</p>}
-      </div>
+    <div className={`page page-public stack manage manage--${mode}`}>
+      <BrandHero name={business} compact>
+        {mode === 'view' && <p className="manage-hello">Hi {b.first_name || 'there'}, here’s your booking</p>}
+      </BrandHero>
 
       {mode === 'view' && (
         <>
-          <div className="card stack">
-            <div className="row spread booking-head">
-              <h2 className="grow" tabIndex={-1} ref={b.status === 'cancelled' ? undefined : focusHere}>{b.service_name}</h2>
-              <span className={`chip ${status.cls}`}>{status.label}</span>
-            </div>
-            <dl className="kv">
-              <dt>When</dt><dd>{when(b.starts_at)}</dd>
-              <dt>Length</dt><dd>{minutesLabel(b.duration_min)}</dd>
-              <dt>Price</dt><dd>{money(b.price_pence)}</dd>
-              <dt>Reference</dt><dd className="mono">{b.reference}</dd>
+          <Ticket iso={b.starts_at} tz={tz} muted={!live} className="appt-card"
+            kicker="Your appointment" aside={<span className={`chip ${status.cls}`}>{status.label}</span>}
+            title={b.service_name} titleAs="h2" titleFocusable titleRef={b.status === 'cancelled' ? undefined : focusHere}
+            lines={[`${fmtTime(b.starts_at, tz)} · ${minutesLabel(b.duration_min)}`]}>
+            <dl className="kv appt-kv">
+              <div className="appt-kv-when"><dt>When</dt><dd>{when(b.starts_at)}</dd></div>
+              <div><dt>Length</dt><dd>{minutesLabel(b.duration_min)}</dd></div>
+              <div><dt>Price</dt><dd className="appt-price">{money(b.price_pence)}</dd></div>
+              <div><dt>Reference</dt><dd className="mono">{b.reference}</dd></div>
             </dl>
-          </div>
+          </Ticket>
 
           {upcoming && b.status === 'pending_deposit' && !b.deposit_paid && b.deposit_required_pence > 0 && (
             <DepositCard m={m} />
           )}
 
           {upcoming && b.form_needed && (
-            <div className="notice stack" style={{ gap: 8 }}>
-              <span>As it’s your first visit, please fill in the quick health form before your appointment. It takes about 2 minutes.</span>
+            <div className="notice stack form-nudge" style={{ gap: 8 }}>
+              <div className="form-nudge-row">
+                <GroupIcon name="form" />
+                <span>As it’s your first visit, please fill in the quick health form before your appointment. It takes about 2 minutes.</span>
+              </div>
               <Link className="btn small" style={{ alignSelf: 'flex-start' }} to={`/form/${token}`}>Fill in the health form</Link>
             </div>
           )}
 
           {upcoming && (
-            <div className={`card policy stack${late ? ' late' : ''}`} style={{ gap: 4 }} role="note" aria-label="Cancellation policy">
-              <h2>Cancellation policy</h2>
+            <PolicyCard note late={late}>
               {pastDeadline ? (
                 <p>
                   It’s now less than {hours(notice)} before your appointment, so under the policy the full price ({money(fee)}) is payable if you cancel.
@@ -255,8 +261,8 @@ function ManageBooking({ m, token, reload, setData }: {
                 <p>Just so you know: as this booking was changed with {shortNotice(notice)}, the cancellation policy applies if you cancel it, and the full price ({money(fee)}) would be payable.</p>
               ) : !b.free_until ? <p>You can change or cancel free of charge any time before your appointment.</p>
                 : <p>You can change or cancel free of charge until <b>{fmtDay(b.free_until, tz)} at {fmtTime(b.free_until, tz)}</b>.</p>}
-              {policy && <p className="sub" style={{ whiteSpace: 'pre-wrap' }}>{policy}</p>}
-            </div>
+              {policy && <p className="sub policy-small" style={{ whiteSpace: 'pre-wrap' }}>{policy}</p>}
+            </PolicyCard>
           )}
 
           {upcoming && !canChange && (
@@ -268,7 +274,7 @@ function ManageBooking({ m, token, reload, setData }: {
           )}
 
           {canCancel && (
-            <div className="stack">
+            <div className="stack manage-actions">
               {canChange && <button className="btn primary block" onClick={startChange}>Change time or treatment</button>}
               <button className="btn danger block" onClick={() => setCancelling(true)}>Cancel appointment</button>
               {canChange && b.changes_left <= 2 && (
@@ -278,7 +284,7 @@ function ManageBooking({ m, token, reload, setData }: {
           )}
 
           {b.status === 'cancelled' && (
-            <div className="notice stack" style={{ gap: 6 }} role="status" tabIndex={-1} ref={focusHere}>
+            <div className="notice stack cancelled-note" style={{ gap: 6 }} role="status" tabIndex={-1} ref={focusHere}>
               <b>This appointment has been cancelled.</b>
               {b.cancelled_late && (b.cancelled_by === 'client' ? (
                 <span>
@@ -298,29 +304,29 @@ function ManageBooking({ m, token, reload, setData }: {
           )}
           {live && !upcoming && <div className="notice">This appointment has already started, so it can no longer be changed online.</div>}
           {(b.status === 'completed' || b.status === 'no_show') && <div className="notice">This appointment has passed, so it can no longer be changed online.</div>}
-          {!upcoming && <Link className="btn" to="/book">Book another appointment</Link>}
+          {!upcoming && <Link className="btn primary block" to="/book">Book another appointment</Link>}
         </>
       )}
 
-      {inFlow && <div className="steps" aria-hidden>{[0, 1, 2].map((i) => <span key={i} className={i <= stepIndex ? 'on' : ''} />)}</div>}
+      {inFlow && <Steps labels={stepTitles} current={stepIndex} />}
 
       {mode === 'service' && (
         <>
-          <button className="btn ghost small" style={{ alignSelf: 'flex-start' }} onClick={() => go('view')}><Icon name="back" size={18} /> Your booking</button>
-          <h2 tabIndex={-1} ref={focusHere}>Choose a treatment</h2>
-          <p className="sub">To just move the time, choose your current treatment.</p>
-          {!currentListed && <TreatmentButton c={current} on={!choice || choice.id === current.id} current onClick={() => choose(current)} />}
-          {info.services.map((s) => (s.id === b.service_id
-            ? <TreatmentButton key={s.id} c={current} description={s.description} on={!choice || choice.id === s.id} current onClick={() => choose(current)} />
-            : <TreatmentButton key={s.id} c={s} description={s.description} on={choice?.id === s.id} onClick={() => choose(s)} />))}
+          <button className="btn ghost small pub-back" onClick={() => go('view')}><Icon name="back" size={18} /> Your booking</button>
+          <TreatmentMenu ref={focusHere} focusable hint="To just move the time, choose your current treatment.">
+            {!currentListed && <ManageRow c={current} on={!choice || choice.id === current.id} current onClick={() => choose(current)} />}
+            {info.services.map((s) => (s.id === b.service_id
+              ? <ManageRow key={s.id} c={current} description={s.description} on={!choice || choice.id === s.id} current onClick={() => choose(current)} />
+              : <ManageRow key={s.id} c={s} description={s.description} on={choice?.id === s.id} onClick={() => choose(s)} />))}
+          </TreatmentMenu>
         </>
       )}
 
       {mode === 'time' && choice && (
         <>
-          <button className="btn ghost small" style={{ alignSelf: 'flex-start' }} onClick={() => go('service')}><Icon name="back" size={18} /> {choice.name}</button>
-          <h2 tabIndex={-1} ref={focusHere}>Pick a day and time</h2>
-          <p className="sub">Your appointment is now {fmtDay(b.starts_at, tz)} at {fmtTime(b.starts_at, tz)}.</p>
+          <ChosenTreatment name={choice.name} durationMin={choice.duration_min} pricePence={choice.price_pence} onChange={() => go('service')} />
+          <ScriptTitle className="step-title" tabIndex={-1} ref={focusHere}>Pick a day and time</ScriptTitle>
+          <p className="sub step-sub">Your appointment is now {fmtDay(b.starts_at, tz)} at {fmtTime(b.starts_at, tz)}.</p>
           <ErrorBox error={busyError ?? change.error} />
           {busyError ? null : !busyTimes ? <Spinner /> : daysWithSlots.length === 0 ? (
             <div className="notice">Sorry — there are no free times for this treatment in the next {info.max_days_ahead} days. Please get in touch directly.</div>
@@ -329,9 +335,11 @@ function ManageBooking({ m, token, reload, setData }: {
               <SlotPicker days={daysWithSlots} slotsByDay={slotsByDay} day={day} slot={slot} tz={tz}
                 onDay={(d) => { setDay(d); setSlot(null); }} onSlot={(d) => { setSlot(d); change.setError(null); }} />
               {slot && !moved && (
-                <p className="sub">{switched ? 'Your current time is still free for this treatment.' : 'That’s your current time — pick a new one, or go back to choose a different treatment.'}</p>
+                <p className="sub slot-same">{switched ? 'Your current time is still free for this treatment.' : 'That’s your current time — pick a new one, or go back to choose a different treatment.'}</p>
               )}
-              <button className="btn primary block" disabled={!slot || (!moved && !switched)} onClick={() => go('confirm')}>Continue</button>
+              <StickyAction>
+                <button className="btn primary block" disabled={!slot || (!moved && !switched)} onClick={() => go('confirm')}>Continue</button>
+              </StickyAction>
             </>
           )}
         </>
@@ -339,14 +347,17 @@ function ManageBooking({ m, token, reload, setData }: {
 
       {mode === 'confirm' && choice && slot && (
         <>
-          <button className="btn ghost small" style={{ alignSelf: 'flex-start' }} onClick={() => go('time')}><Icon name="back" size={18} /> Change time</button>
-          <h2 tabIndex={-1} ref={focusHere}>Check your new booking</h2>
+          <button className="btn ghost small pub-back" onClick={() => go('time')}><Icon name="back" size={18} /> Change time</button>
+          <ScriptTitle className="step-title" tabIndex={-1} ref={focusHere}>Check your new booking</ScriptTitle>
           <div className="card compare">
             <div className="was">
               <span className="label">From</span>
               <b>{b.service_name}</b>
               <span>{when(b.starts_at)}</span>
               <span className="sub">{minutesLabel(b.duration_min)} · {money(b.price_pence)}</span>
+            </div>
+            <div className="compare-arrow" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14M6.5 13.5L12 19l5.5-5.5" /></svg>
             </div>
             <div className="to">
               <span className="label">To</span>
@@ -372,34 +383,33 @@ function ManageBooking({ m, token, reload, setData }: {
             </div>
           )}
           <ErrorBox error={change.error} />
-          <button className="btn primary block" disabled={change.busy} onClick={confirmChange}>{change.busy ? 'Saving…' : 'Confirm change'}</button>
+          <button className="btn primary block pub-confirm" disabled={change.busy} onClick={confirmChange}>{change.busy ? 'Saving…' : 'Confirm change'}</button>
           <button className="btn ghost block" onClick={() => go('view')}>Keep my booking as it is</button>
         </>
       )}
 
       {mode === 'done' && result && (
-        <div className="stack centre">
-          <svg className="big-tick" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-            <circle cx="12" cy="12" r="10" /><path d="M7 12.5l3.2 3.2L17 9" />
-          </svg>
-          <h2 tabIndex={-1} ref={focusHere}>Your booking has been changed</h2>
-          <div className="card" style={{ textAlign: 'left' }}>
-            <div style={{ fontWeight: 600 }}>{result.service_name} · {money(result.price_pence)}</div>
-            <div className="sub">{when(result.starts_at)}</div>
-            <div className="sub">Reference <b className="mono">{result.reference}</b></div>
-          </div>
-          {b.has_email && <p>We’ve emailed you the new details.</p>}
-          <button className="btn" onClick={() => go('view')}>Back to my booking</button>
+        <div className="stack pub-done">
+          <Celebration small />
+          <h2 className="pub-done-title" tabIndex={-1} ref={focusHere}>Your booking has been changed</h2>
+          <Ticket iso={result.starts_at} tz={tz} kicker="Your new appointment" title={result.service_name} price={money(result.price_pence)}
+            lines={[when(result.starts_at)]} stub={<RefStub reference={result.reference} />} />
+          {b.has_email && <p className="centre">We’ve emailed you the new details.</p>}
+          <button className="btn block" onClick={() => go('view')}>Back to my booking</button>
         </div>
       )}
 
       <p className="sub centre">How your information is used: <Link to="/privacy">privacy notice</Link>.</p>
+      {mode === 'view' && <BrandFooter instagram={info.instagram_handle} tiktok={info.tiktok_handle} facebook={info.facebook_handle} />}
     </div>
 
     {cancelling && (
       <Sheet title="Cancel your appointment?" onClose={closeCancel}>
-        <div className="stack">
-          <p>{b.service_name} on {when(b.starts_at)}.</p>
+        <div className="stack cancel-sheet">
+          <div className="cancel-summary">
+            <DateTile iso={b.starts_at} tz={tz} />
+            <p>{b.service_name} on {when(b.starts_at)}.</p>
+          </div>
           {late && (
             <div className="notice warn" role="note">
               {pastDeadline ? `As it’s less than ${hours(notice)} before your appointment` : `As this booking was changed with ${shortNotice(notice)}`},
@@ -421,21 +431,11 @@ function ManageBooking({ m, token, reload, setData }: {
   );
 }
 
-
-function TreatmentButton({ c, description, on, current, onClick }: {
+/** A treatment on the change menu: the same row as the booking page's. */
+function ManageRow({ c, description, on, current, onClick }: {
   c: Pick<Choice, 'name' | 'duration_min' | 'price_pence'>; description?: string | null; on: boolean; current?: boolean; onClick: () => void;
 }) {
-  return (
-    <button className={`service${on ? ' on' : ''}`} onClick={onClick}>
-      <div className="grow">
-        {current && <span className="chip accent">Your current treatment</span>}
-        <div style={{ fontWeight: 600 }}>{c.name}</div>
-        <div className="sub">{minutesLabel(c.duration_min)}{description ? ` · ${description}` : ''}</div>
-      </div>
-      <div className="price">{money(c.price_pence)}</div>
-      <span className="chev"><Icon name="chev" size={18} /></span>
-    </button>
-  );
+  return <TreatmentRow name={c.name} durationMin={c.duration_min} pricePence={c.price_pence} description={description} on={on} current={current} onClick={onClick} />;
 }
 
 function DepositCard({ m }: { m: ManageInfo }) {
@@ -445,19 +445,19 @@ function DepositCard({ m }: { m: ManageInfo }) {
   const overdue = !!due && new Date(due).getTime() < Date.now();
   const hasBank = !!(bank && (bank.account_name || bank.sort_code || bank.account_number));
   return (
-    <div className="card attention stack" style={{ gap: 8 }}>
-      <h2>Your deposit</h2>
+    <div className="card attention stack deposit-card" style={{ gap: 8 }}>
+      <GroupHead icon="bank">Your deposit</GroupHead>
       <p>
         To secure your appointment, please send your {money(b.deposit_required_pence)} deposit by bank transfer
         {due && !overdue && <> by <b>{fmtDay(due, tz)} at {fmtTime(due, tz)}</b></>}.
         {overdue && ' It’s now overdue, so please send it as soon as you can, or get in touch.'} It comes off your bill.
       </p>
       {hasBank ? (
-        <dl className="kv">
-          {bank!.account_name && <><dt>Name</dt><dd>{bank!.account_name}</dd></>}
-          {bank!.sort_code && <><dt>Sort code</dt><dd className="mono">{bank!.sort_code}</dd></>}
-          {bank!.account_number && <><dt>Account</dt><dd className="mono">{bank!.account_number}</dd></>}
-          <dt>Reference</dt><dd className="mono">{b.reference}</dd>
+        <dl className="bank">
+          {bank!.account_name && <div><dt>Name</dt><dd>{bank!.account_name}</dd></div>}
+          {bank!.sort_code && <div><dt>Sort code</dt><dd className="mono">{bank!.sort_code}</dd></div>}
+          {bank!.account_number && <div><dt>Account</dt><dd className="mono">{bank!.account_number}</dd></div>}
+          <div className="bank-ref"><dt>Reference</dt><dd className="mono">{b.reference}</dd></div>
         </dl>
       ) : <p>The bank details are in your confirmation email.</p>}
       <p className="sub">Please use reference <b className="mono">{b.reference}</b> so your payment can be matched to your booking.</p>
@@ -471,7 +471,7 @@ function GetInTouch({ m, children }: { m: ManageInfo; children: ReactNode }) {
   const email = info.contact_email?.trim();
   const about = `my booking on ${fmtDay(b.starts_at, info.timezone)} at ${fmtTime(b.starts_at, info.timezone)} (ref ${b.reference})`;
   return (
-    <div className="card stack">
+    <div className="card stack get-in-touch">
       <p>{children}</p>
       {phone || email ? (
         <div className="btn-row">
