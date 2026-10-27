@@ -751,8 +751,8 @@ export function Strapline({ text, className }: { text?: string | null; className
     <p className={cx('strapline', className)}>
       {parts.map((p, i) => (
         <span key={i} className="strapline-item">
-          {i > 0 && <><span className="brand-sr">, </span><Heart className="strapline-heart" size={10} /></>}
-          <span className="strapline-word">{p}</span>
+          {i > 0 && <Heart className="strapline-heart" size={10} />}
+          <span className="strapline-word">{p}{i < parts.length - 1 && <span className="brand-sr">, </span>}</span>
         </span>
       ))}
     </p>

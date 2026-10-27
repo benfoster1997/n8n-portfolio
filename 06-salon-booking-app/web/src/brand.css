@@ -28,6 +28,7 @@
   z-index: 0;
   pointer-events: none;
   height: auto;
+  overflow: visible; /* the art runs past the box; the hero/footer edge (the screen edge on a phone) trims it */
   filter: drop-shadow(0 2px 3px rgba(140, 40, 80, 0.12));
 }
 .sprig-tl { top: 0; left: 0; transform-origin: 0 0; }
@@ -118,7 +119,7 @@ h3.script-title { font-size: 1.65rem; }
   margin: 0;
   font-family: var(--font-sans, 'Nunito Variable', sans-serif);
   font-weight: 700;
-  font-size: 0.78rem;
+  font-size: clamp(0.69rem, 3.25vw, 0.8rem);
   line-height: 1.5;
   letter-spacing: 0.32em;
   text-transform: uppercase;
@@ -126,7 +127,7 @@ h3.script-title { font-size: 1.65rem; }
 }
 .strapline-item { display: inline-flex; align-items: center; white-space: nowrap; }
 .strapline-word { margin-right: -0.32em; }
-.strapline-heart { margin: 0 0.75em 0 0.95em; color: var(--pink, #e8197f); }
+.strapline-heart { margin: 0 0.7em 0 0.9em; color: var(--pink, #e8197f); }
 
 /* ---------- the booking-page hero ---------- */
 .brand-hero {
@@ -135,7 +136,7 @@ h3.script-title { font-size: 1.65rem; }
   margin: 0 calc(-1 * var(--brand-gutter));
   padding: 112px calc(var(--brand-gutter) + 6px) 8px;
   text-align: center;
-  overflow-x: clip;
+  overflow: clip;
 }
 .brand-hero .sprig { width: clamp(140px, 41vw, 204px); }
 /* as the page's first block, the hero rises into the page's top padding so the sprigs
@@ -185,6 +186,11 @@ h3.script-title { font-size: 1.65rem; }
 .brand-hero--compact .brand-hero-tagline { font-size: 1.4rem; }
 .brand-hero--compact .brand-hero-dot { display: none; }
 
+/* once the page is narrower than the window, there is no screen edge to run off: show the whole cluster */
+@media (min-width: 721px) {
+  .brand-hero { overflow: visible; }
+  .brand-footer { overflow: visible; }
+}
 @media (min-width: 560px) {
   .brand-hero { padding-top: 64px; }
   .brand-hero-body { max-width: 440px; margin: 0 auto; }
