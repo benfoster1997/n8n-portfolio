@@ -73,6 +73,11 @@ export function WhatsAppButton({ a, s, kind, label, onSent, small }: {
   a: Appointment; s: Settings; kind?: 'reminder' | 'deposit' | 'confirmed'; label?: string;
   onSent?: () => void; small?: boolean;
 }) {
+  // A different mobile was typed with this booking: nothing carrying their private link goes by
+  // WhatsApp until she has checked which number is right, on the appointment. Nothing counts as sent.
+  if (a.booking_phone) {
+    return <Link className={`btn${small ? ' small' : ''}`} to={`/appointments/${a.id}`}>Check mobile first</Link>;
+  }
   const phone = a.client?.phone_e164;
   if (!phone) return <span className="sub">No mobile number saved</span>;
   return (

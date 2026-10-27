@@ -89,20 +89,41 @@ export function freeChangeDeadline(startsAt: string, noticeHours: number): Date 
 }
 
 /**
+ * A late cancellation made before the notice period started: it counts as late only because the
+ * client had already changed the booking inside the notice period. The same test as Code.gs
+ * lateFromEarlierChange_, for the client's cancels and the owner's alike. Never with no notice period.
+ */
+export function lateFromEarlierChange(a: Pick<Appointment, 'cancelled_late' | 'cancelled_at' | 'starts_at'>, noticeHours: number): boolean {
+  return !!a.cancelled_late && !!a.cancelled_at && noticeHours > 0
+    && new Date(a.cancelled_at).getTime() < freeChangeDeadline(a.starts_at, noticeHours).getTime();
+}
+
+/** "48 hours", "1 hour" */
+export const hoursLabel = (n: number) => `${n} hour${n === 1 ? '' : 's'}`;
+/** "48 hours’ notice", "1 hour’s notice" */
+export const noticeLabel = (n: number) => `${n} hour${n === 1 ? '’s' : 's’'} notice`;
+
+/**
  * "Need to change or cancel?" in words that fit the moment: the link and the
  * date to change by while that's still ahead, a note that the policy now
- * applies once it has passed, or "get in touch" when online changes are off.
+ * applies once it has passed or after a change inside the notice period, the
+ * link alone with no notice period, or "get in touch" when online changes are off.
  */
 export function changeNote(a: Appointment, s: Settings, now: Date = new Date()): string {
   if (!s.client_self_service) return 'Need to change or cancel? Just get in touch.';
   const link = manageLink(a, s);
   const notice = s.cancel_notice_hours ?? 0;
+  // No notice period: the policy is off, even after an earlier change.
   if (notice <= 0) return `Need to change or cancel? ${link}`;
   const by = freeChangeDeadline(a.starts_at, notice);
-  if (by.getTime() > now.getTime() && a.late_fee_pence == null) {
-    return `Need to change or cancel? Please do it by ${fmtDayLong(by, s.timezone)} at ${fmtTime(by, s.timezone)}: ${link}`;
+  if (by.getTime() <= now.getTime()) {
+    return `Need to change or cancel? ${link} (it’s now less than ${hoursLabel(notice)} before, so the cancellation policy applies)`;
   }
-  return `Need to change or cancel? ${link} (it’s now less than ${notice} hours before, so the cancellation policy applies)`;
+  // Still ahead of the deadline, but already changed inside the notice period (and maybe moved further out since).
+  if (a.late_fee_pence != null) {
+    return `Need to change or cancel? ${link} (as you changed this booking with less than ${noticeLabel(notice)}, the cancellation policy applies if you cancel)`;
+  }
+  return `Need to change or cancel? Please do it by ${fmtDayLong(by, s.timezone)} at ${fmtTime(by, s.timezone)}: ${link}`;
 }
 
 /** Fill {placeholders} in a message template for one appointment. Unknown placeholders are left as typed. */

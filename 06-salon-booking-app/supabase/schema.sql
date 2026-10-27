@@ -862,7 +862,11 @@ begin
       'changes_left',           greatest(0, public.max_client_changes() - a.client_change_count),
       -- Set once they've changed it inside the notice period: from then on a
       -- cancellation is late whenever it happens, and this is what's payable.
-      'late_fee_pence',         a.late_fee_pence,
+      -- With no notice period (0) the policy is off, so a booking still to come
+      -- shows none (public_cancel_booking won't charge it); a cancelled one keeps
+      -- the fee fixed when it was cancelled.
+      'late_fee_pence',         case when a.status in ('pending_deposit', 'confirmed') and s.cancel_notice_hours = 0
+                                     then null else a.late_fee_pence end,
       -- Whether a change or cancellation will be confirmed by email (not the address itself).
       'has_email',              exists (select 1 from public.clients c
                                          where c.id = a.client_id and coalesce(c.email, '') <> ''),
@@ -962,6 +966,8 @@ begin
 
   -- Any change inside the notice period counts, so moving or switching to
   -- something cheaper can't be used to dodge or shrink a late-cancellation fee.
+  -- With no notice period (0) nothing is late. A fee fixed by an earlier late
+  -- change is kept, but only counts again if she sets a notice period again.
   v_late := s.cancel_notice_hours > 0 and now() > v_old.starts_at - make_interval(hours => s.cancel_notice_hours);
   select email into v_email from public.clients where id = v_old.client_id;
 
@@ -1033,8 +1039,11 @@ begin
 
   -- Late inside the notice period, or after an earlier change made inside it
   -- (moving a booking late and then cancelling the new time is still late).
-  v_late := (s.cancel_notice_hours > 0 and now() > v_appt.starts_at - make_interval(hours => s.cancel_notice_hours))
-            or v_appt.late_fee_pence is not null;
+  -- No notice period (0) means the policy is off: nothing is late, not even
+  -- after a late change made before she set it.
+  v_late := s.cancel_notice_hours > 0
+            and (now() > v_appt.starts_at - make_interval(hours => s.cancel_notice_hours)
+                 or v_appt.late_fee_pence is not null);
 
   update public.appointments
      set status = 'cancelled', cancelled_at = now(), cancelled_by = 'client', cancelled_late = v_late,
@@ -1139,7 +1148,8 @@ begin
 end $$;
 
 -- p_late: the client cancelled with too little notice (told her by phone or
--- WhatsApp), so the booking is flagged like a late online cancellation.
+-- WhatsApp), so the booking is flagged like a late online cancellation. It is
+-- her explicit choice, so it stands even with no notice period (0) set.
 drop function if exists public.owner_cancel_appointment(uuid, text, boolean);
 
 create or replace function public.owner_cancel_appointment(
@@ -1402,7 +1412,10 @@ begin
         end;
       end if;
       -- The booking changed again while this went out: send it once more so the
-      -- latest details arrive.
+      -- latest details arrive. If the run that claimed it died and a later run
+      -- re-claimed it (after 15 minutes, already with the latest details), this
+      -- sends the same email a second time. Accepted on purpose: a harmless
+      -- duplicate is better than the client never getting the new details.
       if v_hit and v_row.resend then
         update public.email_outbox set status = 'pending', attempts = 0, claimed_at = null, resend = false
          where id = v_row.id;

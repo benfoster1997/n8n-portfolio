@@ -5,7 +5,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { userInfo } from 'node:os';
 import vm from 'node:vm';
 import pg from 'pg';
@@ -299,6 +299,7 @@ test('a late cancellation online: a gentle note to the client, the facts to the 
   assert.match(client.subject, /^Your appointment has been cancelled/);
   assert.ok(client.text.includes('as you asked, your appointment below has been cancelled.'));
   assert.ok(client.text.includes('As this was less than 48 hours before your appointment, our cancellation policy applies: 24 hours notice please'));
+  assert.ok(client.text.includes('The full £35 is payable.') && !client.text.includes('before you changed it'));
   assert.ok(!client.text.includes('Sorry') && !client.text.includes('Reason'), 'her own reason isn’t repeated back to her');
   assert.ok(client.text.includes('To book a new time: https://book.example.com/book'));
   assert.ok(!client.html.includes('/manage/'));
@@ -312,7 +313,8 @@ test('a late cancellation online: a gentle note to the client, the facts to the 
   assert.ok(owner.text.includes('Cancelled with less than 48 hours’ notice. Under your cancellation policy the full £35 is payable — ' +
     'this is for you to arrange with the client; the app doesn’t take payments.'));
   assert.ok(owner.text.includes('Deposit: £10 — paid'));
-  assert.ok(owner.text.includes('They paid a £10 deposit. Whether you keep it or refund it is your call.'));
+  assert.ok(owner.text.includes('They paid a £10 deposit, which counts towards it, so the balance is £25.'));
+  assert.ok(!owner.text.includes('your call'));
   assert.ok(!owner.html.includes('/manage/') && !owner.text.includes('/manage/'));
 });
 
@@ -408,8 +410,9 @@ test('the cancellation email depends on who cancelled', async () => {
   assert.ok(late.text.includes('Hi Amy, as you asked, your appointment below has been cancelled.'));
   assert.ok(late.text.includes('As this was less than 24 hours before your appointment, our cancellation policy applies: Full price if under 24 hours’ notice.'));
   assert.ok(!late.text.includes('Reason') && !late.text.includes('Running late'), 'her own reason isn’t repeated back');
+  assert.ok(late.text.includes('The full £25 is payable.'));
   const inTime = sandbox.render_({ ...job, cancelled_by: 'client', cancelled_late: false }, s);
-  assert.ok(inTime.text.includes('as you asked') && !inTime.text.includes('policy applies'));
+  assert.ok(inTime.text.includes('as you asked') && !inTime.text.includes('policy applies') && !inTime.text.includes('payable'));
   const noPolicy = sandbox.render_({ ...job, cancelled_by: 'client', cancelled_late: true }, { ...s, cancellation_policy: null });
   assert.ok(noPolicy.text.includes('our cancellation policy applies.'));
   // Late because they changed it inside the notice period earlier, though they cancelled before the cut-off
@@ -434,6 +437,44 @@ test('the cancellation email depends on who cancelled', async () => {
   const ownerLate = sandbox.render_({ ...job, cancelled_by: 'owner', cancelled_late: true }, s);
   assert.ok(ownerLate.text.includes('Reason: Running late <again>'));
   assert.ok(ownerLate.text.includes('As this was less than 24 hours before your appointment, our cancellation policy applies'));
+  assert.ok(ownerLate.text.includes('The full £25 is payable.'));
+  // She ticked "late" because they'd changed it inside the notice period earlier, though it was
+  // cancelled before the cut-off: that's the reason given, not when it was cancelled.
+  const ownerEarlier = sandbox.render_({ ...job, ...free, cancelled_by: 'owner', cancelled_late: true, cancelled_at: '2026-11-09T10:00:00Z' }, s);
+  assert.ok(ownerEarlier.text.includes('As this booking was changed with less than 24 hours’ notice, our cancellation policy applies: ' +
+    'Full price if under 24 hours’ notice.'));
+  assert.ok(ownerEarlier.text.includes('The full £25 is payable.'));
+  assert.ok(!ownerEarlier.text.includes('As this was less than') && !ownerEarlier.text.includes('As you changed'));
+  // Marked late after the cut-off: the usual wording.
+  const ownerAfter = sandbox.render_({ ...job, ...free, cancelled_by: 'owner', cancelled_late: true, cancelled_at: '2026-11-12T10:00:00Z' }, s);
+  assert.ok(ownerAfter.text.includes('As this was less than 24 hours before your appointment') && !ownerAfter.text.includes('was changed'));
+});
+
+test('a late cancellation email says what’s payable, and when it’s the price before a cheaper switch', async () => {
+  const { sandbox } = loadScript({ fetchQueue: [], props: PROPS });
+  const s = { business_name: 'Studio', timezone: 'Europe/London', cancellation_policy: '48 hours’ notice please.', cancel_notice_hours: 48 };
+  // A full set at £60, switched late to File and polish at £10, then cancelled. Free until Tuesday 14:00.
+  const job = { id: 1, kind: 'cancelled', status: 'cancelled', first_name: 'Amy', service_name: 'File and polish', price_pence: 1000,
+    starts_at: '2026-11-12T14:00:00Z', reference: 'ABCDEF', free_until: '2026-11-10T14:00:00Z', late_fee_pence: 6000, cancelled_late: true };
+  const note = 'The full £60 is payable (the price of your booking before you changed it).';
+  for (const by of ['client', 'owner']) {
+    const inside = sandbox.render_({ ...job, cancelled_by: by, cancelled_at: '2026-11-11T09:00:00Z' }, s);
+    assert.ok(inside.text.includes('As this was less than 48 hours before your appointment, our cancellation policy applies: ' +
+      '48 hours’ notice please.\n\n' + note), by);
+    assert.ok(!inside.text.includes('£10 is payable'), by);
+    const earlier = sandbox.render_({ ...job, cancelled_by: by, cancelled_at: '2026-11-08T09:00:00Z' }, s);
+    assert.ok(earlier.text.includes((by === 'client' ? 'As you changed this booking' : 'As this booking was changed') +
+      ' with less than 48 hours’ notice, our cancellation policy applies: 48 hours’ notice please.\n\n' + note), by);
+    // The fee is the price it has now: no note.
+    const same = sandbox.render_({ ...job, cancelled_by: by, cancelled_at: '2026-11-11T09:00:00Z', late_fee_pence: 1000 }, s);
+    assert.ok(same.text.includes('The full £10 is payable.') && !same.text.includes('before you changed it'), by);
+    // No fee recorded (an older booking): the price.
+    const old = sandbox.render_({ ...job, cancelled_by: by, cancelled_at: '2026-11-11T09:00:00Z', late_fee_pence: null }, s);
+    assert.ok(old.text.includes('The full £10 is payable.'), by);
+    // In time: nothing payable.
+    const inTime = sandbox.render_({ ...job, cancelled_by: by, cancelled_late: false, late_fee_pence: null }, s);
+    assert.ok(!inTime.text.includes('payable') && !inTime.text.includes('policy applies'), by);
+  }
 });
 
 test('the owner’s change alert lists what changed, and flags a late change', async () => {
@@ -479,6 +520,13 @@ test('the owner’s change alert lists what changed, and flags a late change', a
     at: '2027-03-25T12:00:00Z', old_starts_at: '2027-03-26T10:00:00Z', new_starts_at: '2027-03-29T09:00:00Z' }] }, s);
   assert.ok(dst.text.includes('When: Monday 29 March at 10:00'));
   assert.ok(dst.text.includes('- Moved from Fri 26 Mar 10:00 to Mon 29 Mar 10:00'));
+  // A cancellation in the list (the alert was still going out when they cancelled): before its
+  // cut-off (Tuesday 14:00) it's late only because of the earlier change, and says so.
+  const cancel = { action: 'cancelled', old_starts_at: '2026-11-12T14:00:00Z', late: true };
+  const early = sandbox.render_({ ...job, changes: [job.changes[0], { ...cancel, at: '2026-11-09T18:09:00Z' }] }, s);
+  assert.ok(early.text.includes('- Cancelled (counts as late: changed with less than 48 hours’ notice earlier) · changed Mon 9 Nov at 18:09'));
+  const inside = sandbox.render_({ ...job, changes: [{ ...cancel, at: '2026-11-11T18:09:00Z' }] }, s);
+  assert.ok(inside.text.includes('- Cancelled (less than 48 hours’ notice) · changed Wed 11 Nov at 18:09'));
 });
 
 test('the owner’s cancellation alert: in time, late, and what happened to the deposit', async () => {
@@ -500,14 +548,30 @@ test('the owner’s cancellation alert: in time, late, and what happened to the 
   for (const not of ['payable', 'Their reason', 'refund', 'tok-123', 'Earlier']) assert.ok(!inTime.text.includes(not), not);
   const unpaid = sandbox.render_({ ...job, deposit_required_pence: 1000 }, s);
   assert.ok(unpaid.text.includes('Deposit: £10 — not paid') && !unpaid.text.includes('refund'));
+  // Cancelled in time with a deposit paid: keeping or refunding it is up to her.
+  const paid = sandbox.render_({ ...job, deposit_required_pence: 1000, deposit_paid: true }, s);
+  assert.ok(paid.text.includes('They paid a £10 deposit. Whether you keep it or refund it is your call.'));
+  assert.ok(!paid.text.includes('balance') && !paid.text.includes('counts towards'));
 
+  // Late: the deposit counts towards the fee, as the app's balance does.
   const late = sandbox.render_({ ...job, cancelled_late: true, deposit_required_pence: 1000, deposit_paid: true, cancel_reason: 'Flu' }, s);
   assert.equal(late.subject, 'Late cancellation: Amy Example — Gel, Thu 12 Nov 14:00');
   for (const line of ['Cancelled with less than 48 hours’ notice. Under your cancellation policy the full £25 is payable — ' +
                         'this is for you to arrange with the client; the app doesn’t take payments.',
-                      'Deposit: £10 — paid', 'Their reason: Flu', 'They paid a £10 deposit. Whether you keep it or refund it is your call.']) {
+                      'Deposit: £10 — paid', 'Their reason: Flu', 'They paid a £10 deposit, which counts towards it, so the balance is £15.']) {
     assert.ok(late.text.includes(line), `missing: ${line}`);
   }
+  assert.ok(!late.text.includes('your call'));
+  // The balance is of the fee, not the price, after a late switch to something cheaper; and never below £0.
+  const down = sandbox.render_({ ...job, cancelled_late: true, deposit_required_pence: 1000, deposit_paid: true,
+    price_pence: 800, late_fee_pence: 4500 }, s);
+  assert.ok(down.text.includes('the full £45 (the price before they changed it)'));
+  assert.ok(down.text.includes('They paid a £10 deposit, which counts towards it, so the balance is £35.'));
+  const small = sandbox.render_({ ...job, cancelled_late: true, deposit_required_pence: 1000, deposit_paid: true, price_pence: 800 }, s);
+  assert.ok(small.text.includes('so the balance is £0.'));
+  // Late with the deposit not paid: nothing about one.
+  const lateUnpaid = sandbox.render_({ ...job, cancelled_late: true, deposit_required_pence: 1000 }, s);
+  assert.ok(lateUnpaid.text.includes('Deposit: £10 — not paid') && !lateUnpaid.text.includes('They paid'));
   // Changed late earlier, but the cancellation wasn't counted as late (a booking from
   // before that rule): still worth knowing about.
   const changes = [
@@ -684,4 +748,93 @@ test('moved late, switched to something cheaper in good time, then cancelled day
   const client = sent.find((m) => m.to === 'mia@example.com');
   assert.ok(client.text.includes('As you changed this booking with less than 48 hours’ notice, our cancellation policy applies: 24 hours notice please'));
   assert.ok(!client.text.includes('As this was less than'));
+  assert.ok(client.text.includes('The full £35 is payable (the price of your booking before you changed it).'));
+});
+
+test('the owner marks a cancellation late after a late change: the client is told why, and what’s payable', async () => {
+  const ownerId = randomUUID();
+  await db.query(`insert into public.owner (id, user_id) values (1, $1) on conflict (id) do update set user_id = excluded.user_id`, [ownerId]);
+  const asOwner = async (sql, params) => {
+    await db.query('begin');
+    try {
+      await db.query('set local role authenticated');
+      await db.query(`select set_config('request.jwt.claims', $1, true)`, [JSON.stringify({ sub: ownerId, role: 'authenticated' })]);
+      const r = await db.query(sql, params);
+      await db.query('commit');
+      return r;
+    } catch (e) { await db.query('rollback'); throw e; }
+  };
+  const set = (await db.query(`select id from public.services where name = 'BIAB new set'`)).rows[0].id;
+  const polish = (await db.query(`insert into public.services (name, duration_min, price_pence) values ('File and polish', 30, 800) returning id`)).rows[0].id;
+  const c = (await db.query(`insert into public.clients (full_name, email, phone) values ('Nia Example', 'nia@example.com', '07700 900127') returning id`)).rows[0];
+  const a = (await db.query(
+    `insert into public.appointments (client_id, service_id, service_name, price_pence, duration_min, starts_at, ends_at, busy_until,
+                                      reference, status)
+     values ($1, $2, 'BIAB new set', 3500, 75, $3, $3, $3, '', 'confirmed') returning *`,
+    [c.id, set, await londonAt(1, '11:00')])).rows[0];   // tomorrow morning: inside the 48 hours
+
+  // Switched to something cheaper inside the notice period, and moved well ahead.
+  const later = await londonAt(12, '11:00');
+  assert.equal((await asAnon(`select public.public_change_booking($1, $2, $3) as r`, [a.public_token, polish, later])).rows[0].r.late, true);
+  await sendViaScript();
+  // She phones to cancel, days before the new time's cut-off; the owner ticks "late" because of the change.
+  await asOwner(`select public.owner_cancel_appointment($1, 'Phoned to cancel', true, true)`, [a.id]);
+  const { claim, sent } = await sendViaScript();
+  const job = claim.jobs.find((j) => j.kind === 'cancelled');
+  assert.ok(new Date(job.cancelled_at) < new Date(job.free_until));
+  assert.deepEqual(sent.map((m) => m.to), ['nia@example.com']);
+  const client = sent[0];
+  assert.ok(client.text.includes('Hi Nia, your appointment below has been cancelled.'));
+  assert.ok(client.text.includes('Reason: Phoned to cancel'));
+  assert.ok(client.text.includes('As this booking was changed with less than 48 hours’ notice, our cancellation policy applies: 24 hours notice please'));
+  assert.ok(client.text.includes('The full £35 is payable (the price of your booking before you changed it).'));
+  assert.ok(!client.text.includes('As this was less than') && !client.text.includes('£8 is payable'));
+});
+
+test('with no notice period nothing says “0 hours”: a late flag from before is “short notice”', async () => {
+  const { sandbox } = loadScript({ fetchQueue: [], props: PROPS });
+  const s = { business_name: 'Studio', timezone: 'Europe/London', public_site_url: 'https://x.example', cancel_notice_hours: 0,
+    client_self_service: true, owner_phone: '07700 900000' };
+  const start = new Date(Date.now() + 9 * 86400e3);
+  const ago = (h) => new Date(Date.now() - h * 3600e3).toISOString();
+  const movedAt = ago(30);
+  // Moved late while the notice period was 48 hours; she has since set it to 0.
+  const job = {
+    id: 1, to: 'amy@example.com', first_name: 'Amy', client_name: 'Amy Example', client_email: 'amy@example.com', client_phone: '07700 900123',
+    service_name: 'Gel', price_pence: 2500, starts_at: start.toISOString(), reference: 'ABCDEF', deposit_required_pence: 1000,
+    deposit_paid: true, form_needed: false, manage_url: 'https://x.example/manage/tok-123', free_until: null, late_fee_pence: 2500,
+    cancelled_at: ago(1), changes: [
+      { at: movedAt, action: 'moved', old_starts_at: ago(-10), new_starts_at: start.toISOString(), late: true },
+      { at: ago(1), action: 'cancelled', old_starts_at: start.toISOString(), late: true }],
+  };
+  const render = (extra) => sandbox.render_({ ...job, ...extra }, s);
+  const all = {};
+  for (const kind of ['booking_received', 'deposit_received', 'reminder', 'changed', 'owner_new_booking', 'owner_changed']) {
+    all[kind] = render({ kind, status: 'confirmed' });
+  }
+  for (const by of ['client', 'owner']) {
+    for (const late of [true, false]) all[`cancelled/${by}/${late}`] = render({ kind: 'cancelled', status: 'cancelled', cancelled_by: by, cancelled_late: late });
+  }
+  for (const late of [true, false]) all[`owner_cancelled/${late}`] = render({ kind: 'owner_cancelled', status: 'cancelled', cancelled_by: 'client', cancelled_late: late });
+  for (const [name, m] of Object.entries(all)) {
+    for (const t of [m.subject, m.text, m.html]) assert.ok(!/\b0 hours?\b/.test(t), `${name} says 0 hours`);
+  }
+
+  // The policy is off: no late-change warning and no cut-off, just the link.
+  for (const kind of ['booking_received', 'deposit_received', 'reminder', 'changed']) {
+    assert.ok(all[kind].text.includes('Change or cancel your booking (https://x.example/manage/tok-123)'), kind);
+    assert.ok(!all[kind].text.includes('As you changed') && !all[kind].text.includes('Please let us know by'), kind);
+  }
+  // The owner still sees what was flagged late before.
+  assert.ok(all.owner_changed.text.includes('Changed at short notice.'));
+  assert.ok(all.owner_changed.text.includes(`(short notice) · changed ${london(movedAt, "EEE d MMM 'at' HH:mm")}`));
+  assert.ok(all.owner_changed.text.includes('- Cancelled (short notice)'));
+  assert.ok(all['owner_cancelled/true'].text.includes('Cancelled at short notice. Under your cancellation policy the full £25 is payable'));
+  assert.ok(all['owner_cancelled/false'].text.includes('Earlier, they changed this booking at short notice.'));
+  assert.ok(all['owner_cancelled/false'].text.includes('They paid a £10 deposit. Whether you keep it or refund it is your call.'));
+  for (const by of ['client', 'owner']) {
+    const m = all[`cancelled/${by}/true`];
+    assert.ok(m.text.includes('As this was cancelled at short notice, our cancellation policy applies.\n\nThe full £25 is payable.'), by);
+    assert.ok(!all[`cancelled/${by}/false`].text.includes('policy applies'), by);
+  }
 });

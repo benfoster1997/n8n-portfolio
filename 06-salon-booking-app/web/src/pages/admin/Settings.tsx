@@ -176,7 +176,7 @@ export function DepositSettings() {
       <Field label="Cancellation policy" hint="Shown at the top of your booking page and in every confirmation and reminder email. Clients must tick to agree to it before they can book, and each booking keeps a copy of the wording they agreed to.">
         <textarea value={txt(d.cancellation_policy)} maxLength={1000} style={{ minHeight: 110 }} onChange={(e) => f.set('cancellation_policy', e.target.value)} />
       </Field>
-      <Field label="Notice needed to cancel (hours)" hint="Clients can still change or cancel online after this, but it’s flagged as a late cancellation so you can charge under your policy. 0 = no notice needed.">
+      <Field label="Notice needed to cancel (hours)" hint="Clients can still change or cancel online after this, but it’s flagged as a late cancellation so you can charge under your policy. 0 = no notice needed, so nothing counts as late.">
         <input type="number" inputMode="numeric" min={0} max={336} value={d.cancel_notice_hours} onChange={(e) => f.set('cancel_notice_hours', Number(e.target.value))} />
       </Field>
       {Number.isFinite(policyHours) && policyHours !== d.cancel_notice_hours && (
@@ -351,7 +351,7 @@ export function MessageSettings() {
     <Page title="WhatsApp messages">
       <p className="sub">These fill in automatically when you tap a WhatsApp button. Words in curly brackets are swapped for the real details:</p>
       <p className="mono" style={{ fontSize: '0.82rem' }}>{TEMPLATE_PLACEHOLDERS.join(' ')}</p>
-      <p className="sub"><span className="mono">{'{change_note}'}</span> tells the client how to change or cancel: their own link and the time to do it by, or, once it’s inside your notice period, that your cancellation policy applies. If clients can’t change bookings online (Deposits &amp; cancellations), it just asks them to get in touch.</p>
+      <p className="sub"><span className="mono">{'{change_note}'}</span> tells the client how to change or cancel. Usually that’s their own link and the time to do it by. Once it’s inside your notice period, it gives the link and says your cancellation policy now applies. If they’ve already changed the booking inside your notice period, it gives the link and says the policy applies if they cancel, even when the appointment is now further off. With no notice period it’s just the link, and if clients can’t change bookings online (Deposits &amp; cancellations), it asks them to get in touch.</p>
       <p className="sub"><span className="mono">{'{manage_link}'}</span> is the link on its own, and <span className="mono">{'{change_by}'}</span> is the last time to change without it counting as late — for a booking already inside your notice period that time has passed, so <span className="mono">{'{change_note}'}</span> is usually better.</p>
       {[d.wa_template_reminder, d.wa_template_deposit, d.wa_template_confirmed].some((t) => t && /\{(manage_link|change_by)\}/.test(t)) && (
         <div className="notice warn">Your wording uses {'{manage_link}'} or {'{change_by}'}. These go out as they are, even when the time to change by has passed or clients can’t change bookings online. Use {'{change_note}'} to have that worded for you.</div>

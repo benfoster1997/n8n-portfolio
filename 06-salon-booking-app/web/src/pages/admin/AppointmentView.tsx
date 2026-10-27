@@ -7,7 +7,7 @@ import { ErrorBox, Field, Icon, LateChip, Seg, Sheet, Spinner, StatusChip, TopBa
 import { lateCharge, lateChargePayments } from '../../lib/reminders';
 import { availableSlots } from '../../lib/slots';
 import { addDays, dateInZone, fmtDay, fmtDayLong, fmtDayTime, fmtTime, minutesLabel, startOfDayInstant, todayInZone, zonedToInstant } from '../../lib/time';
-import { fillTemplate, firstName, freeChangeDeadline, manageLink, money, parsePounds, whatsappLink } from '../../lib/text';
+import { fillTemplate, firstName, freeChangeDeadline, lateFromEarlierChange, manageLink, money, noticeLabel, parsePounds, whatsappLink } from '../../lib/text';
 import type { Appointment, CancelledBy, ClientChange, EmailKind, PayMethod, Settings } from '../../lib/types';
 
 const EMAIL_LABEL: Record<EmailKind, string> = {
@@ -72,6 +72,8 @@ export function AppointmentView() {
   const charge = lateCharge(a, lateReceived ?? []);
   // Only offer to chase or record money once what's already come in has loaded.
   const owing = !lateLoading && late?.id === lateId && charge.owed > 0;
+  // Cancelled in good time, but late because the client had already changed it inside the notice period.
+  const lateFromChange = lateFromEarlierChange(a, s.cancel_notice_hours);
   // A mobile typed with this booking that isn't the one on the client record: nothing carrying
   // their private link goes by WhatsApp until she has checked which is right.
   const checkPhone = !!a.booking_phone;
@@ -179,7 +181,8 @@ export function AppointmentView() {
         <div className="card stack attention">
           <h3>Late cancellation</h3>
           <p style={{ margin: 0 }}>
-            {s.cancel_notice_hours > 0 ? `Cancelled with less than ${s.cancel_notice_hours} hours’ notice.` : 'Cancelled inside your notice period.'}{' '}
+            {lateFromChange ? `They changed this booking with less than ${noticeLabel(s.cancel_notice_hours)} earlier, so this cancellation counts as late.`
+              : s.cancel_notice_hours > 0 ? `Cancelled with less than ${noticeLabel(s.cancel_notice_hours)}.` : 'Cancelled at short notice.'}{' '}
             Under your cancellation policy the full {money(charge.fee)} is payable — you arrange this with the client yourself.
           </p>
           {charge.fee !== a.price_pence && (
@@ -204,7 +207,8 @@ export function AppointmentView() {
           <h3>Waiting for the {money(a.deposit_required_pence)} deposit</h3>
           <p className="sub">When the money shows in your bank (reference <b className="mono">{a.reference}</b>), mark it received. The client gets an email saying they’re confirmed.</p>
           <button className="btn ok block" onClick={() => setSheet('deposit')}><Icon name="tick" size={20} /> Deposit received</button>
-          {phone && <WhatsAppButton a={a} s={s} kind="deposit" label="Ask for the deposit on WhatsApp" />}
+          {checkPhone && phone && <p className="sub" style={{ margin: 0 }}>Check their mobile above before you ask on WhatsApp.</p>}
+          {phone && !checkPhone && <WhatsAppButton a={a} s={s} kind="deposit" label="Ask for the deposit on WhatsApp" />}
         </div>
       )}
 
@@ -333,15 +337,26 @@ function changeLines(c: ClientChange, tz: string): string[] {
   return lines;
 }
 
-/** A polite note about the late-cancellation charge, with bank details and the booking reference. */
+/**
+ * A polite note about the late-cancellation charge, with bank details and the booking reference.
+ * The reason matches what the client was told: cancelled inside the notice period, or changed inside it earlier.
+ */
 function lateChargeMessage(a: Appointment, s: Settings, c: ReturnType<typeof lateCharge>): string {
-  const notice = s.cancel_notice_hours > 0 ? `with less than ${s.cancel_notice_hours} hours’ notice` : 'at short notice';
+  const notice = s.cancel_notice_hours > 0 ? `with less than ${noticeLabel(s.cancel_notice_hours)}` : 'at short notice';
   const paid = c.received > 0 ? `${money(c.deposit + c.received)} you’ve already paid` : `${money(c.deposit)} deposit you’ve already paid`;
-  const lines = [
-    `Hi ${firstName(a.client?.full_name ?? a.booking_name)}, sorry you couldn’t make your ${a.service_name} appointment on ${fmtDayLong(a.starts_at, s.timezone)} at ${fmtTime(a.starts_at, s.timezone)}.`,
+  const first = firstName(a.client?.full_name ?? a.booking_name);
+  const when = `${fmtDayLong(a.starts_at, s.timezone)} at ${fmtTime(a.starts_at, s.timezone)}`;
+  // A late switch to something cheaper keeps the price before it, so say where the amount comes from.
+  const payable = `the full ${money(c.fee)}${c.fee > a.price_pence ? ' (the price of your booking before it was changed)' : ''} is payable under my cancellation policy` +
+    (c.deposit + c.received > 0 ? ` — that’s ${money(c.owed)} after the ${paid}.` : '.');
+  const lines = lateFromEarlierChange(a, s.cancel_notice_hours) ? [
+    // Cancelled in good time: no "sorry you couldn’t make it", and the reason is the earlier change.
+    `Hi ${first}, about your cancelled ${a.service_name} booking on ${when} (reference ${a.reference}): as it was changed ${notice}, ${payable}`,
     '',
-    `As it was cancelled ${notice}, the full ${money(c.fee)} is payable under my cancellation policy` +
-      (c.deposit + c.received > 0 ? ` — that’s ${money(c.owed)} after the ${paid}.` : '.'),
+  ] : [
+    `Hi ${first}, sorry you couldn’t make your ${a.service_name} appointment on ${when}.`,
+    '',
+    `As it was cancelled ${notice}, ${payable}`,
     '',
   ];
   if (s.bank_account_number) {
@@ -509,8 +524,8 @@ function CancelSheet({ a, onClose, onDone }: { a: Appointment; onClose: () => vo
   const [late, setLate] = useState(false);
   const { busy, error, run } = useAction();
   // Inside the notice period, or the client already changed it inside one: if the
-  // client is the one cancelling, it's a late cancellation.
-  const changedLate = a.late_fee_pence != null;
+  // client is the one cancelling, it's a late cancellation. No notice period means no policy.
+  const changedLate = s.cancel_notice_hours > 0 && a.late_fee_pence != null;
   const inNotice = changedLate
     || (s.cancel_notice_hours > 0 && Date.now() > freeChangeDeadline(a.starts_at, s.cancel_notice_hours).getTime());
   const who = firstName(a.client?.full_name) || 'The client';
@@ -527,8 +542,8 @@ function CancelSheet({ a, onClose, onDone }: { a: Appointment; onClose: () => vo
           <label className="check">
             <input type="checkbox" checked={late} onChange={(e) => setLate(e.target.checked)} />
             <span>{changedLate
-              ? `${who} already changed this booking with less than ${s.cancel_notice_hours} hours’ notice — mark this cancellation as late`
-              : `${who} cancelled with less than ${s.cancel_notice_hours} hours’ notice — mark it as a late cancellation`}</span>
+              ? `${who} already changed this booking with less than ${noticeLabel(s.cancel_notice_hours)} — mark this cancellation as late`
+              : `${who} cancelled with less than ${noticeLabel(s.cancel_notice_hours)} — mark it as a late cancellation`}</span>
           </label>
         )}
         {a.deposit_paid_at && <div className="notice warn">A {money(a.deposit_required_pence)} deposit was paid. If you’re refunding it, add a refund in Money.</div>}

@@ -1584,6 +1584,48 @@ test('a cancellation in good time, with no late change before it, isn’t late a
   assert.equal((await claimJobs()).jobs.find((j) => j.kind === 'owner_cancelled').late_fee_pence, null);
 });
 
+test('no notice period means the policy is off: a cancellation after an earlier late change isn’t late', async () => {
+  const set = await addService('BIAB new set', 75, 4500);
+  const polish = await addService('File and polish', 30, 800);
+  // Switched to something cheaper and moved a week ahead inside the 48 hours…
+  const a = await diaryAppt(await insideNotice(), { serviceId: set, serviceName: 'BIAB new set', duration: 75, price: 4500 });
+  assert.equal((await changeBooking(a.public_token, polish, await londonAt(8, '10:00'))).late, true);
+  assert.equal((await getBooking(a.public_token)).booking.late_fee_pence, 4500);
+  const other = await diaryAppt(await londonAt(1, '16:00'), { email: 'b@example.com', serviceId: set, serviceName: 'BIAB new set', duration: 75, price: 4500 });
+  assert.equal((await changeBooking(other.public_token, null, await londonAt(9, '10:00'))).late, true);
+
+  // …then she sets no notice period. The manage page shows no fee and no cut-off, and a change isn't late.
+  await db.query(`update public.settings set cancel_notice_hours = 0 where id = 1`);
+  const m = await getBooking(a.public_token);
+  assert.deepEqual([m.cancel_notice_hours, m.booking.free_until, m.booking.late_fee_pence], [0, null, null]);
+  assert.equal((await changeBooking(a.public_token, null, await londonAt(10, '10:00'))).late, false);
+
+  // Cancelling isn't late either, and there's no fee.
+  assert.deepEqual(await cancelBooking(a.public_token), { cancelled: true, late: false });
+  const row = await appt(a.reference);
+  assert.deepEqual([row.cancelled_late, row.late_fee_pence], [false, null]);
+  assert.deepEqual((await changesOf(a.id)).map((c) => [c.action, c.late]),
+    [['moved_treatment', true], ['moved', false], ['cancelled', false]]);
+  const job = (await claimJobs()).jobs.find((j) => j.kind === 'owner_cancelled');
+  assert.deepEqual([job.cancelled_late, job.late_fee_pence, job.free_until], [false, null, null]);
+  const after = await getBooking(a.public_token);
+  assert.deepEqual([after.booking.cancelled_late, after.booking.late_fee_pence], [false, null]);
+
+  // The owner marking a cancellation late is her own call, so it stands, and the
+  // manage page shows the fee fixed then.
+  const told = await diaryAppt(await londonAt(4, '10:00'), { email: 'c@example.com' });
+  await asOwner(`select public.owner_cancel_appointment($1, 'Phoned', true, true)`, [told.id]);
+  assert.deepEqual((await db.query(`select cancelled_late, late_fee_pence from public.appointments where id = $1`, [told.id])).rows[0],
+    { cancelled_late: true, late_fee_pence: 2500 });
+  const t = (await getBooking(told.public_token)).booking;
+  assert.deepEqual([t.cancelled_late, t.late_fee_pence], [true, 2500]);
+
+  // The late change is kept on the booking, and counts again once she sets a notice period again.
+  assert.equal((await getBooking(other.public_token)).booking.late_fee_pence, null);
+  await db.query(`update public.settings set cancel_notice_hours = 48 where id = 1`);
+  assert.equal((await getBooking(other.public_token)).booking.late_fee_pence, 4500);
+});
+
 test('changes across all bookings are braked, so the links can’t be used to use up the day’s emails', async () => {
   const a = await diaryAppt(await londonAt(4, '10:00'));
   const other = await diaryAppt(await londonAt(5, '10:00'), { email: 'b@example.com' });

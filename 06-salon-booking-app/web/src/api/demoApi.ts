@@ -357,7 +357,8 @@ export function demoApi(): Api {
           cancelled_by: a.cancelled_by, cancelled_late: a.cancelled_late,
           changes_left: Math.max(0, MAX_CLIENT_CHANGES - a.client_change_count),
           has_email: !!c?.email,
-          late_fee_pence: a.late_fee_pence,
+          // Like the database: with no notice period nothing upcoming carries a fee.
+          late_fee_pence: s.cancel_notice_hours > 0 || a.status === 'cancelled' ? a.late_fee_pence : null,
           form_needed: a.is_new_client && !db.forms.some((f) => f.client_id === a.client_id),
           free_until: s.cancel_notice_hours > 0 ? new Date(new Date(a.starts_at).getTime() - s.cancel_notice_hours * 3600e3).toISOString() : null,
         },
@@ -413,8 +414,9 @@ export function demoApi(): Api {
     },
     async cancelBooking(token, reason) {
       const a = managed(token);
-      // An earlier change inside the notice period makes any cancellation late.
-      const late = insideNotice(a.starts_at) || a.late_fee_pence != null;
+      // An earlier change inside the notice period makes any cancellation late. No notice period means
+      // the policy is off, even after such a change (as in public_cancel_booking).
+      const late = db.settings.cancel_notice_hours > 0 && (insideNotice(a.starts_at) || a.late_fee_pence != null);
       a.late_fee_pence = late ? Math.max(a.late_fee_pence ?? 0, a.price_pence) : null;
       const note = (reason ?? '').replace(/[\s\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, 300).trim() || null;
       Object.assign(a, { status: 'cancelled', cancelled_at: nowIso(), cancelled_by: 'client', cancelled_late: late,

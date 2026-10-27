@@ -174,12 +174,15 @@ function render_(job, s) {
     ? box_('<b>Before your first visit</b><br>Please fill in this quick health and allergy form (2 minutes): <br>' + link_(job.form_url, 'Open the consultation form'))
     : '';
   var address = s.address ? ['Where', s.address] : null;
-  // The notice the cancellation policy asks for: "48 hours" / "48 hours’ notice".
+  // The notice the cancellation policy asks for: "48 hours" / "less than 48 hours’ notice" /
+  // "with less than 48 hours’ notice". 0 means no notice period, so the policy is off; anything
+  // flagged late before she set it is "short notice", never "0 hours".
   var noticeHours = s.cancel_notice_hours === null || s.cancel_notice_hours === undefined ? 48 : Number(s.cancel_notice_hours);
   var hrs = noticeHours === 1 ? '1 hour' : noticeHours + ' hours';
-  var notice = noticeHours === 1 ? '1 hour’s notice' : noticeHours + ' hours’ notice';
+  var lessThan = noticeHours > 0 ? 'less than ' + (noticeHours === 1 ? '1 hour’s notice' : noticeHours + ' hours’ notice') : 'short notice';
+  var withNotice = noticeHours > 0 ? 'with ' + lessThan : 'at short notice';
   // Only ever in emails to the client: the link is the key to their booking.
-  var manage = manageBlock_(job, s, tz, notice);
+  var manage = manageBlock_(job, s, tz, noticeHours, withNotice);
   var diary = site ? p_(link_(site + '/', 'Open your diary')) : '';
 
   // --- Alerts to the owner (never the client's change/cancel link) ----------
@@ -207,9 +210,9 @@ function render_(job, s) {
         p_(esc_(job.client_name) + ' changed their booking online. It’s now:'),
         table_(current),
         // A move or a switch of treatment: either counts once it's inside the notice period.
-        anyLate ? box_('<b>Changed with less than ' + esc_(notice) + '.</b>') : '',
+        anyLate ? box_('<b>Changed ' + esc_(withNotice) + '.</b>') : '',
         changes.length ? p_('<b>What changed</b>') : '',
-        changes.length ? changeList_(changes, tz, notice) : '',
+        changes.length ? changeList_(changes, tz, noticeHours, lessThan) : '',
         diary,
       ], biz);
   }
@@ -234,17 +237,24 @@ function render_(job, s) {
     var changedLate = (job.changes || []).some(function (x) { return x.late && x.action !== 'cancelled'; });
     var lateBox = !late ? ''
       : lateFromEarlierChange_(job)
-        ? box_('<b>They changed this booking with less than ' + esc_(notice) + ' earlier</b>, so this cancellation counts as late under your policy. ' +
+        ? box_('<b>They changed this booking ' + esc_(withNotice) + ' earlier</b>, so this cancellation counts as late under your policy. ' +
             full.charAt(0).toUpperCase() + full.slice(1) + payable)
-        : box_('<b>Cancelled with less than ' + esc_(notice) + '.</b> Under your cancellation policy ' + full + payable);
+        : box_('<b>Cancelled ' + esc_(withNotice) + '.</b> Under your cancellation policy ' + full + payable);
+    // A paid deposit counts towards a late fee (as the app's balance does); otherwise what
+    // happens to it is up to her.
+    var paidDeposit = !job.deposit_paid ? ''
+      : late
+        ? p_('They paid a ' + money_(job.deposit_required_pence) + ' deposit, which counts towards it, so the balance is ' +
+            money_(Math.max(0, fee - job.deposit_required_pence)) + '.')
+        : p_('They paid a ' + money_(job.deposit_required_pence) + ' deposit. Whether you keep it or refund it is your call.');
     return msg_((late ? 'Late cancellation: ' : 'Cancelled: ') + job.client_name + ' — ' + job.service_name + ', ' + fmt_(job.starts_at, tz, 'EEE d MMM HH:mm'),
       late ? 'Late cancellation' : 'A client cancelled',
       [
         p_(esc_(job.client_name) + ' cancelled their booking online. The time is free again in your diary.'),
         table_(gone),
         lateBox,
-        !late && changedLate ? box_('Earlier, they changed this booking with less than ' + esc_(notice) + '.') : '',
-        job.deposit_paid ? p_('They paid a ' + money_(job.deposit_required_pence) + ' deposit. Whether you keep it or refund it is your call.') : '',
+        !late && changedLate ? box_('Earlier, they changed this booking ' + esc_(withNotice) + '.') : '',
+        paidDeposit,
         diary,
       ], biz);
   }
@@ -287,23 +297,26 @@ function render_(job, s) {
   if (job.kind === 'cancelled') {
     var c = [['Treatment', job.service_name], ['Was', when], ['Reference', job.reference]];
     var blocks;
-    if (job.cancelled_by === 'client') {
+    var byClient = job.cancelled_by === 'client';
+    if (byClient) {
       // They wrote the reason themselves, so it isn't repeated back to them.
       blocks = [p_('Hi ' + esc_(job.first_name) + ', as you asked, your appointment below has been cancelled.'), table_(c)];
-      if (job.cancelled_late) {
-        // Late because of an earlier change inside the notice period, not because of when they cancelled.
-        blocks.push(p_((lateFromEarlierChange_(job)
-            ? 'As you changed this booking with less than ' + esc_(notice)
-            : 'As this was less than ' + esc_(hrs) + ' before your appointment') +
-          ', our cancellation policy applies' + (s.cancellation_policy ? ': ' + esc_(s.cancellation_policy) : '.')));
-      }
     } else {
       if (job.cancel_reason) c.push(['Reason', job.cancel_reason]);
       blocks = [p_('Hi ' + esc_(job.first_name) + ', your appointment below has been cancelled.'), table_(c)];
-      // The owner cancelled on the client's behalf and marked it late.
-      if (job.cancelled_by === 'owner' && job.cancelled_late) {
-        blocks.push(p_('As this was less than ' + esc_(hrs) + ' before your appointment, our cancellation policy applies' +
-          (s.cancellation_policy ? ': ' + esc_(s.cancellation_policy) : '.')));
+    }
+    // Late online, or the owner cancelled on the client's behalf and marked it late.
+    if (job.cancelled_late && (byClient || job.cancelled_by === 'owner')) {
+      // Late because of an earlier change inside the notice period, not because of when it was cancelled.
+      var why = lateFromEarlierChange_(job)
+        ? (byClient ? 'As you changed this booking ' : 'As this booking was changed ') + withNotice
+        : noticeHours > 0 ? 'As this was less than ' + hrs + ' before your appointment' : 'As this was cancelled at short notice';
+      blocks.push(p_(esc_(why) + ', our cancellation policy applies' + (s.cancellation_policy ? ': ' + esc_(s.cancellation_policy) : '.')));
+      // The fee is fixed at the dearest price it had when it was changed or cancelled late.
+      var owed = job.late_fee_pence || job.price_pence;
+      if (owed > 0) {
+        blocks.push(p_('The full ' + money_(owed) + ' is payable' +
+          (owed > job.price_pence ? ' (the price of your booking before you changed it)' : '') + '.'));
       }
     }
     return msg_('Your appointment has been cancelled — ' + biz, 'Appointment cancelled',
@@ -332,6 +345,7 @@ function clientRows_(job) {
 /**
  * A late cancellation made in good time for the booking's current slot: it
  * counts as late because they changed it inside the notice period earlier.
+ * (No notice period means no free_until, so never.)
  */
 function lateFromEarlierChange_(job) {
   return !!job.cancelled_late && !!job.cancelled_at && !!job.free_until &&
@@ -361,13 +375,14 @@ function depositBlocks_(job, s, tz, lead) {
  * "Need to change or cancel?" with the client's own link, and the time after
  * which the cancellation policy applies. Only for emails to the client.
  */
-function manageBlock_(job, s, tz, notice) {
+function manageBlock_(job, s, tz, noticeHours, withNotice) {
   var online = s.client_self_service !== false && /^https:\/\//i.test(job.manage_url || '');
   // Once they've changed it inside the notice period, a cancellation is late
   // whenever it comes, so there's no "free until" time to offer any more.
-  var lateChange = job.late_fee_pence !== null && job.late_fee_pence !== undefined;
+  // With no notice period (0) the policy is off, so that no longer applies.
+  var lateChange = noticeHours > 0 && job.late_fee_pence !== null && job.late_fee_pence !== undefined;
   var by = lateChange
-    ? 'As you changed this booking with less than ' + notice + ', the cancellation policy applies if you cancel.'
+    ? 'As you changed this booking ' + withNotice + ', the cancellation policy applies if you cancel.'
     : job.free_until && new Date(job.free_until).getTime() > Date.now()
       ? 'Please let us know by ' + fmt_(job.free_until, tz, "EEEE d MMMM 'at' HH:mm") + ' — after that, the cancellation policy applies.'
       : '';
@@ -377,16 +392,22 @@ function manageBlock_(job, s, tz, notice) {
     (by ? '<br>' + esc_(by) : ''));
 }
 
-/** The client's recent online changes, oldest first, for the owner. */
-function changeList_(changes, tz, notice) {
+/** The client's recent online changes, oldest first, for the owner. lessThan: "less than 48 hours’ notice". */
+function changeList_(changes, tz, noticeHours, lessThan) {
   var moved = function (x) { return 'from ' + fmt_(x.old_starts_at, tz, 'EEE d MMM HH:mm') + ' to ' + fmt_(x.new_starts_at, tz, 'EEE d MMM HH:mm'); };
   var switched = function (x) { return 'from ' + x.old_service_name + ' to ' + x.new_service_name; };
+  // A cancellation made before its own cut-off is late only because of an earlier change.
+  var inTime = function (x) {
+    return x.action === 'cancelled' && noticeHours > 0 && !!x.at && !!x.old_starts_at &&
+      new Date(x.at).getTime() < new Date(x.old_starts_at).getTime() - noticeHours * 3600000;
+  };
   return '<ul style="margin:6px 0;padding-left:20px">' + changes.map(function (x) {
     var what = x.action === 'moved' ? 'Moved ' + moved(x)
       : x.action === 'treatment' ? 'Switched ' + switched(x)
       : x.action === 'moved_treatment' ? 'Moved ' + moved(x) + ', and switched ' + switched(x)
       : 'Cancelled';
-    return '<li style="margin:3px 0">' + esc_(what) + (x.late ? ' <b>(less than ' + esc_(notice) + ')</b>' : '') +
+    var late = !x.late ? '' : inTime(x) ? 'counts as late: changed with ' + lessThan + ' earlier' : lessThan;
+    return '<li style="margin:3px 0">' + esc_(what) + (late ? ' <b>(' + esc_(late) + ')</b>' : '') +
       ' <span style="color:#76676b">· changed ' + esc_(fmt_(x.at, tz, "EEE d MMM 'at' HH:mm")) + '</span></li>';
   }).join('') + '</ul>';
 }

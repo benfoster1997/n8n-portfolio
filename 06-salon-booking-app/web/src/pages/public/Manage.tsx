@@ -5,7 +5,7 @@ import { SlotPicker, useFreeSlots } from '../../components/SlotPicker';
 import { ErrorBox, Field, Icon, Sheet, Spinner, useAction, useLoad } from '../../components/ui';
 import { openDays } from '../../lib/slots';
 import { addDays, dateInZone, fmtDay, fmtDayLong, fmtTime, minutesLabel, startOfDayInstant } from '../../lib/time';
-import { money, normalizeUkPhone, whatsappLink } from '../../lib/text';
+import { lateFromEarlierChange, money, normalizeUkPhone, whatsappLink } from '../../lib/text';
 import type { ApptStatus, BookingChangeResult, BusyRange, ManageInfo } from '../../lib/types';
 import { useClientManifest } from '../../components/clientManifest';
 
@@ -91,8 +91,9 @@ function ManageBooking({ m, token, reload, setData }: {
   const upcoming = live && startMs > now;
   // Inside the notice period: the deadline has passed, or they've already changed it inside the
   // period (which keeps the policy in force). Cancelling, or changing it again, then falls under the policy.
+  // With no notice period the policy is off, whatever happened before.
   const pastDeadline = !!b.free_until && now > new Date(b.free_until).getTime();
-  const late = pastDeadline || b.late_fee_pence != null;
+  const late = notice > 0 && (pastDeadline || b.late_fee_pence != null);
   // Payable if they cancel: the full price, or the price before a late change if that was higher.
   const fee = Math.max(b.late_fee_pence ?? 0, b.price_pence);
   const canCancel = upcoming && m.client_self_service;
@@ -202,8 +203,9 @@ function ManageBooking({ m, token, reload, setData }: {
   const when = (iso: string | Date) => `${fmtDayLong(iso, tz)} at ${fmtTime(iso, tz)}`;
   const stepIndex = ['service', 'time', 'confirm'].indexOf(mode);
   const status = STATUS[b.status];
-  // A late cancellation they made themselves: inside the notice period, or after changing it inside it.
-  const cancelledInside = !!b.free_until && !!b.cancelled_at && new Date(b.cancelled_at).getTime() > new Date(b.free_until).getTime();
+  // A late cancellation made in good time, late only because of an earlier change inside the notice
+  // period. The same test whoever cancelled, so the client and owner wording agree.
+  const fromChange = lateFromEarlierChange(b, notice);
 
   return (
     <>
@@ -280,13 +282,15 @@ function ManageBooking({ m, token, reload, setData }: {
               <b>This appointment has been cancelled.</b>
               {b.cancelled_late && (b.cancelled_by === 'client' ? (
                 <span>
-                  {cancelledInside ? `As it was cancelled less than ${hours(notice)} before the appointment` : `As it had been changed with ${shortNotice(notice)}`},
+                  {fromChange ? `As it had been changed with ${shortNotice(notice)}`
+                    : `As it was cancelled ${notice > 0 ? `less than ${hours(notice)} before the appointment` : 'at short notice'}`},
                   under the cancellation policy the full price ({money(fee)}) may be payable. {business} will be in touch.
                 </span>
               ) : (
                 // Cancelled by the owner and marked late: the same words as the client's email.
                 <span>
-                  As this was cancelled {notice > 0 ? `less than ${hours(notice)} before the appointment` : 'at short notice'}, the
+                  {fromChange ? `As it had been changed with ${shortNotice(notice)}`
+                    : `As this was cancelled ${notice > 0 ? `less than ${hours(notice)} before the appointment` : 'at short notice'}`}, the
                   cancellation policy applies — {business} will be in touch.
                 </span>
               ))}

@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { availableSlots, openDays, type SlotRules } from '../../src/lib/slots';
 import { addDays, fmtTime, isoWeekday, startOfWeek, zonedToInstant } from '../../src/lib/time';
 import {
-  changeNote, fillTemplate, friendlyError, money, normalizeUkPhone, parsePounds, taxYearOf, toCsv, whatsappLink, DEFAULT_TEMPLATES,
+  changeNote, fillTemplate, friendlyError, lateFromEarlierChange, money, normalizeUkPhone, parsePounds, taxYearOf, toCsv, whatsappLink,
+  DEFAULT_TEMPLATES,
 } from '../../src/lib/text';
 import { blankAnswers, describeAnswers, validateAnswers } from '../../src/lib/consultation';
 import { dueWhatsAppReminders, lateCharge, lateChargePayments, reminderDates, reminderDays, reminderRange } from '../../src/lib/reminders';
@@ -218,11 +219,48 @@ describe('how to change or cancel, in messages', () => {
 
   it('treats a booking already changed inside the notice period as late, even once moved further out', () => {
     const a = appt(200, { late_fee_pence: 4500 });
+    expect(changeNote(a, s, now)).toBe('Need to change or cancel? https://example.app/manage/tok123 '
+      + '(as you changed this booking with less than 48 hours’ notice, the cancellation policy applies if you cancel)');
     for (const text of messages(a)) {
       expect(text).not.toContain('Please do it by');
-      expect(text).toContain('so the cancellation policy applies');
+      // Eight days away: it isn't "now less than 48 hours before".
+      expect(text).not.toContain('it’s now less than');
+      expect(text).toContain('as you changed this booking with less than 48 hours’ notice, the cancellation policy applies if you cancel');
       expect(text).toContain('/manage/tok123');
     }
+  });
+
+  it('says it’s now inside the notice period once the deadline has passed, changed earlier or not', () => {
+    for (const text of messages(appt(26, { late_fee_pence: 4500 }))) {
+      expect(text).toContain('(it’s now less than 48 hours before, so the cancellation policy applies)');
+      expect(text).not.toContain('as you changed this booking');
+    }
+  });
+
+  it('with no notice period, an earlier late change no longer brings in the policy', () => {
+    const none = { ...s, cancel_notice_hours: 0 };
+    for (const text of messages(appt(200, { late_fee_pence: 4500 }), none)) {
+      expect(text).toContain('Need to change or cancel? https://example.app/manage/tok123');
+      expect(text).not.toMatch(/policy|0 hours/);
+    }
+  });
+});
+
+describe('a cancellation that’s late because of an earlier change', () => {
+  const starts = '2026-06-20T10:00:00Z';
+  const cancelled = (cancelled_at: string | null, cancelled_late = true) => ({ starts_at: starts, cancelled_at, cancelled_late });
+
+  it('is a late cancellation made before the notice period started', () => {
+    // Twelve days ahead with 48 hours’ notice: late only because of the change.
+    expect(lateFromEarlierChange(cancelled('2026-06-08T10:00:00Z'), 48)).toBe(true);
+    // Inside the notice period: late in its own right.
+    expect(lateFromEarlierChange(cancelled('2026-06-19T10:00:00Z'), 48)).toBe(false);
+  });
+
+  it('needs the cancellation to be late, a cancelled time and a notice period', () => {
+    expect(lateFromEarlierChange(cancelled('2026-06-08T10:00:00Z', false), 48)).toBe(false);
+    expect(lateFromEarlierChange(cancelled(null), 48)).toBe(false);
+    expect(lateFromEarlierChange(cancelled('2026-06-08T10:00:00Z'), 0)).toBe(false);
   });
 });
 

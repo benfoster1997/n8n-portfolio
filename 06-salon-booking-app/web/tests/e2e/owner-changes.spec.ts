@@ -15,21 +15,26 @@ async function signIn(page: Page) {
 }
 const section = (page: Page, title: string) => page.locator(`.section-title:has-text("${title}") + .card`);
 const waText = async (link: Locator) => decodeURIComponent((await link.getAttribute('href'))!.split('text=')[1]);
+/** The WhatsApp links in an area whose message carries a client's private change/cancel link. */
+const waWithManageLink = async (area: Locator) =>
+  (await area.locator('a.btn.wa').evaluateAll((els) => els.map((e) => decodeURIComponent(e.getAttribute('href') ?? ''))))
+    .filter((href) => href.includes('/manage/'));
 const lateCard = (page: Page) => page.locator('.card.attention', { hasText: 'Late cancellations' });
 
 // The demo's data, straight from this browser's storage.
 const KEY = 'salon-demo-v4';
 interface DemoAppt {
   id: string; booking_name: string; status: string; starts_at: string; ends_at: string; busy_until: string; duration_min: number;
-  public_token: string; service_name: string; price_pence: number; late_fee_pence: number | null; cancelled_at: string | null;
+  public_token: string; reference: string; service_name: string; price_pence: number; late_fee_pence: number | null;
+  cancelled_at: string | null; cancelled_by: string | null; cancelled_late: boolean;
   deposit_required_pence: number; deposit_paid_at: string | null; booking_phone: string | null; moved_at: string | null;
-  details_sent_at: string | null; client_id: string;
+  details_sent_at: string | null; whatsapp_reminder_sent_at: string | null; client_id: string;
 }
 interface DemoStore {
   appointments: DemoAppt[];
   clients: { id: string; full_name: string; phone: string | null; phone_e164: string | null }[];
   outbox: { appointment_id: string; kind: string }[];
-  settings: { reminder_hours_before: number; slot_interval_min: number };
+  settings: { reminder_hours_before: number; slot_interval_min: number; cancel_notice_hours: number; wa_template_deposit: string | null };
 }
 async function demo(page: Page): Promise<DemoStore> {
   return page.evaluate((key) => JSON.parse(localStorage.getItem(key)!), KEY);
@@ -44,6 +49,27 @@ async function appt(page: Page, name: string, status = 'confirmed'): Promise<Dem
   const a = (await demo(page)).appointments.find((x) => x.booking_name === name && x.status === status);
   expect(a, `${name}'s ${status} booking in the demo`).toBeTruthy();
   return a!;
+}
+
+/**
+ * As the client, from her own link and inside the notice period: change the booking to the
+ * first free time on the last day offered, weeks ahead. The change is late, so the policy stays in force.
+ */
+async function lateChangeFarAhead(page: Page, a: DemoAppt, treatment: RegExp = /Your current treatment/): Promise<DemoAppt> {
+  await page.goto(`/manage/${a.public_token}`);
+  await page.getByRole('button', { name: 'Change time or treatment' }).click();
+  await page.getByRole('button', { name: treatment }).click();
+  await page.getByRole('option').last().click();
+  await page.locator('.slot').first().click();
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await expect(page.getByRole('note', { name: 'Changing inside the notice period' })).toBeVisible();
+  await page.getByRole('button', { name: 'Confirm change' }).click();
+  await expect(page.getByRole('heading', { name: 'Your booking has been changed' })).toBeVisible();
+  const after = (await demo(page)).appointments.find((x) => x.id === a.id)!;
+  expect(after.late_fee_pence).toBe(a.price_pence);
+  // Now well before its notice period starts.
+  expect(new Date(after.starts_at).getTime() - Date.now()).toBeGreaterThan(14 * 86400e3);
+  return after;
 }
 
 test('Today lists what clients changed, and late cancellations need attention', async ({ page }) => {
@@ -294,8 +320,8 @@ test('a late cancellation with a deposit and a part payment: Today and the appoi
   await expect(card).toContainText('Under your cancellation policy the full £25 is payable');
   await expect(card).toContainText('it’s £10 now');
   await expect(card).toContainText('They’ve already paid a £10 deposit, so the balance is £15.');
-  expect(await waText(card.getByRole('link', { name: 'WhatsApp Isla' })))
-    .toContain('the full £25 is payable under my cancellation policy — that’s £15 after the £10 deposit you’ve already paid.');
+  expect(await waText(card.getByRole('link', { name: 'WhatsApp Isla' }))).toContain(
+    'the full £25 (the price of your booking before it was changed) is payable under my cancellation policy — that’s £15 after the £10 deposit you’ve already paid.');
 
   // She pays £5 for now.
   await card.getByRole('button', { name: 'Record payment received' }).click();
@@ -333,13 +359,20 @@ test('a returning client who types a different mobile: the owner checks it befor
   await page.getByRole('button', { name: 'Confirm booking' }).click();
   await expect(page.getByRole('heading', { name: /Booking received/ })).toBeVisible();
 
-  // Flagged on the reminders list…
+  // Flagged on the reminders list, where the reminder waits until the mobile is checked: nothing
+  // carrying her private link goes to the number on her record.
   await signIn(page);
   await page.goto('/reminders');
-  const check = page.getByRole('link', { name: 'Check mobile' });
+  const check = page.getByRole('link', { name: 'Check mobile', exact: true });
   await expect(check).toHaveCount(1);
-  await expect(page.locator('li', { has: check })).toContainText('Ruby Clarke');
-  await check.click();
+  const row = page.locator('li', { has: check });
+  await expect(row).toContainText('Ruby Clarke');
+  expect(await waWithManageLink(row)).toEqual([]);
+  await expect(row.locator('a.btn.wa')).toHaveCount(0);
+  const first = row.getByRole('link', { name: 'Check mobile first' });
+  await expect(first).toHaveAttribute('href', /^\/appointments\/[0-9a-f-]{36}$/);
+  await first.click();
+  expect((await demo(page)).appointments.filter((a) => a.booking_name === 'Ruby Clarke' && a.whatsapp_reminder_sent_at)).toEqual([]);
 
   // …and on the appointment, with nothing carrying her private link sent by WhatsApp until it's checked.
   const note = page.getByRole('note', { name: 'Check their mobile' });
@@ -479,4 +512,154 @@ test('a deposit chased on WhatsApp still gets its reminder once the deposit is i
   await expect(sophie).not.toContainText('✓ WhatsApp opened');
   await page.getByRole('link', { name: 'Today', exact: true }).click();
   await expect(page.getByRole('link', { name: 'Send 3 WhatsApp reminders' })).toBeVisible();
+});
+
+test('a deposit chase waits for a different mobile to be checked too', async ({ page }) => {
+  await signIn(page);
+  const sophie = await appt(page, 'Sophie Turner', 'pending_deposit');
+  // Her own deposit wording carries the change/cancel link.
+  await editDemo(page, (db) => {
+    db.appointments.find((a) => a.id === sophie.id)!.booking_phone = '07700 900777';
+    db.settings.wa_template_deposit = 'Hi {first_name}, please send the {deposit} deposit (reference {reference}).\n\n{change_note}';
+  });
+  await page.goto('/reminders');
+  const row = page.locator('li', { hasText: 'Sophie Turner' });
+  await expect(row.getByRole('link', { name: 'Check mobile first' })).toBeVisible();
+  expect(await waWithManageLink(row)).toEqual([]);
+  await expect(row.locator('a.btn.wa')).toHaveCount(0);
+
+  await page.goto(`/appointments/${sophie.id}`);
+  const card = page.locator('.card.attention', { hasText: 'Waiting for the £10 deposit' });
+  await expect(card).toContainText('Check their mobile above before you ask on WhatsApp.');
+  await expect(card.getByRole('link', { name: 'Ask for the deposit on WhatsApp' })).toHaveCount(0);
+  expect(await waWithManageLink(page.locator('body'))).toEqual([]);
+
+  // Once it's checked, the chase goes to the number she kept, link and all.
+  await page.getByRole('note', { name: 'Check their mobile' }).getByRole('button', { name: 'Keep the record’s number' }).click();
+  await expect(page.getByText('Kept the number on their record')).toBeVisible();
+  const ask = card.getByRole('link', { name: 'Ask for the deposit on WhatsApp' });
+  expect(await ask.getAttribute('href')).toMatch(/^https:\/\/wa\.me\/447700900103\?text=/);
+  expect(await waText(ask)).toContain(`/manage/${sophie.public_token}`);
+});
+
+test('a cancel in good time after a late move: the owner and the WhatsApp give the earlier change as the reason', async ({ page }) => {
+  await signIn(page);
+  const chloe = await appt(page, 'Chloe Bennett'); // tomorrow at 11:00, inside the 48-hour notice
+  const moved = await lateChangeFarAhead(page, chloe);
+
+  // Weeks ahead now: her messages say the policy applies because of the change, not that it's under 48 hours away.
+  await page.goto(`/appointments/${chloe.id}`);
+  const share = await waText(page.locator('.card', { hasText: 'Lets Chloe change or cancel' }).getByRole('link', { name: 'Send on WhatsApp' }));
+  expect(share).toMatch(/\/manage\/[0-9a-f-]{36} \(as you changed this booking with less than 48 hours’ notice, the cancellation policy applies if you cancel\)/);
+  expect(share).not.toContain('it’s now less than');
+  const reminder = await waText(page.getByRole('link', { name: 'WhatsApp', exact: true }));
+  expect(reminder).toContain('as you changed this booking with less than 48 hours’ notice, the cancellation policy applies if you cancel');
+  expect(reminder).not.toContain('it’s now less than');
+
+  // Then she cancels online, well before the notice period: still late, because of the change.
+  await page.goto(`/manage/${chloe.public_token}`);
+  await page.getByRole('button', { name: 'Cancel appointment' }).click();
+  await page.getByRole('button', { name: 'Yes, cancel my appointment' }).click();
+  await expect(page.getByText(/^As it had been changed with less than 48 hours’ notice, under the cancellation policy the full price \(£25\)/)).toBeVisible();
+  const after = (await demo(page)).appointments.find((x) => x.id === chloe.id)!;
+  expect(after).toMatchObject({ status: 'cancelled', cancelled_by: 'client', cancelled_late: true, late_fee_pence: 2500 });
+  expect(new Date(after.cancelled_at!).getTime()).toBeLessThan(new Date(after.starts_at).getTime() - 48 * 3600e3);
+
+  await page.goto(`/appointments/${chloe.id}`);
+  await expect(page.getByText('Cancelled by the client online')).toBeVisible();
+  const card = page.locator('.card.attention', { hasText: 'Late cancellation' });
+  await expect(card).toContainText('They changed this booking with less than 48 hours’ notice earlier, so this cancellation counts as late. '
+    + 'Under your cancellation policy the full £25 is payable — you arrange this with the client yourself.');
+  await expect(card).not.toContainText('Cancelled with less than');
+  const text = await waText(card.getByRole('link', { name: 'WhatsApp Chloe' }));
+  expect(text).toContain(`Hi Chloe, about your cancelled Gel polish — hands booking on ${fmtDayLong(moved.starts_at)} at ${fmtTime(moved.starts_at)} `
+    + `(reference ${chloe.reference}): as it was changed with less than 48 hours’ notice, the full £25 is payable under my cancellation policy.`);
+  expect(text).not.toContain('sorry you couldn’t make');
+  expect(text).not.toContain('before it was changed');
+});
+
+test('an owner cancel marked late after a late move: the client’s page and the WhatsApp give the change as the reason', async ({ page }) => {
+  await signIn(page);
+  const chloe = await appt(page, 'Chloe Bennett');
+  await lateChangeFarAhead(page, chloe);
+
+  // She messages to cancel, weeks ahead. The owner cancels it and marks it late because of the change.
+  await page.goto(`/appointments/${chloe.id}`);
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await page.getByLabel('Chloe already changed this booking with less than 48 hours’ notice — mark this cancellation as late').check();
+  await page.getByRole('button', { name: 'Cancel appointment' }).click();
+  await expect(page.getByText('Cancelled by you')).toBeVisible();
+  const card = page.locator('.card.attention', { hasText: 'Late cancellation' });
+  await expect(card).toContainText('They changed this booking with less than 48 hours’ notice earlier, so this cancellation counts as late.');
+  const text = await waText(card.getByRole('link', { name: 'WhatsApp Chloe' }));
+  expect(text).toContain('Hi Chloe, about your cancelled Gel polish — hands booking on ');
+  expect(text).toContain('as it was changed with less than 48 hours’ notice, the full £25 is payable under my cancellation policy.');
+  expect(text).not.toContain('sorry you couldn’t make');
+
+  // Her page gives the same reason as if she'd cancelled it herself.
+  await page.goto(`/manage/${chloe.public_token}`);
+  await expect(page.getByText('This appointment has been cancelled.')).toBeVisible();
+  await expect(page.getByText(
+    'As it had been changed with less than 48 hours’ notice, the cancellation policy applies — Demo Nail Studio will be in touch.')).toBeVisible();
+  await expect(page.getByText(/cancelled less than 48 hours before/)).toHaveCount(0);
+});
+
+test('a late switch to something cheaper, then a cancel: the WhatsApp says the fee is the price before the change', async ({ page }) => {
+  await signIn(page);
+  const chloe = await appt(page, 'Chloe Bennett');
+  // Inside the notice period she switches the £25 gel to a £10 removal, then cancels.
+  await page.goto(`/manage/${chloe.public_token}`);
+  await page.getByRole('button', { name: 'Change time or treatment' }).click();
+  await page.getByRole('button', { name: /Removal only/ }).click();
+  await expect(page.locator('.slot').first()).toBeVisible();
+  if ((await page.locator('.slot.on').count()) === 0) await page.locator('.slot').first().click();
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await page.getByRole('button', { name: 'Confirm change' }).click();
+  await page.getByRole('button', { name: 'Back to my booking' }).click();
+  await page.getByRole('button', { name: 'Cancel appointment' }).click();
+  await page.getByRole('button', { name: 'Yes, cancel my appointment' }).click();
+  await expect(page.getByText('This appointment has been cancelled.')).toBeVisible();
+  expect((await demo(page)).appointments.find((x) => x.id === chloe.id)).toMatchObject({ price_pence: 1000, late_fee_pence: 2500, cancelled_late: true });
+
+  await page.goto(`/appointments/${chloe.id}`);
+  const card = page.locator('.card.attention', { hasText: 'Late cancellation' });
+  await expect(card).toContainText('Under your cancellation policy the full £25 is payable');
+  await expect(card).toContainText('it’s £10 now');
+  const text = await waText(card.getByRole('link', { name: 'WhatsApp Chloe' }));
+  expect(text).toContain('Removal only');
+  expect(text).toContain('the full £25 (the price of your booking before it was changed) is payable under my cancellation policy.');
+});
+
+test('with no notice period, an earlier late change no longer makes a cancellation late', async ({ page }) => {
+  await signIn(page);
+  const chloe = await appt(page, 'Chloe Bennett');
+  await lateChangeFarAhead(page, chloe);
+  await editDemo(page, (db) => { db.settings.cancel_notice_hours = 0; });
+
+  // The owner isn't offered to mark it late, and nothing says "0 hours".
+  await page.goto(`/appointments/${chloe.id}`);
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  const sheet = page.getByRole('dialog', { name: 'Cancel appointment' });
+  await expect(sheet.getByRole('button', { name: 'Cancel appointment' })).toBeVisible();
+  await expect(sheet.getByRole('checkbox')).toHaveCount(0);
+  await expect(sheet).not.toContainText(/0 hours|already changed/);
+  await page.keyboard.press('Escape');
+  await expect(sheet).toHaveCount(0);
+  expect(await waText(page.getByRole('link', { name: 'WhatsApp', exact: true }))).not.toMatch(/policy|0 hours/);
+
+  // On her page the policy is off: free to cancel, and cancelling isn't late.
+  await page.goto(`/manage/${chloe.public_token}`);
+  await expect(page.getByRole('note', { name: 'Cancellation policy' })).toContainText('You can change or cancel free of charge any time before your appointment.');
+  await expect(page.getByText(/short notice|0 hours/)).toHaveCount(0);
+  await page.getByRole('button', { name: 'Cancel appointment' }).click();
+  await expect(page.getByRole('dialog').getByRole('note')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Yes, cancel my appointment' }).click();
+  await expect(page.getByText('This appointment has been cancelled.')).toBeVisible();
+  await expect(page.getByText(/may be payable|policy applies/)).toHaveCount(0);
+  expect((await demo(page)).appointments.find((x) => x.id === chloe.id)).toMatchObject({ status: 'cancelled', cancelled_late: false, late_fee_pence: null });
+
+  // Nothing for the owner to chase.
+  await page.goto(`/appointments/${chloe.id}`);
+  await expect(page.getByText('Cancelled by the client online')).toBeVisible();
+  await expect(page.locator('.card.attention', { hasText: 'Late cancellation' })).toHaveCount(0);
 });
