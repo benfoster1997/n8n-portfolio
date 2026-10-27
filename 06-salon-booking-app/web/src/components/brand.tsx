@@ -78,9 +78,9 @@ function LeafArt({ id, x, y, r, s, tone = 0, mirror = false }: {
       <path d="M0 0L-.4 6.5" stroke="#4a7a32" strokeWidth={1.6} strokeLinecap="round" />
       <path d={LEAF_A} fill={tone ? dark : light} />
       <path d={LEAF_B} fill={tone ? light : dark} />
-      <path d={LEAF_VEINS} fill="none" stroke="#e4f2d0" strokeOpacity={0.32} strokeWidth={0.55} strokeLinecap="round" />
-      <path d={LEAF_MID} fill="none" stroke="#eef7df" strokeOpacity={0.85} strokeWidth={1.05} strokeLinecap="round" />
-      <path d={LEAF_GLOSS} fill="none" stroke="#fff" strokeOpacity={0.3} strokeWidth={2.2} strokeLinecap="round" />
+      <path d={LEAF_VEINS} fill="none" stroke="#e4f2d0" strokeOpacity={0.22} strokeWidth={0.5} strokeLinecap="round" />
+      <path d={LEAF_MID} fill="none" stroke="#eef7df" strokeOpacity={0.78} strokeWidth={0.95} strokeLinecap="round" />
+      <path d={LEAF_GLOSS} fill="none" stroke="#fff" strokeOpacity={0.2} strokeWidth={2.6} strokeLinecap="round" />
       <path d={LEAF_EDGE} fill="none" stroke="#1f4417" strokeOpacity={0.32} strokeWidth={0.6} />
     </g>
   );
@@ -94,19 +94,21 @@ const BLOSSOM_PETALS = (() => {
   const rand = rng(11);
   return [0, 1, 2, 3, 4].map((i) => ({ a: r2(i * 72 + (rand() - 0.5) * 12), l: r2(0.92 + rand() * 0.14) }));
 })();
-const PETAL = 'M0-.6C3.4-2.4 5.3-6.6 1.5-10.1 .7-10.8-.6-10.8-1.4-10.1-5.2-6.6-3.6-2.4 0-.6Z';
-const PETAL_CREASE = 'M0-2.2Q.3-6 .2-8.6';
+const PETAL = 'M0-1.1C2.4-2.2 3.9-5.3 3.3-8 2.9-9.7 1.3-10.7 0-11-1.3-10.7-2.9-9.7-3.3-8-3.9-5.3-2.4-2.2 0-1.1Z';
+const PETAL_CUP = 'M0-1.1C2.4-2.2 3.9-5.3 3.3-8 2.9-9.7 1.3-10.7 0-11Q.9-6 0-1.1Z';
+const PETAL_CREASE = 'M0-2.6Q.35-6.2.15-9.2';
 const STAMENS = (() => {
   const rand = rng(5);
   let lines = '';
   let dots = '';
-  for (let i = 0; i < 11; i++) {
-    const a = rad(i * (360 / 11) + rand() * 14);
-    const len = 3.3 + rand() * 1.5;
+  for (let i = 0; i < 16; i++) {
+    const a = rad(i * (360 / 16) + (rand() - 0.5) * 18);
+    const len = 1.9 + rand() * 1.6;
     const x = Math.cos(a) * len;
     const y = Math.sin(a) * len;
-    lines += `M${pt(Math.cos(a) * 1.4, Math.sin(a) * 1.4)}L${pt(x, y)}`;
-    dots += `M${pt(x - 0.62, y)}a.62 .62 0 1 0 1.24 0a.62 .62 0 1 0-1.24 0`;
+    const rr = 0.36 + rand() * 0.16;
+    lines += `M${pt(Math.cos(a) * 0.9, Math.sin(a) * 0.9)}L${pt(x, y)}`;
+    dots += `M${pt(x - rr, y)}a${r2(rr)} ${r2(rr)} 0 1 0 ${r2(rr * 2)} 0a${r2(rr)} ${r2(rr)} 0 1 0-${r2(rr * 2)} 0`;
   }
   return { lines, dots };
 })();
@@ -117,13 +119,16 @@ function BlossomArt({ id, x, y, s, r = 0 }: { id: string; x: number; y: number; 
       <circle r={9.4} cx={0.5} cy={1.1} fill={`url(#${id}-bsh)`} />
       {BLOSSOM_PETALS.map((p, i) => (
         <g key={i} transform={`rotate(${p.a}) scale(${p.l})`}>
-          <path d={PETAL} fill={`url(#${id}-pt)`} stroke="#eaa9c2" strokeOpacity={0.85} strokeWidth={0.42} />
-          <path d={PETAL_CREASE} fill="none" stroke="#f0bccf" strokeWidth={0.4} strokeLinecap="round" />
+          <path d={PETAL} fill={`url(#${id}-pt)`} />
+          <path d={PETAL_CUP} fill="#f3cfe0" fillOpacity={0.5} />
+          <path d={PETAL_CREASE} fill="none" stroke="#efb7cd" strokeOpacity={0.8} strokeWidth={0.32} strokeLinecap="round" />
+          <path d={PETAL} fill="none" stroke="#e59bb9" strokeOpacity={0.75} strokeWidth={0.32} />
         </g>
       ))}
-      <circle r={2.3} fill={`url(#${id}-ctr)`} />
-      <path d={STAMENS.lines} stroke="#e7b733" strokeWidth={0.36} strokeLinecap="round" />
-      <path d={STAMENS.dots} fill="#f0ad17" stroke="#c98510" strokeWidth={0.15} />
+      <circle r={2.6} fill="#fbe7a1" fillOpacity={0.55} />
+      <path d={STAMENS.lines} stroke="#e2b23a" strokeWidth={0.3} strokeLinecap="round" />
+      <circle r={1.25} fill={`url(#${id}-ctr)`} />
+      <path d={STAMENS.dots} fill="#f3b21c" stroke="#c98510" strokeWidth={0.12} />
     </g>
   );
 }
@@ -157,7 +162,7 @@ const LEMON_PORES = (() => {
     const x = (rand() * 2 - 1) * 42;
     const y = (rand() * 2 - 1) * 27;
     if ((x / 42) ** 2 + (y / 27) ** 2 > 0.9) continue;
-    const rr = 0.42 + rand() * 0.55;
+    const rr = 0.34 + rand() * 0.44;
     const d = `M${pt(x - rr, y)}a${r2(rr)} ${r2(rr)} 0 1 0 ${r2(rr * 2)} 0a${r2(rr)} ${r2(rr)} 0 1 0-${r2(rr * 2)} 0`;
     if (n % 4 === 0) light += d; else dark += d;
     n++;
@@ -186,8 +191,8 @@ function LemonArt({ id, x, y, r, s }: { id: string; x: number; y: number; r: num
           <Stop o={1} c="var(--lemon-deep, #e9b51b)" />
         </radialGradient>
         <radialGradient id={`${id}-s`} gradientUnits="userSpaceOnUse" cx={r2(sx)} cy={r2(sy)} r={48}>
-          <Stop o={0} c="#c98400" a={0.34} />
-          <Stop o={0.55} c="#d99a08" a={0.14} />
+          <Stop o={0} c="#c27c00" a={0.4} />
+          <Stop o={0.55} c="#d99a08" a={0.16} />
           <Stop o={1} c="#e9b51b" a={0} />
         </radialGradient>
         <radialGradient id={`${id}-h`}>
@@ -198,8 +203,8 @@ function LemonArt({ id, x, y, r, s }: { id: string; x: number; y: number; r: num
       </defs>
       <path d={LEMON_BODY} fill={`url(#${id}-b)`} />
       <path d={LEMON_BODY} fill={`url(#${id}-s)`} />
-      <path d={LEMON_PORES.dark} fill="#c98a07" fillOpacity={0.3} />
-      <path d={LEMON_PORES.light} fill="#fffbe0" fillOpacity={0.7} />
+      <path d={LEMON_PORES.dark} fill="#c98a07" fillOpacity={0.22} />
+      <path d={LEMON_PORES.light} fill="#fffbe0" fillOpacity={0.55} />
       <ellipse cx={r2(hx)} cy={r2(hy)} rx={13} ry={6.2} transform={`rotate(${r2(glintAngle)} ${pt(hx, hy)})`} fill={`url(#${id}-h)`} />
       <ellipse cx={r2(hx - 2)} cy={r2(hy - 1)} rx={3.4} ry={1.7} transform={`rotate(${r2(glintAngle)} ${pt(hx - 2, hy - 1)})`} fill="#fff" fillOpacity={0.9} />
       <path d={LEMON_BODY} fill="none" stroke="#b17a00" strokeOpacity={0.38} strokeWidth={0.8} />
@@ -252,15 +257,22 @@ const SLICE_SEGMENTS = (() => {
 })();
 const SLICE_SACS = (() => {
   const rand = rng(3);
+  const h = Math.PI / 10;
   let light = '';
   let deep = '';
   for (let i = 0; i < 10; i++) {
     const th = (i * 36 - 90) * (Math.PI / 180);
-    for (let k = 0; k < 7; k++) {
-      const a = th + (rand() - 0.5) * 0.36;
-      const r1 = 9 + rand() * 22;
-      const r2_ = r1 + 4 + rand() * 6;
-      const seg = `M${pt(Math.cos(a) * r1, Math.sin(a) * r1)}L${pt(Math.cos(a) * Math.min(r2_, 35), Math.sin(a) * Math.min(r2_, 35))}`;
+    for (let k = 0; k < 13; k++) {
+      const r1 = 8 + rand() * 25;
+      const len = 3 + rand() * 4;
+      const rr = Math.min(r1 + len, 35.6);
+      const room = Math.max(0, Math.atan((r1 * Math.tan(h) - 2.6) / r1));
+      const a = th + (rand() * 2 - 1) * room;
+      const w = 0.55 + rand() * 0.45;
+      const m = (r1 + rr) / 2;
+      const [ux, uy, px, py] = [Math.cos(a), Math.sin(a), -Math.sin(a) * w, Math.cos(a) * w];
+      const seg = `M${pt(ux * r1, uy * r1)}Q${pt(ux * m + px, uy * m + py)} ${pt(ux * rr, uy * rr)}`
+        + `Q${pt(ux * m - px, uy * m - py)} ${pt(ux * r1, uy * r1)}Z`;
       if (k % 3 === 0) deep += seg; else light += seg;
     }
   }
@@ -282,8 +294,8 @@ function SliceArt({ id, x, y, s, r = 0, gloss = 0 }: { id: string; x: number; y:
       <circle r={44.6} fill={`url(#${id}-pith)`} />
       <circle r={39.4} fill="#fff8dc" />
       <path d={SLICE_SEGMENTS} fill={`url(#${id}-seg)`} />
-      <path d={SLICE_SACS.light} stroke="#fff7cf" strokeOpacity={0.75} strokeWidth={1.5} strokeLinecap="round" />
-      <path d={SLICE_SACS.deep} stroke="#eab61d" strokeOpacity={0.45} strokeWidth={1.2} strokeLinecap="round" />
+      <path d={SLICE_SACS.light} fill="#fffbe6" fillOpacity={0.7} />
+      <path d={SLICE_SACS.deep} fill="#e6ab12" fillOpacity={0.4} />
       <path d={arc(33, g0 + 4, g0 + 46)} fill="none" stroke="#fff" strokeOpacity={0.62} strokeWidth={2.6} strokeLinecap="round" />
       <path d={arc(28.4, g0 + 12, g0 + 26)} fill="none" stroke="#fff" strokeOpacity={0.5} strokeWidth={1.6} strokeLinecap="round" />
       <circle r={2.6} fill="#fffbea" />
@@ -307,12 +319,12 @@ function SharedDefs({ id }: { id: string }) {
         <Stop o={0.55} c="var(--leaf, #4e8b3a)" />
         <Stop o={1} c="#64a046" />
       </linearGradient>
-      <radialGradient id={`${id}-pt`} gradientUnits="userSpaceOnUse" cx="0" cy="0" r="10.6">
-        <Stop o={0} c="#f29cbd" />
-        <Stop o={0.24} c="#f8cddd" />
-        <Stop o={0.5} c="#fff8fb" />
-        <Stop o={0.85} c="#ffffff" />
-        <Stop o={1} c="#fde3ec" />
+      <radialGradient id={`${id}-pt`} gradientUnits="userSpaceOnUse" cx="0" cy="0" r="11">
+        <Stop o={0} c="#ec8fb3" />
+        <Stop o={0.2} c="#f6c2d6" />
+        <Stop o={0.42} c="#fff4f8" />
+        <Stop o={0.78} c="#ffffff" />
+        <Stop o={1} c="#fbd6e4" />
       </radialGradient>
       <radialGradient id={`${id}-ctr`} cx="0.4" cy="0.38" r="0.7">
         <Stop o={0} c="#f4ec8a" />
@@ -403,29 +415,37 @@ type Item =
 // Composed for the top-left corner of a 200 × 200 box; (0,0) is the corner.
 // Other corners mirror the positions but keep the light coming from the top left.
 const SPRIG_FULL: Item[] = [
-  { k: 'leaf', x: 96, y: 22, r: 74, s: 1.12, t: 1 },
-  { k: 'leaf', x: 74, y: 54, r: 104, s: 1.18 },
-  { k: 'leaf', x: 30, y: 92, r: 172, s: 1.22, t: 1 },
-  { k: 'leaf', x: 58, y: 84, r: 140, s: 1.02 },
-  { k: 'leaf', x: 18, y: 30, r: -40, s: 0.9 },
-  { k: 'lemon', x: 78, y: 20, r: 16, s: 0.86 },
-  { k: 'slice', x: 26, y: 64, r: 10, s: 0.66 },
-  { k: 'leaf', x: 120, y: 26, r: 96, s: 0.82 },
-  { k: 'leaf', x: 44, y: 100, r: 196, s: 0.78, t: 1 },
-  { k: 'blossom', x: 116, y: 50, r: 8, s: 1.32 },
-  { k: 'blossom', x: 62, y: 98, r: 36, s: 1.08 },
-  { k: 'blossom', x: 14, y: 8, r: -10, s: 1.2 },
-  { k: 'bud', x: 142, y: 36, r: 64, s: 1.05 },
-  { k: 'bud', x: 82, y: 112, r: 150, s: 0.95 },
+  { k: 'leaf', x: 104, y: 26, r: 82, s: 1.12, t: 1 },
+  { k: 'leaf', x: 100, y: 34, r: 108, s: 1.0 },
+  { k: 'leaf', x: 64, y: 50, r: 100, s: 1.26 },
+  { k: 'leaf', x: 58, y: 56, r: 128, s: 1.16, t: 1 },
+  { k: 'leaf', x: 42, y: 66, r: 154, s: 1.2 },
+  { k: 'leaf', x: 26, y: 74, r: 178, s: 1.22, t: 1 },
+  { k: 'leaf', x: 8, y: 94, r: 204, s: 1.0 },
+  { k: 'leaf', x: 40, y: 18, r: -36, s: 0.86 },
+  { k: 'lemon', x: 72, y: 28, r: 16, s: 0.9 },
+  { k: 'slice', x: 20, y: 80, r: 10, s: 0.66 },
+  { k: 'leaf', x: 34, y: 108, r: 146, s: 0.72, t: 1 },
+  { k: 'blossom', x: 112, y: 54, r: 8, s: 1.36 },
+  { k: 'blossom', x: 64, y: 100, r: 36, s: 1.12 },
+  { k: 'blossom', x: 18, y: 22, r: -10, s: 1.2 },
+  { k: 'bud', x: 138, y: 64, r: 112, s: 1.0 },
+  { k: 'bud', x: 158, y: 30, r: 70, s: 0.9 },
+  { k: 'bud', x: 42, y: 132, r: 170, s: 0.9 },
 ];
-// A lighter cluster around a slice, for the footer's bottom corners.
+// A lighter cluster around a slice, for the footer's bottom corners. The slice runs
+// off the side edge only, so it reads well wherever the footer ends.
 const SPRIG_SLICE: Item[] = [
-  { k: 'leaf', x: 70, y: 28, r: 70, s: 1.0, t: 1 },
-  { k: 'leaf', x: 36, y: 70, r: 160, s: 1.04 },
-  { k: 'leaf', x: 62, y: 56, r: 128, s: 0.86, t: 1 },
-  { k: 'slice', x: 30, y: 30, r: 4, s: 0.62 },
-  { k: 'blossom', x: 74, y: 52, r: 20, s: 1.18 },
-  { k: 'bud', x: 102, y: 30, r: 70, s: 0.95 },
+  { k: 'leaf', x: 40, y: 52, r: 64, s: 0.98, t: 1 },
+  { k: 'leaf', x: 44, y: 66, r: 92, s: 1.16 },
+  { k: 'leaf', x: 40, y: 76, r: 122, s: 1.1, t: 1 },
+  { k: 'leaf', x: 22, y: 92, r: 158, s: 1.16 },
+  { k: 'leaf', x: 6, y: 100, r: 186, s: 0.9, t: 1 },
+  { k: 'slice', x: 14, y: 68, r: 6, s: 0.7 },
+  { k: 'blossom', x: 66, y: 86, r: 20, s: 1.26 },
+  { k: 'blossom', x: 50, y: 30, r: -14, s: 0.92 },
+  { k: 'bud', x: 104, y: 50, r: 84, s: 0.95 },
+  { k: 'bud', x: 46, y: 140, r: 168, s: 0.9 },
 ];
 
 /**
@@ -657,7 +677,7 @@ function Brush({ variant = 0, className }: { variant?: number; className?: strin
     <svg {...hidden} className={cx('brush', className)} viewBox="0 0 400 80" preserveAspectRatio="none">
       <path d={b.d} fill="currentColor" />
       <path d={b.streaks} fill="currentColor" fillOpacity={0.85} />
-      <path d={b.dry} stroke="#fff" strokeOpacity={0.22} strokeWidth={1.4} strokeLinecap="round" />
+      <path className="brush-dry" d={b.dry} stroke="#fff" strokeOpacity={0.28} strokeWidth={1.4} strokeLinecap="round" />
     </svg>
   );
 }
@@ -848,8 +868,8 @@ export function BrandFooter({
 }) {
   return (
     <footer className={cx('brand-footer', className)}>
-      <Sprig corner="bl" variant="slice" size={124} className="brand-footer-sprig" />
-      <Sprig corner="br" variant="slice" size={124} className="brand-footer-sprig" />
+      <Sprig corner="bl" variant="slice" size={150} className="brand-footer-sprig" />
+      <Sprig corner="br" variant="slice" size={150} className="brand-footer-sprig" />
       <div className="brand-footer-body">
         <Socials instagram={instagram} tiktok={tiktok} facebook={facebook} />
         {note && (

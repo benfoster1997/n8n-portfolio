@@ -5,14 +5,6 @@
 :root {
   /* the page's side padding; the hero and footer bleed into it so sprigs reach the edge */
   --brand-gutter: 16px;
-  /* the swatch behind script headings */
-  --brand-brush: var(--brush, #f9c6d9);
-}
-@media (prefers-color-scheme: dark) {
-  :root {
-    /* a deeper, berry swatch on plum, so light script text stays readable on it */
-    --brand-brush: color-mix(in srgb, var(--pink, #e8197f) 34%, var(--bg, #1f1420));
-  }
 }
 
 .brand-sr {
@@ -69,11 +61,14 @@ h3.script-title { font-size: 1.65rem; }
 .script-title .brush {
   position: absolute;
   z-index: -1;
-  left: -0.42em;
-  top: 0.3em;
-  width: calc(100% + 0.9em);
-  height: 0.98em;
-  color: var(--brand-brush);
+  left: -0.32em;
+  top: 0.2em;
+  width: calc(100% + 0.8em);
+  height: 1.1em;
+  color: var(--brush, #f9c6d9); /* blush on light, a deep berry on plum */
+}
+@media (prefers-color-scheme: dark) {
+  .script-title .brush-dry { display: none; }
 }
 .script-title-heart {
   width: 0.48em;
@@ -105,10 +100,10 @@ h3.script-title { font-size: 1.65rem; }
 .wordmark-2 { line-height: 1.04; }
 .wordmark-line { display: block; white-space: nowrap; }
 .wordmark-heart {
-  width: 0.4em;
-  height: 0.4em;
-  margin-left: 0.1em;
-  vertical-align: 0.62em;
+  width: 0.36em;
+  height: 0.36em;
+  margin-left: 0.08em;
+  vertical-align: 0.42em;
   color: var(--pink, #e8197f);
   transform: rotate(12deg);
 }
@@ -138,14 +133,17 @@ h3.script-title { font-size: 1.65rem; }
   position: relative;
   isolation: isolate;
   margin: 0 calc(-1 * var(--brand-gutter));
-  padding: 96px calc(var(--brand-gutter) + 6px) 8px;
+  padding: 112px calc(var(--brand-gutter) + 6px) 8px;
   text-align: center;
   overflow-x: clip;
 }
-.brand-hero .sprig { width: clamp(132px, 38vw, 196px); }
+.brand-hero .sprig { width: clamp(140px, 41vw, 204px); }
+/* as the page's first block, the hero rises into the page's top padding so the sprigs
+   sit at the very top of the screen (below the status bar) */
+.page > .brand-hero:first-child { margin-top: -16px; }
 .brand-hero-body { position: relative; z-index: 1; container-type: inline-size; }
 .brand-hero-name {
-  margin: 0 auto 10px;
+  margin: 0 auto 8px;
   /* a soft halo of page colour keeps the name crisp where a leaf tip passes behind */
   text-shadow: 0 0 10px var(--bg, #fdf0f4), 0 0 3px var(--bg, #fdf0f4);
 }
@@ -169,21 +167,17 @@ h3.script-title { font-size: 1.65rem; }
   text-wrap: pretty;
 }
 .brand-hero-location {
-  display: flex;
-  justify-content: center;
-  align-items: flex-start;
-  gap: 6px;
   max-width: 34ch;
   margin: 10px auto 0;
   font-size: 0.94rem;
-  line-height: 1.4;
+  line-height: 1.45;
   color: var(--muted, #6f6480);
-  text-align: left;
+  text-wrap: balance;
 }
-.brand-hero-pin { margin-top: 0.5px; color: var(--pink, #e8197f); }
+.brand-hero-pin { margin: -3px 3px 0 0; color: var(--pink, #e8197f); }
 .brand-hero-dot { position: absolute; z-index: 0; color: var(--pink, #e8197f); opacity: 0.75; }
-.brand-hero-dot--a { top: 128px; left: calc(var(--brand-gutter) + 2px); transform: rotate(-14deg); }
-.brand-hero-dot--b { top: 142px; right: calc(var(--brand-gutter) + 6px); transform: rotate(12deg); }
+.brand-hero-dot--a { top: 150px; left: calc(var(--brand-gutter) - 4px); transform: rotate(-14deg); }
+.brand-hero-dot--b { top: 166px; right: calc(var(--brand-gutter) - 2px); transform: rotate(12deg); }
 
 .brand-hero--compact { padding-top: 58px; }
 .brand-hero--compact .sprig { width: clamp(92px, 26vw, 128px); }
@@ -304,11 +298,11 @@ h3.script-title { font-size: 1.65rem; }
   position: relative;
   isolation: isolate;
   margin: 28px calc(-1 * var(--brand-gutter)) 0;
-  padding: 18px calc(var(--brand-gutter) + 64px) 72px;
+  padding: 18px calc(var(--brand-gutter) + 60px) 64px;
   text-align: center;
   overflow: clip;
 }
-.brand-footer .sprig { width: clamp(112px, 31vw, 150px); }
+.brand-footer .sprig { width: clamp(132px, 38vw, 176px); }
 .brand-footer-body { position: relative; z-index: 1; display: flex; flex-direction: column; align-items: center; gap: 12px; }
 .brand-footer-note {
   margin: 4px 0 0;
