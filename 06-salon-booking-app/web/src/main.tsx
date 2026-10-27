@@ -1,7 +1,15 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
+import '@fontsource/satisfy/latin-400.css';
+import '@fontsource-variable/nunito/wght.css';
+import '@fontsource-variable/dancing-script/wght.css';
 import './styles.css';
+import './brand.css';
+import './styles/public.css';
+import './styles/manage.css';
+import './styles/owner.css';
+import './styles/owner-detail.css';
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
