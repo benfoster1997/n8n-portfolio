@@ -97,23 +97,46 @@ export function BusinessSettings() {
   );
 }
 
+type RuleKey = 'slot_interval_min' | 'buffer_min' | 'min_notice_hours' | 'max_days_ahead' | 'reminder_hours_before';
+
+/** The booking rules, each with the range the database allows and what to say when it's outside it. */
+const RULES: { k: RuleKey; label: string; hint: string; min: number; max: number; step?: number; error: string }[] = [
+  { k: 'slot_interval_min', label: 'Start times every (minutes)', hint: 'Clients can start on the hour and every 15 minutes, for example.',
+    min: 5, max: 120, step: 5, error: 'Start times must be a whole number of minutes apart, from 5 to 120.' },
+  { k: 'buffer_min', label: 'Gap after each appointment (minutes)', hint: 'Time to clean up and set up for the next client.',
+    min: 0, max: 120, step: 5, error: 'The gap after each appointment must be a whole number of minutes from 0 to 120.' },
+  { k: 'min_notice_hours', label: 'Minimum notice (hours)', hint: 'How soon before an appointment clients can book online.',
+    min: 0, max: 336, error: 'Minimum notice must be a whole number of hours from 0 to 336.' },
+  { k: 'max_days_ahead', label: 'Book up to (days ahead)', hint: 'How far into the future clients can book.',
+    min: 1, max: 365, error: 'Book up to must be a whole number of days from 1 to 365.' },
+  { k: 'reminder_hours_before', label: 'Reminders (hours before)',
+    hint: 'When the reminder email goes out. WhatsApp reminders show up in your list from this many days ahead (72 hours = 3 days).',
+    min: 2, max: 168, error: 'Reminders must be a whole number of hours from 2 to 168.' },
+];
+
 export function RulesSettings() {
-  const f = useSettingsForm(['slot_interval_min', 'buffer_min', 'min_notice_hours', 'max_days_ahead', 'reminder_hours_before']);
-  const d = f.draft;
-  const num = (k: keyof typeof d, label: string, hint: string, min: number, max: number, step = 1) => (
-    <Field label={label} hint={hint}>
-      <input type="number" inputMode="numeric" min={min} max={max} step={step} value={d[k]} onChange={(e) => f.set(k, Number(e.target.value) as never)} />
-    </Field>
-  );
+  const f = useSettingsForm(RULES.map((r) => r.k));
+  // As typed, so an emptied box isn't quietly saved as 0.
+  const [text, setText] = useState(() => Object.fromEntries(RULES.map((r) => [r.k, String(f.draft[r.k])])) as Record<RuleKey, string>);
+  async function submit() {
+    const patch = {} as Pick<S, RuleKey>;
+    for (const r of RULES) {
+      const t = text[r.k].trim();
+      if (!/^\d+$/.test(t) || Number(t) < r.min || Number(t) > r.max) return f.setError(new Error(r.error));
+      patch[r.k] = Number(t);
+    }
+    await f.save(patch);
+  }
   return (
     <Page title="Booking rules">
-      {num('slot_interval_min', 'Start times every (minutes)', 'Clients can start on the hour and every 15 minutes, for example.', 5, 120, 5)}
-      {num('buffer_min', 'Gap after each appointment (minutes)', 'Time to clean up and set up for the next client.', 0, 120, 5)}
-      {num('min_notice_hours', 'Minimum notice (hours)', 'How soon before an appointment clients can book online.', 0, 336)}
-      {num('max_days_ahead', 'Book up to (days ahead)', 'How far into the future clients can book.', 1, 365)}
-      {num('reminder_hours_before', 'Reminders (hours before)', 'When the reminder email goes out. WhatsApp reminders show up in your list from this many days ahead (72 hours = 3 days).', 2, 168)}
+      {RULES.map((r) => (
+        <Field key={r.k} label={r.label} hint={r.hint}>
+          <input type="number" inputMode="numeric" min={r.min} max={r.max} step={r.step ?? 1} value={text[r.k]}
+            onChange={(e) => setText((t) => ({ ...t, [r.k]: e.target.value }))} />
+        </Field>
+      ))}
       <ErrorBox error={f.error} />
-      <button className="btn primary block" disabled={f.busy} onClick={() => f.save()}>{f.busy ? 'Saving…' : 'Save'}</button>
+      <button className="btn primary block" disabled={f.busy} onClick={submit}>{f.busy ? 'Saving…' : 'Save'}</button>
     </Page>
   );
 }
@@ -328,7 +351,11 @@ export function MessageSettings() {
     <Page title="WhatsApp messages">
       <p className="sub">These fill in automatically when you tap a WhatsApp button. Words in curly brackets are swapped for the real details:</p>
       <p className="mono" style={{ fontSize: '0.82rem' }}>{TEMPLATE_PLACEHOLDERS.join(' ')}</p>
-      <p className="sub"><span className="mono">{'{manage_link}'}</span> is the client’s own link to change or cancel their booking. <span className="mono">{'{change_by}'}</span> is the last time they can do that before it counts as late (your notice period in Deposits &amp; cancellations).</p>
+      <p className="sub"><span className="mono">{'{change_note}'}</span> tells the client how to change or cancel: their own link and the time to do it by, or, once it’s inside your notice period, that your cancellation policy applies. If clients can’t change bookings online (Deposits &amp; cancellations), it just asks them to get in touch.</p>
+      <p className="sub"><span className="mono">{'{manage_link}'}</span> is the link on its own, and <span className="mono">{'{change_by}'}</span> is the last time to change without it counting as late — for a booking already inside your notice period that time has passed, so <span className="mono">{'{change_note}'}</span> is usually better.</p>
+      {[d.wa_template_reminder, d.wa_template_deposit, d.wa_template_confirmed].some((t) => t && /\{(manage_link|change_by)\}/.test(t)) && (
+        <div className="notice warn">Your wording uses {'{manage_link}'} or {'{change_by}'}. These go out as they are, even when the time to change by has passed or clients can’t change bookings online. Use {'{change_note}'} to have that worded for you.</div>
+      )}
       {box('wa_template_reminder', 'Reminder', DEFAULT_TEMPLATES.reminder)}
       {box('wa_template_deposit', 'Deposit request', DEFAULT_TEMPLATES.deposit)}
       {box('wa_template_confirmed', 'Booking confirmed', DEFAULT_TEMPLATES.confirmed)}

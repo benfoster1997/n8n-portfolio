@@ -106,8 +106,13 @@ test('WhatsApp reminders open WhatsApp with the message written', async ({ page 
   expect(href).toMatch(/^https:\/\/wa\.me\/447700900105\?text=/);
   const text = decodeURIComponent(href!.split('text=')[1]);
   expect(text).toContain('Just a reminder of your Gel polish — hands appointment');
-  // The client's own change/cancel link, and the time to do it by.
-  expect(text).toMatch(/Please do it by \w+ \d+ \w+ at \d\d:\d\d: http:\/\/localhost:\d+\/manage\/[0-9a-f-]{36}/);
+  // Chloe is tomorrow, already inside the 48-hour notice: her link, and that the policy now applies, not a time that has passed.
+  expect(text).toMatch(/Need to change or cancel\? http:\/\/localhost:\d+\/manage\/[0-9a-f-]{36} \(it’s now less than 48 hours before, so the cancellation policy applies\)/);
+  expect(text).not.toContain('Please do it by');
+  // Ruby, in three days, still has time: her link and the time to do it by.
+  const ruby = page.locator('li', { hasText: 'Ruby Clarke' }).getByRole('link', { name: 'Send reminder' });
+  expect(decodeURIComponent((await ruby.getAttribute('href'))!.split('text=')[1]))
+    .toMatch(/Please do it by \w+ \d+ \w+ at \d\d:\d\d: http:\/\/localhost:\d+\/manage\/[0-9a-f-]{36}/);
   const deposit = page.getByRole('link', { name: 'Ask for deposit' }).first();
   expect(decodeURIComponent((await deposit.getAttribute('href'))!)).toContain('Sort code: 00-00-00');
   await shot(page, '07-reminders');

@@ -4,6 +4,7 @@ import { api } from '../../api';
 import { WhatsAppButton } from '../../components/appts';
 import { useOwner } from '../../components/owner';
 import { ErrorBox, Field, Icon, LateChip, Seg, Sheet, Spinner, StatusChip, TopBar, useAction, useLoad, useToast } from '../../components/ui';
+import { lateCharge, lateChargePayments } from '../../lib/reminders';
 import { availableSlots } from '../../lib/slots';
 import { addDays, dateInZone, fmtDay, fmtDayLong, fmtDayTime, fmtTime, minutesLabel, startOfDayInstant, todayInZone, zonedToInstant } from '../../lib/time';
 import { fillTemplate, firstName, freeChangeDeadline, manageLink, money, parsePounds, whatsappLink } from '../../lib/text';
@@ -42,11 +43,11 @@ export function AppointmentView() {
   const { data: changes } = useLoad(() => api.listClientChanges({ appointmentId: id }), [id]);
   // Money already received for a late cancellation (the deposit isn't counted here).
   const lateId = a?.status === 'cancelled' && a.cancelled_late ? a.id : null;
-  const { data: lateReceived, reload: reloadLate } = useLoad(async () => {
-    if (!lateId || !a) return [];
-    const rows = await api.listPayments(dateInZone(a.cancelled_at ?? a.starts_at, tz), todayInZone(tz));
-    return rows.filter((p) => p.appointment_id === lateId && (p.kind === 'other' || p.kind === 'payment'));
+  const { data: late, loading: lateLoading, reload: reloadLate } = useLoad(async () => {
+    if (!lateId || !a) return { id: lateId, received: [] };
+    return { id: lateId, received: lateChargePayments(a, await api.listPayments(dateInZone(a.cancelled_at ?? a.starts_at, tz), todayInZone(tz))) };
   }, [lateId]);
+  const lateReceived = late?.received;
   const [sheet, setSheet] = useState<null | 'deposit' | 'checkout' | 'move' | 'cancel' | 'late'>(null);
   const [notes, setNotes] = useState<string | null>(null);
   const act = useAction();
@@ -66,11 +67,14 @@ export function AppointmentView() {
     try { await navigator.clipboard.writeText(text); toast(`${what} copied`); } catch { window.prompt('Copy this link:', text); }
   };
 
-  // A late cancellation: the full price is payable under the policy, less any deposit already paid.
-  const depositPaid = a.deposit_paid_at ? a.deposit_required_pence : 0;
-  const chargeDue = Math.max(0, a.price_pence - depositPaid);
-  const received = (lateReceived ?? []).reduce((n, p) => n + p.amount_pence, 0);
-  const stillOwed = Math.max(0, chargeDue - received);
+  // A late cancellation: the full price is payable under the policy, less any deposit already paid
+  // and anything received since. The same sum as Today's "Late cancellations".
+  const charge = lateCharge(a, lateReceived ?? []);
+  // Only offer to chase or record money once what's already come in has loaded.
+  const owing = !lateLoading && late?.id === lateId && charge.owed > 0;
+  // A mobile typed with this booking that isn't the one on the client record: nothing carrying
+  // their private link goes by WhatsApp until she has checked which is right.
+  const checkPhone = !!a.booking_phone;
 
   async function saveNotes() {
     if (notes === null) return;
@@ -82,6 +86,26 @@ export function AppointmentView() {
   async function noShow() {
     if (!window.confirm('Mark as a no-show? They will still be treated as a new client next time (deposit required).')) return;
     if (await act.run(() => api.updateAppointment(a!.id, { status: 'no_show' }))) { toast('Marked as no-show'); reload(); }
+  }
+  async function adoptBookingPhone() {
+    const typed = a!.booking_phone!;
+    if (await act.run(async () => {
+      await api.updateClient(a!.client_id, { phone: typed });
+      await api.updateAppointment(a!.id, { booking_phone: null });
+    })) { toast(`Client record updated to ${typed}`); reload(); }
+  }
+  async function keepRecordPhone() {
+    if (await act.run(async () => setData(await api.updateAppointment(a!.id, { booking_phone: null })))) {
+      toast(a!.client?.phone ? 'Kept the number on their record' : 'Number not used');
+    }
+  }
+  async function newLink() {
+    if (!window.confirm('The old link will stop working. Use this if the link reached the wrong person.')) return;
+    let token = '';
+    if (await act.run(async () => { token = await api.resetManageLink(a!.id); })) {
+      setData({ ...a!, public_token: token });
+      toast('New link made — the old one no longer works');
+    }
   }
   async function resend() {
     if (await act.run(() => api.queueEmail(a!.id, a!.status === 'confirmed' && a!.deposit_paid_at ? 'deposit_received' : 'booking_received'))) {
@@ -127,9 +151,24 @@ export function AppointmentView() {
         )}
       </div>
 
+      {checkPhone && a.client && (
+        <div className="notice warn stack" role="note" aria-label="Check their mobile">
+          <div>
+            {a.client.phone
+              ? <>The mobile given with this booking ({a.booking_phone}) is different from {a.client.phone} on their client record.</>
+              : <>The mobile given with this booking ({a.booking_phone}) isn’t on their client record.</>}
+            {' '}Check which is right before you WhatsApp them.
+          </div>
+          <div className="btn-row">
+            <button className="btn small" disabled={act.busy} onClick={adoptBookingPhone}>Use {a.booking_phone} for this client</button>
+            <button className="btn small" disabled={act.busy} onClick={keepRecordPhone}>{a.client.phone ? 'Keep the record’s number' : 'Don’t use it'}</button>
+          </div>
+        </div>
+      )}
+
       {a.client && (
         <div className="btn-row">
-          {phone && !lateId && (live ? <WhatsAppButton a={a} s={s} label="WhatsApp" />
+          {phone && !lateId && (live && !checkPhone ? <WhatsAppButton a={a} s={s} label="WhatsApp" />
             : <a className="btn wa" href={whatsappLink(phone, `Hi ${first}, `)} target="_blank" rel="noreferrer"><Icon name="whatsapp" size={20} /> WhatsApp</a>)}
           {a.client.phone && <a className="btn" href={`tel:${a.client.phone.replace(/\s/g, '')}`}><Icon name="phone" size={20} /> Call</a>}
           <Link className="btn" to={`/clients/${a.client.id}`}>Client record</Link>
@@ -141,18 +180,22 @@ export function AppointmentView() {
           <h3>Late cancellation</h3>
           <p style={{ margin: 0 }}>
             {s.cancel_notice_hours > 0 ? `Cancelled with less than ${s.cancel_notice_hours} hours’ notice.` : 'Cancelled inside your notice period.'}{' '}
-            Under your cancellation policy the full {money(a.price_pence)} is payable — you arrange this with the client yourself.
+            Under your cancellation policy the full {money(charge.fee)} is payable — you arrange this with the client yourself.
           </p>
-          {depositPaid > 0 && <p className="sub" style={{ margin: 0 }}>They’ve already paid a {money(depositPaid)} deposit, so the balance is {money(chargeDue)}.</p>}
+          {charge.fee !== a.price_pence && (
+            <p className="sub" style={{ margin: 0 }}>That’s the price when they first changed it inside your notice period (it’s {money(a.price_pence)} now).</p>
+          )}
+          {charge.deposit > 0 && <p className="sub" style={{ margin: 0 }}>They’ve already paid a {money(charge.deposit)} deposit, so the balance is {money(Math.max(0, charge.fee - charge.deposit))}.</p>}
           {(lateReceived ?? []).map((p) => (
             <div key={p.id} className="notice">✓ Payment recorded: {money(p.amount_pence)} by {METHOD_LABEL[p.method]}, {fmtDay(`${p.paid_on}T12:00:00Z`, tz)}</div>
           ))}
-          {stillOwed > 0 && phone && (
-            <a className="btn wa block" href={whatsappLink(phone, lateChargeMessage(a, s, chargeDue, depositPaid))} target="_blank" rel="noreferrer">
+          {owing && charge.received > 0 && <p className="sub" style={{ margin: 0 }}>Still owed: {money(charge.owed)}.</p>}
+          {owing && phone && !checkPhone && (
+            <a className="btn wa block" href={whatsappLink(phone, lateChargeMessage(a, s, charge))} target="_blank" rel="noreferrer">
               <Icon name="whatsapp" size={20} /> WhatsApp {first}
             </a>
           )}
-          {stillOwed > 0 && <button className="btn ok block" onClick={() => setSheet('late')}><Icon name="tick" size={20} /> Record payment received</button>}
+          {owing && <button className="btn ok block" onClick={() => setSheet('late')}><Icon name="tick" size={20} /> Record payment received</button>}
         </div>
       )}
 
@@ -169,8 +212,9 @@ export function AppointmentView() {
         <div className="card stack">
           <h3>Consultation form</h3>
           <p className="sub">{a.is_new_client ? 'This new client hasn’t filled in the health and allergy form yet.' : 'No health and allergy form on file for this client. Send them the link to fill one in.'}</p>
+          {checkPhone && phone && <p className="sub" style={{ margin: 0 }}>Check their mobile above before you send this link.</p>}
           <div className="btn-row">
-            {phone && (
+            {phone && !checkPhone && (
               <a className="btn wa" target="_blank" rel="noreferrer" style={WIDE}
                 href={whatsappLink(phone, `Hi ${first}, before your appointment please fill in this quick consultation form (it takes 2 minutes): ${formUrl}\n${s.business_name}`)}>
                 <Icon name="whatsapp" size={20} /> Send form link
@@ -196,15 +240,18 @@ export function AppointmentView() {
         <div className="card stack">
           <h3>Change or cancel link</h3>
           <p className="sub">Lets {first} change or cancel this booking themselves.</p>
+          <div className="mono" style={{ overflowWrap: 'anywhere', fontSize: '0.9rem' }}>{changeUrl}</div>
+          {checkPhone && phone && <p className="sub" style={{ margin: 0 }}>Check their mobile above before you send this link.</p>}
           <div className="btn-row">
-            {phone && (
-              <a className="btn wa" href={whatsappLink(phone, fillTemplate(MANAGE_MESSAGE + (s.cancel_notice_hours > 0 ? MANAGE_BY : '') + '\n{business}', a, s))}
+            {phone && !checkPhone && (
+              <a className="btn wa" href={whatsappLink(phone, fillTemplate(MANAGE_MESSAGE, a, s))}
                 target="_blank" rel="noreferrer" style={WIDE}>
                 <Icon name="whatsapp" size={20} /> Send on WhatsApp
               </a>
             )}
             <button className="btn" onClick={() => copy(changeUrl, 'Link')}><Icon name="link" size={20} /> Copy link</button>
           </div>
+          <button className="btn ghost small" style={{ alignSelf: 'flex-start' }} disabled={act.busy} onClick={newLink}>Make a new link</button>
         </div>
       )}
 
@@ -262,7 +309,7 @@ export function AppointmentView() {
       {sheet === 'move' && <MoveSheet a={a} tz={tz} onClose={() => setSheet(null)} onDone={(msg) => { toast(msg); done(); }} />}
       {sheet === 'cancel' && <CancelSheet a={a} onClose={() => setSheet(null)} onDone={() => { toast('Appointment cancelled'); done(); }} />}
       {sheet === 'late' && (
-        <LatePaymentSheet a={a} tz={tz} amount={stillOwed} onClose={() => setSheet(null)}
+        <LatePaymentSheet a={a} tz={tz} amount={charge.owed} onClose={() => setSheet(null)}
           onDone={() => { toast('Payment recorded'); setSheet(null); reloadLate(); }} />
       )}
     </div>
@@ -272,8 +319,8 @@ export function AppointmentView() {
 /** A WhatsApp button that takes its own line on a phone rather than wrapping its label. */
 const WIDE = { flex: '1 1 210px' };
 
-const MANAGE_MESSAGE = 'Hi {first_name}, here’s your link to change or cancel your {service} appointment on {date} at {time}: {manage_link}';
-const MANAGE_BY = '\n\nPlease make any changes by {change_by}.';
+// {change_note} gives the link with the time to change by while that's still ahead, or says the policy now applies.
+const MANAGE_MESSAGE = 'Hi {first_name}, here’s your own link for your {service} appointment on {date} at {time}.\n\n{change_note}\n{business}';
 
 /** "Tue 3 Nov, 15:00 → Wed 4 Nov, 12:00", "BIAB infill (£30) → BIAB new set (£35)". */
 function changeLines(c: ClientChange, tz: string): string[] {
@@ -287,13 +334,14 @@ function changeLines(c: ClientChange, tz: string): string[] {
 }
 
 /** A polite note about the late-cancellation charge, with bank details and the booking reference. */
-function lateChargeMessage(a: Appointment, s: Settings, due: number, depositPaid: number): string {
+function lateChargeMessage(a: Appointment, s: Settings, c: ReturnType<typeof lateCharge>): string {
   const notice = s.cancel_notice_hours > 0 ? `with less than ${s.cancel_notice_hours} hours’ notice` : 'at short notice';
+  const paid = c.received > 0 ? `${money(c.deposit + c.received)} you’ve already paid` : `${money(c.deposit)} deposit you’ve already paid`;
   const lines = [
     `Hi ${firstName(a.client?.full_name ?? a.booking_name)}, sorry you couldn’t make your ${a.service_name} appointment on ${fmtDayLong(a.starts_at, s.timezone)} at ${fmtTime(a.starts_at, s.timezone)}.`,
     '',
-    `As it was cancelled ${notice}, the full ${money(a.price_pence)} is payable under my cancellation policy` +
-      (depositPaid > 0 ? ` — that’s ${money(due)} after the ${money(depositPaid)} deposit you’ve already paid.` : '.'),
+    `As it was cancelled ${notice}, the full ${money(c.fee)} is payable under my cancellation policy` +
+      (c.deposit + c.received > 0 ? ` — that’s ${money(c.owed)} after the ${paid}.` : '.'),
     '',
   ];
   if (s.bank_account_number) {
@@ -384,6 +432,7 @@ function LatePaymentSheet({ a, tz, amount: owed, onClose, onDone }: { a: Appoint
 
 function MoveSheet({ a, tz, onClose, onDone }: { a: Appointment; tz: string; onClose: () => void; onDone: (message: string) => void }) {
   const { settings: s } = useOwner();
+  const toast = useToast();
   const [day, setDay] = useState(dateInZone(a.starts_at, tz));
   const [time, setTime] = useState(fmtTime(a.starts_at, tz));
   const [duration, setDuration] = useState(String(a.duration_min));
@@ -411,6 +460,11 @@ function MoveSheet({ a, tz, onClose, onDone }: { a: Appointment; tz: string; onC
     const mins = Number(duration);
     if (!mins || mins < 5) return setError(new Error('Check the length.'));
     const starts = zonedToInstant(day, time, tz);
+    // Saved as it was: no update, and no "your booking has changed" email.
+    if (starts.getTime() === new Date(a.starts_at).getTime() && mins === a.duration_min) {
+      toast('Nothing changed');
+      return onClose();
+    }
     const tell = notify && !!email;
     let emailFailed = false;
     const ok = await run(async () => {

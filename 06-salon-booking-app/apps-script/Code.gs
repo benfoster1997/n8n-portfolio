@@ -179,7 +179,7 @@ function render_(job, s) {
   var hrs = noticeHours === 1 ? '1 hour' : noticeHours + ' hours';
   var notice = noticeHours === 1 ? '1 hour’s notice' : noticeHours + ' hours’ notice';
   // Only ever in emails to the client: the link is the key to their booking.
-  var manage = manageBlock_(job, s, tz);
+  var manage = manageBlock_(job, s, tz, notice);
   var diary = site ? p_(link_(site + '/', 'Open your diary')) : '';
 
   // --- Alerts to the owner (never the client's change/cancel link) ----------
@@ -206,7 +206,8 @@ function render_(job, s) {
       [
         p_(esc_(job.client_name) + ' changed their booking online. It’s now:'),
         table_(current),
-        anyLate ? box_('<b>Moved with less than ' + esc_(notice) + '.</b>') : '',
+        // A move or a switch of treatment: either counts once it's inside the notice period.
+        anyLate ? box_('<b>Changed with less than ' + esc_(notice) + '.</b>') : '',
         changes.length ? p_('<b>What changed</b>') : '',
         changes.length ? changeList_(changes, tz, notice) : '',
         diary,
@@ -223,17 +224,26 @@ function render_(job, s) {
       ['Deposit', deposit],
     ]);
     if (job.cancel_reason) gone.push(['Their reason', job.cancel_reason]);
-    // A late move followed by a cancellation in good time still deserves a mention.
-    var movedLate = (job.changes || []).some(function (x) { return x.late && x.action !== 'cancelled'; });
-    var full = job.price_pence > 0 ? 'the full ' + money_(job.price_pence) : 'the full price';
+    // What the policy charges: the price it had when they first changed it
+    // late, if that was more than it is now (a cheaper treatment since).
+    var fee = job.late_fee_pence || job.price_pence;
+    var full = fee > 0 ? 'the full ' + money_(fee) + (fee > job.price_pence ? ' (the price before they changed it)' : '') : 'the full price';
+    var payable = ' is payable — this is for you to arrange with the client; the app doesn’t take payments.';
+    // A late change followed by a cancellation in good time counts as late too (see
+    // public_cancel_booking). One that wasn't counted (an older booking) still deserves a mention.
+    var changedLate = (job.changes || []).some(function (x) { return x.late && x.action !== 'cancelled'; });
+    var lateBox = !late ? ''
+      : lateFromEarlierChange_(job)
+        ? box_('<b>They changed this booking with less than ' + esc_(notice) + ' earlier</b>, so this cancellation counts as late under your policy. ' +
+            full.charAt(0).toUpperCase() + full.slice(1) + payable)
+        : box_('<b>Cancelled with less than ' + esc_(notice) + '.</b> Under your cancellation policy ' + full + payable);
     return msg_((late ? 'Late cancellation: ' : 'Cancelled: ') + job.client_name + ' — ' + job.service_name + ', ' + fmt_(job.starts_at, tz, 'EEE d MMM HH:mm'),
       late ? 'Late cancellation' : 'A client cancelled',
       [
         p_(esc_(job.client_name) + ' cancelled their booking online. The time is free again in your diary.'),
         table_(gone),
-        late ? box_('<b>Cancelled with less than ' + esc_(notice) + '.</b> Under your cancellation policy ' + full +
-          ' is payable — this is for you to arrange with the client; the app doesn’t take payments.') : '',
-        !late && movedLate ? box_('Earlier, they moved this booking with less than ' + esc_(notice) + '.') : '',
+        lateBox,
+        !late && changedLate ? box_('Earlier, they changed this booking with less than ' + esc_(notice) + '.') : '',
         job.deposit_paid ? p_('They paid a ' + money_(job.deposit_required_pence) + ' deposit. Whether you keep it or refund it is your call.') : '',
         diary,
       ], biz);
@@ -281,8 +291,11 @@ function render_(job, s) {
       // They wrote the reason themselves, so it isn't repeated back to them.
       blocks = [p_('Hi ' + esc_(job.first_name) + ', as you asked, your appointment below has been cancelled.'), table_(c)];
       if (job.cancelled_late) {
-        blocks.push(p_('As this was less than ' + esc_(hrs) + ' before your appointment, our cancellation policy applies' +
-          (s.cancellation_policy ? ': ' + esc_(s.cancellation_policy) : '.')));
+        // Late because of an earlier change inside the notice period, not because of when they cancelled.
+        blocks.push(p_((lateFromEarlierChange_(job)
+            ? 'As you changed this booking with less than ' + esc_(notice)
+            : 'As this was less than ' + esc_(hrs) + ' before your appointment') +
+          ', our cancellation policy applies' + (s.cancellation_policy ? ': ' + esc_(s.cancellation_policy) : '.')));
       }
     } else {
       if (job.cancel_reason) c.push(['Reason', job.cancel_reason]);
@@ -300,11 +313,29 @@ function render_(job, s) {
   throw new Error('Unknown email kind: ' + job.kind);
 }
 
-/** Client, (booked as), mobile and email rows for the owner's alerts. */
+/** Client, (booked as), mobile (and the one given when booking) and email rows for the owner's alerts. */
 function clientRows_(job) {
   var rows = [['Client', job.client_name]];
   if (job.booking_name && job.booking_name !== job.client_name) rows.push(['Booked as', job.booking_name]);
-  return rows.concat([['Mobile', job.client_phone || '—'], ['Email', job.client_email || '—']]);
+  rows.push(['Mobile', job.client_phone || '—']);
+  // A returning client typed a different mobile when booking. Her record is
+  // never changed from the booking page, so reminders still go to the old one.
+  if (job.booking_phone) {
+    rows.push(['Mobile given', job.booking_phone + (job.client_phone
+      ? ' (different from their record — check before you WhatsApp)'
+      : ' (not on their record — check it before you add it)')]);
+  }
+  rows.push(['Email', job.client_email || '—']);
+  return rows;
+}
+
+/**
+ * A late cancellation made in good time for the booking's current slot: it
+ * counts as late because they changed it inside the notice period earlier.
+ */
+function lateFromEarlierChange_(job) {
+  return !!job.cancelled_late && !!job.cancelled_at && !!job.free_until &&
+    new Date(job.cancelled_at).getTime() < new Date(job.free_until).getTime();
 }
 
 /** The deposit request and bank details, for a booking still waiting for its deposit. */
@@ -330,11 +361,16 @@ function depositBlocks_(job, s, tz, lead) {
  * "Need to change or cancel?" with the client's own link, and the time after
  * which the cancellation policy applies. Only for emails to the client.
  */
-function manageBlock_(job, s, tz) {
+function manageBlock_(job, s, tz, notice) {
   var online = s.client_self_service !== false && /^https:\/\//i.test(job.manage_url || '');
-  var by = job.free_until && new Date(job.free_until).getTime() > Date.now()
-    ? 'Please let us know by ' + fmt_(job.free_until, tz, "EEEE d MMMM 'at' HH:mm") + ' — after that, the cancellation policy applies.'
-    : '';
+  // Once they've changed it inside the notice period, a cancellation is late
+  // whenever it comes, so there's no "free until" time to offer any more.
+  var lateChange = job.late_fee_pence !== null && job.late_fee_pence !== undefined;
+  var by = lateChange
+    ? 'As you changed this booking with less than ' + notice + ', the cancellation policy applies if you cancel.'
+    : job.free_until && new Date(job.free_until).getTime() > Date.now()
+      ? 'Please let us know by ' + fmt_(job.free_until, tz, "EEEE d MMMM 'at' HH:mm") + ' — after that, the cancellation policy applies.'
+      : '';
   if (!online && !by) return '';
   return p_('Need to change or cancel? ' +
     (online ? 'You can do it online: ' + link_(job.manage_url, 'Change or cancel your booking') : 'Just get in touch.') +

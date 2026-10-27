@@ -5,7 +5,7 @@ import { useOwner } from '../../components/owner';
 import { ErrorBox, Icon, LateChip, Spinner, TopBar, useLoad, useToast } from '../../components/ui';
 import { addDays, fmtDay, fmtDayLong, fmtDayTime, startOfDayInstant, todayInZone, dateInZone } from '../../lib/time';
 import { money } from '../../lib/text';
-import { dueWhatsAppReminders, reminderDays } from '../../lib/reminders';
+import { dueWhatsAppReminders, lateCharge, reminderDays } from '../../lib/reminders';
 
 export function Today() {
   const { settings: s } = useOwner();
@@ -14,15 +14,18 @@ export function Today() {
   const toast = useToast();
   const { data, error, loading } = useLoad(async () => {
     const ahead = Math.max(s.max_days_ahead, reminderDays(s.reminder_hours_before));
-    const [appts, services, changes, payments] = await Promise.all([
+    const [appts, services, changes, late] = await Promise.all([
       api.listAppointments(startOfDayInstant(today, tz).toISOString(),
         startOfDayInstant(addDays(today, ahead + 1), tz).toISOString()),
       api.listServices(),
       api.listClientChanges({ sinceIso: new Date(Date.now() - 7 * 86400e3).toISOString() }),
-      // To spot late-cancellation charges already received.
-      api.listPayments(addDays(today, -7), today),
+      // Late cancellations from the last fortnight, by the client online or marked late by her.
+      api.listLateCancellations(new Date(Date.now() - 14 * 86400e3).toISOString()),
     ]);
-    return { appts, services, changes, payments };
+    // Money already received for them, from the day of the earliest one.
+    const from = late.map((a) => dateInZone(a.cancelled_at ?? a.starts_at, tz)).sort()[0];
+    const payments = from ? await api.listPayments(from < today ? from : today, today) : [];
+    return { appts, services, changes, late, payments };
   }, [today]);
 
   const appts = data?.appts ?? [];
@@ -35,18 +38,9 @@ export function Today() {
     && new Date(a.starts_at) < new Date(Date.now() + 14 * 86400e3));
   const remindersToSend = dueWhatsAppReminders(appts, s);
   const changes = data?.changes ?? [];
-  // Late cancellations from the last week, until the charge is recorded in Money.
-  const settled = new Set((data?.payments ?? []).filter((p) => p.kind === 'other' || p.kind === 'payment').map((p) => p.appointment_id));
-  // Client cancellations online, plus ones she marked late herself (they told her by phone or WhatsApp).
-  const weekAgo = new Date(Date.now() - 7 * 86400e3).toISOString();
-  const lateCancels = [
-    ...changes.filter((c) => c.action === 'cancelled' && c.late).map((c) => ({
-      appointment_id: c.appointment_id, client_name: c.client_name, service_name: c.old_service_name,
-      starts_at: c.old_starts_at, price_pence: c.old_price_pence })),
-    ...appts.filter((a) => a.status === 'cancelled' && a.cancelled_late && a.cancelled_by === 'owner' && (a.cancelled_at ?? '') >= weekAgo)
-      .map((a) => ({ appointment_id: a.id, client_name: a.client?.full_name ?? a.booking_name, service_name: a.service_name,
-        starts_at: a.starts_at, price_pence: a.price_pence })),
-  ].filter((c, i, all) => !settled.has(c.appointment_id) && all.findIndex((x) => x.appointment_id === c.appointment_id) === i);
+  // Late cancellations (online, or ones she marked late after a call or WhatsApp) stay here
+  // until what's owed is recorded in Money, even once the appointment's day has gone.
+  const lateCancels = (data?.late ?? []).map((a) => ({ a, ...lateCharge(a, data?.payments ?? []) })).filter((c) => c.owed > 0);
   const takingsToday = todays.filter((a) => a.status !== 'no_show').reduce((n, a) => n + a.price_pence, 0);
 
   const setup: { text: string; to: string }[] = [];
@@ -94,12 +88,14 @@ export function Today() {
           {lateCancels.length > 0 && (
             <div className="card tight attention" style={{ marginBottom: 10 }}>
               <div style={{ padding: '10px 16px 0', fontWeight: 600 }}>Late cancellations · {lateCancels.length}</div>
-              <ul className="list">{lateCancels.map((c) => (
-                <li key={c.appointment_id}><Link className="list-row" to={`/appointments/${c.appointment_id}`}>
+              <ul className="list">{lateCancels.map(({ a, fee, deposit, received, owed }) => (
+                <li key={a.id}><Link className="list-row" to={`/appointments/${a.id}`}>
                   <div className="grow">
-                    <div className="title">{c.client_name ?? 'Client'}</div>
-                    <div className="meta">{c.service_name}{c.starts_at && ` · ${fmtDayTime(c.starts_at, tz)}`}</div>
-                    {!!c.price_pence && <div className="meta">Full {money(c.price_pence)} payable under your policy</div>}
+                    <div className="title">{a.client?.full_name ?? a.booking_name ?? 'Client'}</div>
+                    <div className="meta">{a.service_name} · {fmtDayTime(a.starts_at, tz)}</div>
+                    <div className="meta">{deposit > 0 || received > 0
+                      ? `Balance ${money(owed)} of the full ${money(fee)} payable under your policy`
+                      : `Full ${money(fee)} payable under your policy`}</div>
                   </div>
                   <LateChip>Late cancel</LateChip>
                   <span className="chev"><Icon name="chev" size={18} /></span>

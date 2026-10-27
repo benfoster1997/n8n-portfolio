@@ -62,6 +62,10 @@ export function Reminders() {
                           <div style={{ fontWeight: 600 }}>{fmtTime(a.starts_at, tz)} · {a.client?.full_name}</div>
                           <div className="sub">{a.service_name}</div>
                         </Link>
+                        {a.booking_phone && (
+                          <Link className="chip warn" to={`/appointments/${a.id}`} style={{ textDecoration: 'none' }}
+                            title={`They gave ${a.booking_phone} when booking, not the number on their record`}>Check mobile</Link>
+                        )}
                         <StatusChip status={a.status} />
                       </div>
                       <div className="row" style={{ marginTop: 8, justifyContent: 'space-between' }}>

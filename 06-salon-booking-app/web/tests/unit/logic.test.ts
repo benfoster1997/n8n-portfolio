@@ -2,11 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { availableSlots, openDays, type SlotRules } from '../../src/lib/slots';
 import { addDays, fmtTime, isoWeekday, startOfWeek, zonedToInstant } from '../../src/lib/time';
 import {
-  fillTemplate, friendlyError, money, normalizeUkPhone, parsePounds, taxYearOf, toCsv, whatsappLink, DEFAULT_TEMPLATES,
+  changeNote, fillTemplate, friendlyError, money, normalizeUkPhone, parsePounds, taxYearOf, toCsv, whatsappLink, DEFAULT_TEMPLATES,
 } from '../../src/lib/text';
 import { blankAnswers, describeAnswers, validateAnswers } from '../../src/lib/consultation';
-import { dueWhatsAppReminders, reminderDates, reminderDays, reminderRange } from '../../src/lib/reminders';
-import type { Appointment, OpeningHours, Settings } from '../../src/lib/types';
+import { dueWhatsAppReminders, lateCharge, lateChargePayments, reminderDates, reminderDays, reminderRange } from '../../src/lib/reminders';
+import type { Appointment, OpeningHours, Payment, Settings } from '../../src/lib/types';
 
 const allWeek = (open = '09:00', close = '17:00', extra: Partial<OpeningHours> = {}): OpeningHours[] =>
   [1, 2, 3, 4, 5, 6, 7].map((weekday) => ({ weekday, is_open: true, open_time: open, close_time: close, break_start: null, break_end: null, ...extra }));
@@ -157,6 +157,98 @@ describe('message templates', () => {
 
   it('leaves unknown placeholders as typed', () => {
     expect(fillTemplate('Hi {first_name} {nonsense}', a, s)).toBe('Hi Jess {nonsense}');
+  });
+});
+
+describe('how to change or cancel, in messages', () => {
+  const now = new Date('2026-06-10T09:00:00Z'); // Wednesday 10 June, 10:00 BST
+  const s = {
+    business_name: 'Test Studio', timezone: 'Europe/London', deposit_amount_pence: 0, public_site_url: 'https://example.app',
+    cancel_notice_hours: 48, client_self_service: true, wa_template_reminder: null, wa_template_confirmed: null,
+  } as unknown as Settings;
+  const appt = (hoursAhead: number, over: Partial<Appointment> = {}) => ({
+    service_name: 'BIAB infill', starts_at: new Date(now.getTime() + hoursAhead * 3600e3).toISOString(), price_pence: 3000,
+    deposit_required_pence: 0, reference: 'K3Q7XP', booking_name: 'Jess Example', client: { full_name: 'Jess Example' },
+    public_token: 'tok123', late_fee_pence: null, ...over,
+  }) as unknown as Appointment;
+  const messages = (a: Appointment, settings = s) => [
+    changeNote(a, settings, now), fillTemplate(DEFAULT_TEMPLATES.reminder, a, settings, now), fillTemplate(DEFAULT_TEMPLATES.confirmed, a, settings, now),
+  ];
+  // Every "Thursday 11 June at 12:00" in a message, as an instant (London time, 2026).
+  const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  const datesIn = (text: string) => [...text.matchAll(/\w+day (\d{1,2}) (\w+) at (\d\d:\d\d)/g)]
+    .map(([, d, m, t]) => zonedToInstant(`2026-${String(MONTHS.indexOf(m) + 1).padStart(2, '0')}-${d.padStart(2, '0')}`, t));
+
+  it('gives the link and the time to change by while that’s still ahead', () => {
+    const a = appt(72); // Saturday 13 June, 10:00 BST
+    expect(changeNote(a, s, now)).toBe('Need to change or cancel? Please do it by Thursday 11 June at 10:00: https://example.app/manage/tok123');
+    expect(fillTemplate(DEFAULT_TEMPLATES.reminder, a, s, now)).toContain('Please do it by Thursday 11 June at 10:00: https://example.app/manage/tok123');
+  });
+
+  it('never quotes a time that has passed: 26 hours ahead with 48 hours’ notice says the policy applies', () => {
+    const a = appt(26); // Thursday 11 June, 12:00 BST; 48 hours before was Tuesday 9 June
+    for (const text of messages(a)) {
+      expect(text).not.toContain('Please do it by');
+      expect(text).not.toContain('Tuesday 9 June');
+      for (const d of datesIn(text)) expect(d.getTime()).toBeGreaterThan(now.getTime());
+      expect(text).toContain('https://example.app/manage/tok123');
+      expect(text).toContain('it’s now less than 48 hours before, so the cancellation policy applies');
+    }
+    expect(datesIn(fillTemplate(DEFAULT_TEMPLATES.reminder, a, s, now))).toHaveLength(1); // just the appointment
+  });
+
+  it('gives just the link when there’s no notice period', () => {
+    const none = { ...s, cancel_notice_hours: 0 };
+    expect(changeNote(appt(26), none, now)).toBe('Need to change or cancel? https://example.app/manage/tok123');
+    for (const text of messages(appt(2), none)) {
+      expect(text).toContain('https://example.app/manage/tok123');
+      expect(text).not.toMatch(/do it by|policy/);
+    }
+  });
+
+  it('leaves the link out when clients can’t change bookings online', () => {
+    const off = { ...s, client_self_service: false };
+    for (const a of [appt(72), appt(26)]) {
+      for (const text of messages(a, off)) {
+        expect(text).not.toContain('/manage/');
+        expect(text).toContain('Need to change or cancel? Just get in touch.');
+      }
+    }
+  });
+
+  it('treats a booking already changed inside the notice period as late, even once moved further out', () => {
+    const a = appt(200, { late_fee_pence: 4500 });
+    for (const text of messages(a)) {
+      expect(text).not.toContain('Please do it by');
+      expect(text).toContain('so the cancellation policy applies');
+      expect(text).toContain('/manage/tok123');
+    }
+  });
+});
+
+describe('late cancellation charge', () => {
+  const appt = (over: Partial<Appointment> = {}) => ({
+    id: 'a1', price_pence: 2500, late_fee_pence: null, deposit_required_pence: 0, deposit_paid_at: null, ...over,
+  }) as Pick<Appointment, 'id' | 'price_pence' | 'late_fee_pence' | 'deposit_required_pence' | 'deposit_paid_at'>;
+  const pay = (amount_pence: number, kind: Payment['kind'] = 'other', appointment_id: string | null = 'a1') => ({ appointment_id, kind, amount_pence });
+
+  it('is the full price, or the fee fixed when it first went late', () => {
+    expect(lateCharge(appt(), [])).toEqual({ fee: 2500, deposit: 0, received: 0, owed: 2500 });
+    // Switched to a £10 treatment inside the notice period, then cancelled: the £45 still applies.
+    expect(lateCharge(appt({ price_pence: 1000, late_fee_pence: 4500 }), []).owed).toBe(4500);
+  });
+
+  it('takes off a deposit paid and money received for it, never going below zero', () => {
+    const paidDeposit = { deposit_required_pence: 1000, deposit_paid_at: '2026-06-01T10:00:00Z' };
+    expect(lateCharge(appt({ ...paidDeposit }), [])).toEqual({ fee: 2500, deposit: 1000, received: 0, owed: 1500 });
+    // An unpaid deposit doesn't count.
+    expect(lateCharge(appt({ deposit_required_pence: 1000 }), []).owed).toBe(2500);
+    const payments = [pay(500), pay(300, 'payment'), pay(700, 'tip'), pay(1000, 'deposit'), pay(900, 'other', 'a2'), pay(400, 'other', null)];
+    expect(lateChargePayments(appt(), payments)).toHaveLength(2);
+    expect(lateCharge(appt({ ...paidDeposit }), payments)).toEqual({ fee: 2500, deposit: 1000, received: 800, owed: 700 });
+    // A deposit as big as the price leaves nothing to pay.
+    expect(lateCharge(appt({ price_pence: 1000, ...paidDeposit }), []).owed).toBe(0);
+    expect(lateCharge(appt(), [pay(3000)]).owed).toBe(0);
   });
 });
 

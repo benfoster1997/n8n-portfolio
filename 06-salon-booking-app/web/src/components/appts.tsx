@@ -59,10 +59,14 @@ export function changedAgo(iso: string, tz: string, now = Date.now()): string {
   return fmtDayTime(iso, tz);
 }
 
-/** The template that fits where the appointment is: deposit chase, reminder or confirmation. */
-export function whatsappMessageFor(a: Appointment, s: Settings, kind?: 'reminder' | 'deposit' | 'confirmed'): string {
+/**
+ * The template that fits where the appointment is: deposit chase, reminder or confirmation.
+ * The default wording's {change_note} never quotes a change-by time that has passed, and
+ * leaves the link out when clients can't change bookings online.
+ */
+export function whatsappMessageFor(a: Appointment, s: Settings, kind?: 'reminder' | 'deposit' | 'confirmed', now = new Date()): string {
   const k = kind ?? (a.status === 'pending_deposit' ? 'deposit' : 'reminder');
-  return fillTemplate(templateFor(k, s), a, s);
+  return fillTemplate(templateFor(k, s), a, s, now);
 }
 
 export function WhatsAppButton({ a, s, kind, label, onSent, small }: {
