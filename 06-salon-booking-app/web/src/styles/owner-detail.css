@@ -14,6 +14,7 @@
   --od-leader: color-mix(in srgb, var(--line-strong) 85%, var(--accent) 15%);
   --od-wa: #1fa855;
   --od-wa-soft: #e3f7ea;
+  --od-lemon-wash: color-mix(in srgb, var(--lemon-pale) 70%, transparent);
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -27,6 +28,7 @@
     --od-leader: color-mix(in srgb, var(--line-strong) 80%, var(--accent) 20%);
     --od-wa: #5fdc8f;
     --od-wa-soft: color-mix(in srgb, #25d366 14%, var(--surface));
+    --od-lemon-wash: color-mix(in srgb, var(--lemon) 9%, transparent);
   }
 }
 
@@ -219,7 +221,7 @@
 .od-dt-mon {
   display: block;
   padding: 4px 0 3px;
-  background: var(--grad-accent);
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
   color: var(--accent-ink);
   font-size: 0.68rem;
   font-weight: 800;
@@ -325,6 +327,8 @@
 .od-check-phone { border-radius: var(--radius); }
 
 .od-panel > p, .od-panel > .sub { margin: 0; }
+.od-panel .btn, .od-tool .btn { padding-left: 16px; padding-right: 16px; }
+.od-panel .btn.wa { font-size: 0.97rem; }
 .od-ref-pill {
   display: inline-block;
   padding: 0 7px;
@@ -748,7 +752,7 @@
   min-width: 0;
 }
 .od-picked-name { font-weight: 800; color: var(--ink-strong); overflow-wrap: anywhere; }
-.od-picked .sub { overflow-wrap: anywhere; }
+.od-picked .sub { overflow-wrap: anywhere; text-wrap: pretty; }
 .od-picked .btn { flex: none; }
 .od-matches { box-shadow: var(--shadow-sm); animation: none; }
 .od-matches .list-row { gap: 12px; padding: 10px 14px; }
@@ -767,7 +771,7 @@
   gap: 14px;
   padding: 16px 18px;
   background:
-    radial-gradient(70% 120% at 100% 0%, color-mix(in srgb, var(--lemon-pale) 70%, transparent), transparent 70%),
+    radial-gradient(70% 120% at 100% 0%, var(--od-lemon-wash), transparent 70%),
     radial-gradient(60% 120% at 0% 100%, color-mix(in srgb, var(--brush) 40%, transparent), transparent 70%),
     var(--surface);
 }
@@ -814,6 +818,7 @@
 .od-page-intro { margin: -4px 4px 0; }
 .od-check-row { padding: 12px 14px; border-radius: 14px; background: var(--surface-2); border: 1px solid var(--line); }
 .od-use-host { align-self: flex-start; }
+.od-set-cancel textarea { min-height: 168px !important; }
 .od-set-page .notice.warn { border-radius: 14px; }
 
 /* the words, previewed like her menu header */
@@ -823,7 +828,7 @@
   text-align: center;
   background:
     radial-gradient(60% 90% at 0% 0%, color-mix(in srgb, var(--brush) 45%, transparent), transparent 70%),
-    radial-gradient(50% 90% at 100% 100%, color-mix(in srgb, var(--lemon-pale) 70%, transparent), transparent 70%),
+    radial-gradient(50% 90% at 100% 100%, var(--od-lemon-wash), transparent 70%),
     var(--surface-2);
   border: 1px dashed var(--line-strong);
   overflow: hidden;
@@ -878,7 +883,7 @@
 .od-mi-price {
   order: 2;
   flex: 0 0 auto;
-  max-width: 58%;
+  max-width: 46%;
   text-align: right;
   color: var(--pink);
   font-weight: 800;
@@ -1009,3 +1014,14 @@
 .od-account-who { margin: 0; min-width: 0; }
 .od-account-who dt { color: var(--muted); font-size: 0.72rem; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase; }
 .od-account-who dd { margin: 0; color: var(--ink-strong); font-weight: 700; overflow-wrap: anywhere; }
+
+/* ------------------------------------------------------------------ small phones (SE, 320–359px) */
+@media (max-width: 359px) {
+  .od-contact { gap: 8px; }
+  .od-contact > .btn { padding-left: 2px; padding-right: 2px; font-size: 0.8rem; }
+  .od-actions-row > .btn { font-size: 0.86rem; padding: 0 4px; }
+  .od-stats .stat .label { white-space: normal; letter-spacing: 0.1em; }
+  .od-datetile { width: 56px; }
+  .od-hero-main { gap: 12px; }
+  .od-mini-stats dd { font-size: 0.94rem; }
+}
