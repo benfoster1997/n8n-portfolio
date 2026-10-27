@@ -62,7 +62,8 @@ export interface Api {
   getAppointment(id: string): Promise<Appointment | null>;
   createAppointment(a: NewAppointment): Promise<Appointment>;
   updateAppointment(id: string, patch: Partial<Pick<Appointment,
-    'starts_at' | 'duration_min' | 'service_name' | 'service_id' | 'price_pence' | 'owner_notes' | 'status' | 'whatsapp_reminder_sent_at'>>): Promise<Appointment>;
+    'starts_at' | 'duration_min' | 'service_name' | 'service_id' | 'price_pence' | 'owner_notes' | 'status' | 'whatsapp_reminder_sent_at'
+    | 'booking_phone'>>): Promise<Appointment>;
   markDepositPaid(id: string, method: PayMethod): Promise<void>;
   completeAppointment(id: string, amountPence: number, method: PayMethod, tipPence: number, note: string | null): Promise<void>;
   /** late: the client cancelled with too little notice (by phone or WhatsApp). */
@@ -71,6 +72,10 @@ export interface Api {
   listEmailLog(appointmentId: string): Promise<EmailLogRow[]>;
   /** Changes clients made online: for one appointment, or everything since a time (newest first). */
   listClientChanges(opts: { appointmentId?: string; sinceIso?: string }): Promise<ClientChange[]>;
+  /** Late cancellations (by the client online, or marked late by the owner) cancelled since a time, newest first. */
+  listLateCancellations(sinceIso: string): Promise<Appointment[]>;
+  /** A new change/cancel link for a booking; the old one stops working. Returns the new token. */
+  resetManageLink(id: string): Promise<string>;
 
   // --- owner: clients ------------------------------------------------------
   listClients(): Promise<(Client & { last_visit: string | null; visits: number })[]>;

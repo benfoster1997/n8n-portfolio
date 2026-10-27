@@ -114,6 +114,12 @@ export interface Appointment {
   client_changed_at: string | null;
   /** When the client was last emailed their details after booking (a change notice or re-sent confirmation). */
   details_sent_at: string | null;
+  /** When the start time last moved. */
+  moved_at: string | null;
+  /** The full price payable under the policy, fixed once the client changed or cancelled inside the notice period. */
+  late_fee_pence: number | null;
+  /** The mobile typed with an online booking when it differs from the client's record, for the owner to check. */
+  booking_phone: string | null;
   created_at: string;
   client?: ClientLite;
   /** True when the client has at least one consultation form on file. */
@@ -243,6 +249,8 @@ export interface ManagedBooking {
   changes_left: number;
   /** Changes and cancellations are confirmed by email. */
   has_email: boolean;
+  /** Set once they've changed it inside the notice period: any cancellation is then late, and this is payable. */
+  late_fee_pence: number | null;
   /** A new client who hasn't filled in the consultation form yet. */
   form_needed: boolean;
   /** After this time, cancelling (or moving) is inside the notice period. Null when there is no notice period. */

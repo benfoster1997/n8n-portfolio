@@ -113,7 +113,7 @@ function seed(): Store {
       deposit_due_at: null, deposit_paid_at: null, reference: ref(), public_token: uid(), client_notes: null,
       owner_notes: null, cancellation_policy_agreed: null, reminder_email_sent_at: null, whatsapp_reminder_sent_at: null, cancelled_at: null,
       cancel_reason: null, cancelled_by: null, cancelled_late: false, client_change_count: 0, client_changed_at: null,
-      details_sent_at: null, created_at: at(-14, '09:00'), ...extra,
+      details_sent_at: null, moved_at: null, late_fee_pence: null, booking_phone: null, created_at: at(-14, '09:00'), ...extra,
     };
     appts.push(a);
     return a;
@@ -150,7 +150,7 @@ function seed(): Store {
     source: 'online', client_change_count: 1, client_changed_at: hoursAgo(3), details_sent_at: hoursAgo(3),
   });
   const lateCancel = add(isla, toes, at(1, '15:30'), 'cancelled', {
-    source: 'online', cancelled_by: 'client', cancelled_late: true, cancelled_at: hoursAgo(4),
+    source: 'online', cancelled_by: 'client', cancelled_late: true, cancelled_at: hoursAgo(4), late_fee_pence: toes.price_pence,
     client_changed_at: hoursAgo(4), cancel_reason: 'Sorry — something came up at work.',
   });
   const client_changes: ClientChange[] = [
@@ -302,6 +302,9 @@ export function demoApi(): Api {
         cancellation_policy_agreed: s.cancellation_policy?.trim() || null,
         reminder_email_sent_at: null, whatsapp_reminder_sent_at: null, cancelled_at: null, cancel_reason: null,
         cancelled_by: null, cancelled_late: false, client_change_count: 0, client_changed_at: null, details_sent_at: null,
+        moved_at: null, late_fee_pence: null,
+        // A returning client who typed a different mobile: kept for the owner to check.
+        booking_phone: !created && phone !== c.phone_e164 ? r.phone.trim() : null,
         created_at: nowIso(),
       });
       db.appointments.push(a);
@@ -354,6 +357,7 @@ export function demoApi(): Api {
           cancelled_by: a.cancelled_by, cancelled_late: a.cancelled_late,
           changes_left: Math.max(0, MAX_CLIENT_CHANGES - a.client_change_count),
           has_email: !!c?.email,
+          late_fee_pence: a.late_fee_pence,
           form_needed: a.is_new_client && !db.forms.some((f) => f.client_id === a.client_id),
           free_until: s.cancel_notice_hours > 0 ? new Date(new Date(a.starts_at).getTime() - s.cancel_notice_hours * 3600e3).toISOString() : null,
         },
@@ -372,6 +376,8 @@ export function demoApi(): Api {
       const s = db.settings;
       if (!s.booking_enabled) fail('booking_disabled');
       if (a.client_change_count >= MAX_CLIENT_CHANGES) fail('too_many_changes');
+      const since = (ms: number) => db.client_changes.filter((c) => Date.now() - new Date(c.changed_at).getTime() < ms).length;
+      if (since(3600e3) >= 10 || since(86400e3) >= 40) fail('busy_try_later');
       const keep = !change.service_id || change.service_id === a.service_id;
       const service = keep ? null
         : db.services.find((v) => v.id === change.service_id && v.is_active && v.online_bookable) ?? fail('invalid_service');
@@ -383,13 +389,15 @@ export function demoApi(): Api {
       const ok = availableSlots(dateInZone(start, s.timezone), duration, { ...s, hours: db.hours }, busyFor(a.id))
         .some((d) => d.toISOString() === start);
       if (!ok) fail('slot_taken');
-      const late = moved && insideNotice(a.starts_at);
+      // Any change inside the notice period is late, and fixes the fee at the price before it.
+      const late = insideNotice(a.starts_at);
+      if (late) a.late_fee_pence = Math.max(a.late_fee_pence ?? 0, a.price_pence);
       const before = { starts_at: a.starts_at, service_name: a.service_name, price_pence: a.price_pence };
       if (service) Object.assign(a, { service_id: service.id, service_name: service.name, price_pence: service.price_pence, duration_min: duration });
       a.starts_at = start;
       a.ends_at = new Date(new Date(start).getTime() + duration * 60e3).toISOString();
       a.busy_until = new Date(new Date(a.ends_at).getTime() + s.buffer_min * 60e3).toISOString();
-      if (moved) { a.reminder_email_sent_at = null; a.whatsapp_reminder_sent_at = null; }
+      if (moved) { a.reminder_email_sent_at = null; a.whatsapp_reminder_sent_at = null; a.moved_at = nowIso(); }
       if (a.deposit_due_at && a.deposit_due_at > a.starts_at) a.deposit_due_at = a.starts_at;
       a.client_change_count += 1;
       a.client_changed_at = nowIso();
@@ -405,7 +413,9 @@ export function demoApi(): Api {
     },
     async cancelBooking(token, reason) {
       const a = managed(token);
-      const late = insideNotice(a.starts_at);
+      // An earlier change inside the notice period makes any cancellation late.
+      const late = insideNotice(a.starts_at) || a.late_fee_pence != null;
+      a.late_fee_pence = late ? Math.max(a.late_fee_pence ?? 0, a.price_pence) : null;
       const note = (reason ?? '').replace(/[\s\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, 300).trim() || null;
       Object.assign(a, { status: 'cancelled', cancelled_at: nowIso(), cancelled_by: 'client', cancelled_late: late,
         cancel_reason: note, client_changed_at: nowIso() });
@@ -469,7 +479,8 @@ export function demoApi(): Api {
         id: uid(), ...n, starts_at: new Date(n.starts_at).toISOString(), ends_at: ends, source: 'owner', booking_name: null,
         deposit_paid_at: null, reference: ref(), public_token: uid(), client_notes: null, cancellation_policy_agreed: null, reminder_email_sent_at: null,
         whatsapp_reminder_sent_at: null, cancelled_at: null, cancel_reason: null, cancelled_by: null, cancelled_late: false,
-        client_change_count: 0, client_changed_at: null, details_sent_at: null, created_at: nowIso(),
+        client_change_count: 0, client_changed_at: null, details_sent_at: null, moved_at: null, late_fee_pence: null,
+        booking_phone: null, created_at: nowIso(),
       });
       db.appointments.push(a);
       commit();
@@ -485,7 +496,7 @@ export function demoApi(): Api {
         next.starts_at = new Date(next.starts_at).toISOString();
         next.ends_at = new Date(new Date(next.starts_at).getTime() + next.duration_min * 60e3).toISOString();
         if (ACTIVE.has(next.status) && clash(next.starts_at, next.duration_min, id)) fail('appointments_no_overlap');
-        if (next.starts_at !== cur.starts_at) { next.reminder_email_sent_at = null; next.whatsapp_reminder_sent_at = null; }
+        if (next.starts_at !== cur.starts_at) { next.reminder_email_sent_at = null; next.whatsapp_reminder_sent_at = null; next.moved_at = nowIso(); }
         if (next.deposit_due_at && next.deposit_due_at > next.starts_at) next.deposit_due_at = next.starts_at;
       }
       db.appointments[i] = withBusy(next);
@@ -504,6 +515,7 @@ export function demoApi(): Api {
           amount_pence: a.deposit_required_pence, method, kind: 'deposit', paid_on: todayInZone(TZ), note: null, created_at: nowIso() });
       }
       if (c.email) a.details_sent_at = nowIso();
+      a.whatsapp_reminder_sent_at = null; // a deposit chase isn't the reminder
       queue(a.id, 'deposit_received', c.email);
       commit();
       await delay(null);
@@ -528,6 +540,7 @@ export function demoApi(): Api {
       a.cancelled_at = nowIso();
       a.cancelled_by = 'owner';
       a.cancelled_late = late;
+      a.late_fee_pence = late ? Math.max(a.late_fee_pence ?? 0, a.price_pence) : null;
       a.cancel_reason = reason;
       db.outbox.filter((o) => o.appointment_id === id && o.status === 'pending').forEach((o) => { o.status = 'skipped'; });
       if (notify) queue(id, 'cancelled', db.clients.find((x) => x.id === a.client_id)?.email);
@@ -544,6 +557,18 @@ export function demoApi(): Api {
       await delay(null);
     },
     async listEmailLog(appointmentId) { return delay(db.outbox.filter((o) => o.appointment_id === appointmentId)); },
+    async listLateCancellations(sinceIso) {
+      needOwner();
+      return delay(db.appointments.filter((a) => a.status === 'cancelled' && a.cancelled_late && (a.cancelled_at ?? '') >= sinceIso)
+        .sort((a, b) => (b.cancelled_at ?? '').localeCompare(a.cancelled_at ?? '')).map(shape));
+    },
+    async resetManageLink(id) {
+      needOwner();
+      const a = db.appointments.find((x) => x.id === id) ?? fail('not_found');
+      a.public_token = uid();
+      commit();
+      return delay(a.public_token);
+    },
     async listClientChanges({ appointmentId, sinceIso }) {
       needOwner();
       return delay(db.client_changes

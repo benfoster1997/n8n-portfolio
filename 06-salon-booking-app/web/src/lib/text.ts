@@ -60,14 +60,14 @@ export function firstName(fullName: string | null | undefined): string {
 export const DEFAULT_TEMPLATES = {
   reminder:
     'Hi {first_name}! Just a reminder of your {service} appointment on {date} at {time}. 💅\n\n' +
-    'Need to change or cancel? Please do it by {change_by}: {manage_link}\n\nSee you then!\n{business}',
+    '{change_note}\n\nSee you then!\n{business}',
   deposit:
     'Hi {first_name}, thanks for booking {service} on {date} at {time}. To secure your appointment please send the {deposit} deposit by bank transfer:\n\n' +
     'Name: {bank_name}\nSort code: {sort_code}\nAccount: {account_number}\nReference: {reference}\n\n' +
     'Thank you! {business}',
   confirmed:
     "Hi {first_name}, you're booked in for {service} on {date} at {time}. See you soon!\n\n" +
-    'To change or cancel: {manage_link}\n{business}',
+    '{change_note}\n{business}',
 } as const;
 
 export type TemplateKind = keyof typeof DEFAULT_TEMPLATES;
@@ -88,8 +88,25 @@ export function freeChangeDeadline(startsAt: string, noticeHours: number): Date 
   return new Date(new Date(startsAt).getTime() - Math.max(0, noticeHours) * 3600e3);
 }
 
+/**
+ * "Need to change or cancel?" in words that fit the moment: the link and the
+ * date to change by while that's still ahead, a note that the policy now
+ * applies once it has passed, or "get in touch" when online changes are off.
+ */
+export function changeNote(a: Appointment, s: Settings, now: Date = new Date()): string {
+  if (!s.client_self_service) return 'Need to change or cancel? Just get in touch.';
+  const link = manageLink(a, s);
+  const notice = s.cancel_notice_hours ?? 0;
+  if (notice <= 0) return `Need to change or cancel? ${link}`;
+  const by = freeChangeDeadline(a.starts_at, notice);
+  if (by.getTime() > now.getTime() && a.late_fee_pence == null) {
+    return `Need to change or cancel? Please do it by ${fmtDayLong(by, s.timezone)} at ${fmtTime(by, s.timezone)}: ${link}`;
+  }
+  return `Need to change or cancel? ${link} (it’s now less than ${notice} hours before, so the cancellation policy applies)`;
+}
+
 /** Fill {placeholders} in a message template for one appointment. Unknown placeholders are left as typed. */
-export function fillTemplate(template: string, a: Appointment, s: Settings): string {
+export function fillTemplate(template: string, a: Appointment, s: Settings, now: Date = new Date()): string {
   const changeBy = freeChangeDeadline(a.starts_at, s.cancel_notice_hours ?? 0);
   const values: Record<string, string> = {
     first_name: firstName(a.client?.full_name ?? a.booking_name),
@@ -105,7 +122,9 @@ export function fillTemplate(template: string, a: Appointment, s: Settings): str
     sort_code: s.bank_sort_code ?? '',
     account_number: s.bank_account_number ?? '',
     manage_link: manageLink(a, s),
+    // Can be in the past for an appointment already inside the notice period: {change_note} words that for you.
     change_by: `${fmtDayLong(changeBy, s.timezone)} at ${fmtTime(changeBy, s.timezone)}`,
+    change_note: changeNote(a, s, now),
   };
   return template.replace(/\{(\w+)\}/g, (whole, key: string) => (key in values ? values[key] : whole));
 }
@@ -113,7 +132,7 @@ export function fillTemplate(template: string, a: Appointment, s: Settings): str
 export const TEMPLATE_PLACEHOLDERS = [
   '{first_name}', '{name}', '{service}', '{date}', '{time}', '{price}', '{deposit}',
   '{reference}', '{bank_name}', '{sort_code}', '{account_number}', '{business}',
-  '{manage_link}', '{change_by}',
+  '{change_note}', '{manage_link}', '{change_by}',
 ];
 
 /** Turn rows into a CSV that Excel and Google Sheets open cleanly (UTF-8 with BOM). */
@@ -183,6 +202,7 @@ export function friendlyError(e: unknown): string {
     signature_required: 'Please type your full name to sign the form.',
     already_submitted: 'This form has already been filled in. Thank you!',
     not_found: "This link has expired or isn't valid.",
+    'violates check constraint': 'That value is out of range — please check it.',
     not_allowed: "You're not signed in as the owner.",
     not_pending_deposit: 'That booking is not waiting for a deposit.',
     not_cancellable: 'Only upcoming bookings can be cancelled.',

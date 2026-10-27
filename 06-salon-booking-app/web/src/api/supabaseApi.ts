@@ -22,6 +22,7 @@ function shapeAppt(r: ApptRow): Appointment {
     starts_at: iso(r.starts_at)!, ends_at: iso(r.ends_at)!, created_at: iso(r.created_at)!,
     deposit_due_at: iso(r.deposit_due_at), deposit_paid_at: iso(r.deposit_paid_at),
     cancelled_at: iso(r.cancelled_at), client_changed_at: iso(r.client_changed_at), details_sent_at: iso(r.details_sent_at),
+    moved_at: iso(r.moved_at),
   };
 }
 
@@ -208,6 +209,15 @@ export function supabaseApi(url: string, anonKey: string): Api {
       return check(await sb.from('email_outbox')
         .select('id, kind, to_email, status, attempts, sent_at, last_error, created_at')
         .eq('appointment_id', appointmentId).order('id')) as EmailLogRow[];
+    },
+    async listLateCancellations(sinceIso) {
+      const rows = check(await sb.from('appointments').select(APPT_SELECT)
+        .eq('status', 'cancelled').eq('cancelled_late', true).gte('cancelled_at', sinceIso)
+        .order('cancelled_at', { ascending: false })) as ApptRow[];
+      return rows.map(shapeAppt);
+    },
+    async resetManageLink(id) {
+      return check(await sb.rpc('owner_reset_link', { p_appointment_id: id })) as string;
     },
     async listClientChanges({ appointmentId, sinceIso }) {
       let q = sb.from('client_changes')

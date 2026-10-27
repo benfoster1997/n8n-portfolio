@@ -186,6 +186,16 @@ create table if not exists public.appointments (
   -- confirmation). A reminder isn't sent on top of one that went out inside
   -- the reminder window.
   details_sent_at        timestamptz,
+  -- When the start time last moved (set by trigger). A move the client wasn't
+  -- emailed about gets a reminder for the new time.
+  moved_at               timestamptz,
+  -- The full price payable under the cancellation policy, fixed the first time
+  -- the client changes or cancels inside the notice period. A cheaper treatment
+  -- or a later time chosen after that doesn't lower it.
+  late_fee_pence         int check (late_fee_pence >= 0),
+  -- The mobile typed with an online booking, when it differs from the client's
+  -- record (the record is never changed from the booking page). The owner checks it.
+  booking_phone          text check (length(booking_phone) <= 30),
   created_at             timestamptz not null default now(),
   updated_at             timestamptz not null default now(),
   check (ends_at > starts_at),
@@ -293,6 +303,8 @@ create table if not exists public.email_outbox (
   claimed_at     timestamptz,
   sent_at        timestamptz,
   last_error     text,
+  -- Changed again while it was going out: send it once more when it reports back.
+  resend         boolean not null default false,
   created_at     timestamptz not null default now(),
   unique (appointment_id, kind)
 );
@@ -317,6 +329,10 @@ alter table public.appointments add column if not exists cancelled_late boolean 
 alter table public.appointments add column if not exists client_change_count int not null default 0;
 alter table public.appointments add column if not exists client_changed_at timestamptz;
 alter table public.appointments add column if not exists details_sent_at timestamptz;
+alter table public.appointments add column if not exists moved_at timestamptz;
+alter table public.appointments add column if not exists late_fee_pence int check (late_fee_pence >= 0);
+alter table public.appointments add column if not exists booking_phone text check (length(booking_phone) <= 30);
+alter table public.email_outbox add column if not exists resend boolean not null default false;
 alter table public.email_outbox drop constraint if exists email_outbox_kind_check;
 alter table public.email_outbox add constraint email_outbox_kind_check
   check (kind in ('booking_received', 'deposit_received', 'reminder', 'cancelled', 'changed',
@@ -401,7 +417,10 @@ begin
   if tg_op = 'UPDATE' and new.starts_at is distinct from old.starts_at then
     new.reminder_email_sent_at := null;
     new.whatsapp_reminder_sent_at := null;
-    delete from public.email_outbox where appointment_id = new.id and kind = 'reminder' and status <> 'sending';
+    new.moved_at := now();
+    -- Even one going out right now: it has the old time, and its "sent" report
+    -- then finds nothing, so the new time still gets its own reminder.
+    delete from public.email_outbox where appointment_id = new.id and kind = 'reminder';
   end if;
   if new.deposit_due_at is not null and new.deposit_due_at > new.starts_at then
     new.deposit_due_at := new.starts_at;   -- moved earlier: the deposit is due by the new time
@@ -666,14 +685,17 @@ begin
     insert into public.appointments (
       client_id, service_id, service_name, price_pence, duration_min, starts_at, ends_at, busy_until,
       status, source, booking_name, is_new_client, deposit_required_pence, deposit_due_at,
-      reference, client_notes, cancellation_policy_agreed)
+      reference, client_notes, cancellation_policy_agreed, booking_phone)
     values (
       v_client.id, v_service.id, v_service.name, v_service.price_pence, v_service.duration_min,
       p_starts_at, p_starts_at, p_starts_at,             -- ends_at / busy_until recomputed by trigger
       case when v_deposit > 0 then 'pending_deposit' else 'confirmed' end,
       'online', v_name, v_is_new, v_deposit,
       case when v_deposit > 0 then least(now() + make_interval(hours => s.deposit_deadline_hours), p_starts_at) end,
-      '', nullif(btrim(coalesce(p_notes, '')), ''), nullif(btrim(coalesce(s.cancellation_policy, '')), ''))
+      '', nullif(btrim(coalesce(p_notes, '')), ''), nullif(btrim(coalesce(s.cancellation_policy, '')), ''),
+      -- A returning client who typed a different mobile: kept for the owner to
+      -- check, so reminders and links never go to a number nobody has confirmed.
+      case when not v_created and v_phone is distinct from v_client.phone_e164 then btrim(p_phone) end)
     returning * into v_appt;
   exception when exclusion_violation then
     raise exception 'slot_taken';
@@ -782,11 +804,17 @@ returns void language plpgsql volatile security definer set search_path = public
 begin
   if coalesce(btrim(p_to), '') = '' then return; end if;
   if p_requeue then
+    -- One going out right now carries the old details: leave it, and mark it to
+    -- go once more when it reports back (email_jobs_report).
     insert into public.email_outbox (kind, appointment_id, to_email)
     values (p_kind, p_appointment_id, p_to)
     on conflict (appointment_id, kind) do update
-       set status = 'pending', attempts = 0, last_error = null, to_email = excluded.to_email, claimed_at = null
-     where public.email_outbox.status <> 'sending';   -- one going out right now is re-queued when it reports back
+       set status     = case when email_outbox.status = 'sending' then 'sending' else 'pending' end,
+           resend     = email_outbox.status = 'sending',
+           attempts   = case when email_outbox.status = 'sending' then email_outbox.attempts else 0 end,
+           last_error = null,
+           claimed_at = case when email_outbox.status = 'sending' then email_outbox.claimed_at end,
+           to_email   = excluded.to_email;
   else
     insert into public.email_outbox (kind, appointment_id, to_email)
     values (p_kind, p_appointment_id, p_to)
@@ -832,6 +860,9 @@ begin
       'cancelled_by',           a.cancelled_by,
       'cancelled_late',         a.cancelled_late,
       'changes_left',           greatest(0, public.max_client_changes() - a.client_change_count),
+      -- Set once they've changed it inside the notice period: from then on a
+      -- cancellation is late whenever it happens, and this is what's payable.
+      'late_fee_pence',         a.late_fee_pence,
       -- Whether a change or cancellation will be confirmed by email (not the address itself).
       'has_email',              exists (select 1 from public.clients c
                                          where c.id = a.client_id and coalesce(c.email, '') <> ''),
@@ -901,6 +932,12 @@ begin
   if not s.client_self_service then raise exception 'changes_disabled'; end if;
   if not s.booking_enabled then raise exception 'booking_disabled'; end if;
   if v_old.client_change_count >= public.max_client_changes() then raise exception 'too_many_changes'; end if;
+  -- Across all bookings: a handful of changes an hour is a busy day; more is
+  -- someone using the links to fill the owner's Gmail quota.
+  if (select count(*) from public.client_changes where changed_at > now() - interval '1 hour') >= 10
+     or (select count(*) from public.client_changes where changed_at > now() - interval '1 day') >= 40 then
+    raise exception 'busy_try_later';
+  end if;
 
   -- Keeping the same treatment keeps the price it was booked at.
   if p_service_id is null or p_service_id is not distinct from v_old.service_id then
@@ -923,8 +960,9 @@ begin
 
   perform public.check_bookable_time(v_start, v_duration);
 
-  v_late := v_moved and s.cancel_notice_hours > 0
-            and now() > v_old.starts_at - make_interval(hours => s.cancel_notice_hours);
+  -- Any change inside the notice period counts, so moving or switching to
+  -- something cheaper can't be used to dodge or shrink a late-cancellation fee.
+  v_late := s.cancel_notice_hours > 0 and now() > v_old.starts_at - make_interval(hours => s.cancel_notice_hours);
   select email into v_email from public.clients where id = v_old.client_id;
 
   begin
@@ -932,6 +970,8 @@ begin
        set service_id = v_service_id, service_name = v_name, price_pence = v_price, duration_min = v_duration,
            starts_at = v_start,           -- ends_at / busy_until / reminders follow in the trigger
            client_change_count = client_change_count + 1, client_changed_at = now(),
+           late_fee_pence = case when v_late then greatest(coalesce(late_fee_pence, 0), v_old.price_pence)
+                                 else late_fee_pence end,
            -- Only when an email will actually carry the new details (a client with
            -- no email, using the link from a WhatsApp, still gets a reminder later).
            details_sent_at = case when coalesce(btrim(v_email), '') <> '' then now() else details_sent_at end
@@ -991,10 +1031,14 @@ begin
   if v_appt.starts_at <= now() then raise exception 'too_late'; end if;
   if not s.client_self_service then raise exception 'changes_disabled'; end if;
 
-  v_late := s.cancel_notice_hours > 0 and now() > v_appt.starts_at - make_interval(hours => s.cancel_notice_hours);
+  -- Late inside the notice period, or after an earlier change made inside it
+  -- (moving a booking late and then cancelling the new time is still late).
+  v_late := (s.cancel_notice_hours > 0 and now() > v_appt.starts_at - make_interval(hours => s.cancel_notice_hours))
+            or v_appt.late_fee_pence is not null;
 
   update public.appointments
      set status = 'cancelled', cancelled_at = now(), cancelled_by = 'client', cancelled_late = v_late,
+         late_fee_pence = case when v_late then greatest(coalesce(late_fee_pence, 0), price_pence) end,
          cancel_reason = v_reason, client_changed_at = now()
    where id = v_appt.id
   returning * into v_appt;
@@ -1037,8 +1081,10 @@ begin
 
   -- The "you're confirmed" email carries the full details, so when it goes out
   -- inside the reminder window a reminder isn't sent straight after it.
+  -- A WhatsApp deposit chase was ticked off as "sent" on the reminders list;
+  -- now it's confirmed it should still get its reminder.
   update public.appointments
-     set status = 'confirmed', deposit_paid_at = now(),
+     set status = 'confirmed', deposit_paid_at = now(), whatsapp_reminder_sent_at = null,
          details_sent_at = case when coalesce(v_client.email, '') <> '' then now() else details_sent_at end
    where id = v_appt.id
   returning * into v_appt;
@@ -1111,6 +1157,7 @@ begin
 
   update public.appointments
      set status = 'cancelled', cancelled_at = now(), cancelled_by = 'owner', cancelled_late = coalesce(p_late, false),
+         late_fee_pence = case when p_late then greatest(coalesce(late_fee_pence, 0), price_pence) end,
          cancel_reason = nullif(btrim(coalesce(p_reason, '')), '')
    where id = v_appt.id
   returning * into v_appt;
@@ -1139,16 +1186,25 @@ begin
     from public.appointments a join public.clients c on c.id = a.client_id
    where a.id = p_appointment_id and a.status in ('pending_deposit', 'confirmed');
   if coalesce(v_email, '') = '' then raise exception 'no_email'; end if;
-  insert into public.email_outbox (kind, appointment_id, to_email)
-  values (p_kind, p_appointment_id, v_email)
-  on conflict (appointment_id, kind) do update
-     set status = 'pending', attempts = 0, last_error = null, to_email = excluded.to_email,
-         claimed_at = null, sent_at = null
-   where public.email_outbox.status <> 'sending';   -- never re-queue one that is going out right now
+  perform public.queue_email(p_appointment_id, p_kind, v_email, true);
   if p_kind in ('booking_received', 'deposit_received', 'changed') then
     update public.appointments set details_sent_at = now() where id = p_appointment_id;
   end if;
   return true;
+end $$;
+
+-- A change/cancel link reached the wrong person: give the booking a new one.
+-- The old link stops working at once, and emails still to go carry the new one.
+create or replace function public.owner_reset_link(p_appointment_id uuid)
+returns uuid language plpgsql volatile security definer set search_path = public as $$
+declare v_token uuid;
+begin
+  if not public.is_owner() then raise exception 'not_allowed'; end if;
+  update public.appointments set public_token = gen_random_uuid()
+   where id = p_appointment_id
+  returning public_token into v_token;
+  if v_token is null then raise exception 'not_found'; end if;
+  return v_token;
 end $$;
 
 -- A client withdraws consent for their health information, but stays a client:
@@ -1197,6 +1253,7 @@ begin
          set status = 'cancelled', cancelled_at = now(), cancelled_by = 'system',
              cancel_reason = 'The deposit didn''t arrive in time, so the slot has been released.'
        where status = 'pending_deposit' and source = 'online' and deposit_due_at < now()
+         and starts_at > now()   -- once it has started, she settles it in person
       returning id, client_id
     )
     insert into public.email_outbox (kind, appointment_id, to_email)
@@ -1206,10 +1263,10 @@ begin
     on conflict (appointment_id, kind) do nothing;
   end if;
 
-  -- Reminders: confirmed appointments starting within the reminder window,
-  -- whose details didn't already go out inside that window (a last-minute
-  -- booking, or a change the client has just been emailed about), and at
-  -- least two hours away.
+  -- Reminders: confirmed appointments starting within the reminder window and
+  -- at least two hours away, unless their details already went out inside that
+  -- window (a last-minute booking, or a change the client has just been
+  -- emailed about). A move nobody emailed them about always gets one.
   insert into public.email_outbox (kind, appointment_id, to_email)
   select 'reminder', a.id, c.email
     from public.appointments a
@@ -1218,7 +1275,8 @@ begin
      and coalesce(c.email, '') <> ''
      and a.starts_at >  now() + interval '2 hours'
      and a.starts_at <= now() + make_interval(hours => s.reminder_hours_before)
-     and greatest(a.created_at, a.details_sent_at) < a.starts_at - make_interval(hours => s.reminder_hours_before)
+     and (a.moved_at > coalesce(a.details_sent_at, '-infinity')
+          or greatest(a.created_at, a.details_sent_at) < a.starts_at - make_interval(hours => s.reminder_hours_before))
   on conflict (appointment_id, kind) do nothing;
 
   -- Anything about an appointment that has since been cancelled is dropped
@@ -1240,7 +1298,11 @@ begin
        select id from public.email_outbox
         where (status = 'pending' or (status = 'sending' and claimed_at < now() - interval '15 minutes'))
           and attempts < 5
-        order by id
+        -- When Gmail's daily quota is short, clients' confirmations go first and
+        -- the owner's change alerts last (she can see those in the app).
+        order by case kind when 'booking_received' then 0 when 'deposit_received' then 0 when 'cancelled' then 0
+                           when 'reminder' then 1 when 'changed' then 1
+                           when 'owner_new_booking' then 2 when 'owner_cancelled' then 2 else 3 end, id
         limit greatest(0, least(coalesce(p_limit, 50), 50))
         for update skip locked)
     returning o.*
@@ -1277,6 +1339,9 @@ begin
            'cancel_reason',          a.cancel_reason,
            'cancelled_by',           a.cancelled_by,
            'cancelled_late',         a.cancelled_late,
+           'cancelled_at',           a.cancelled_at,
+           'late_fee_pence',         a.late_fee_pence,
+           'booking_phone',          a.booking_phone,
            -- The client's last few online changes, oldest first (for the owner's alert).
            'changes',                (select coalesce(jsonb_agg(jsonb_build_object(
                                          'at',               x.changed_at,
@@ -1336,17 +1401,15 @@ begin
         exception when others then null;
         end;
       end if;
-      -- The client changed the booking again while this notice was going out:
-      -- send it once more so the latest details arrive.
-      if v_hit and v_row.kind in ('changed', 'owner_changed') and exists (
-           select 1 from public.appointments
-            where id = v_row.appointment_id and client_changed_at > v_row.claimed_at
-              and status in ('pending_deposit', 'confirmed')) then
-        update public.email_outbox set status = 'pending', attempts = 0, claimed_at = null where id = v_row.id;
+      -- The booking changed again while this went out: send it once more so the
+      -- latest details arrive.
+      if v_hit and v_row.resend then
+        update public.email_outbox set status = 'pending', attempts = 0, claimed_at = null, resend = false
+         where id = v_row.id;
       end if;
     else
       update public.email_outbox
-         set status = case when attempts >= 5 then 'failed' else 'pending' end,
+         set status = case when attempts >= 5 then 'failed' else 'pending' end, resend = false,
              last_error = left(coalesce(r->>'error', 'unknown error'), 500)
        where id = (r->>'id')::bigint and status = 'sending'
       returning * into v_row;
@@ -1428,3 +1491,4 @@ grant execute on function public.owner_complete_appointment(uuid, int, text, int
 grant execute on function public.owner_cancel_appointment(uuid, text, boolean, boolean) to authenticated;
 grant execute on function public.owner_queue_email(uuid, text)               to authenticated;
 grant execute on function public.owner_delete_health_data(uuid)               to authenticated;
+grant execute on function public.owner_reset_link(uuid)                       to authenticated;
