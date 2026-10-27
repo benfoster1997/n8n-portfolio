@@ -109,8 +109,7 @@ export function Ticket({ iso, tz, muted, kicker, aside, title, titleAs: T = 'div
             </div>
           )}
           <T className="ticket-title" ref={titleRef as never} tabIndex={titleFocusable ? -1 : undefined}>
-            <span className="ticket-name">{title}</span>
-            {price && <span className="ticket-tail"><span className="ticket-sep"> · </span><span className="ticket-price">{price}</span></span>}
+            <TitleWithPrice title={title} price={price} />
           </T>
           {lines?.map((l, i) => <div key={i} className={i === 0 ? 'ticket-when' : 'ticket-line'}>{l}</div>)}
         </div>
@@ -119,6 +118,22 @@ export function Ticket({ iso, tz, muted, kicker, aside, title, titleAs: T = 'div
       {children}
       {stub && <div className="ticket-stub">{stub}</div>}
     </div>
+  );
+}
+
+/**
+ * "BIAB new set · £35", where the price never ends up alone on a line: the last word of the
+ * name travels with it. The text reads the same whichever way it wraps.
+ */
+function TitleWithPrice({ title, price }: { title: ReactNode; price?: string }) {
+  if (!price) return <span className="ticket-name">{title}</span>;
+  const words = typeof title === 'string' ? title.trim().split(/\s+/) : null;
+  const last = words && words.length > 1 ? words.pop()! : null;
+  return (
+    <>
+      <span className="ticket-name">{last ? `${words!.join(' ')} ` : title}</span>
+      <span className="ticket-tail">{last && <span className="ticket-name">{last}</span>}<span className="ticket-sep"> · </span><span className="ticket-price">{price}</span></span>
+    </>
   );
 }
 

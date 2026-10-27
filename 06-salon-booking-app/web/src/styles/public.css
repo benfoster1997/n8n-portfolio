@@ -6,8 +6,11 @@
 :root {
   --pub-sun-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round'%3E%3Ccircle cx='12' cy='12' r='4.2'/%3E%3Cpath d='M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M5.5 18.5l1.7-1.7M16.8 7.2l1.7-1.7'/%3E%3C/svg%3E");
   --pub-sunrise-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='M6.5 16.5a5.5 5.5 0 0 1 11 0M3 20h18M12 4v3.4M4.4 9.2l2.1 2M19.6 9.2l-2.1 2'/%3E%3C/svg%3E");
+  --pub-clock-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='8.6'/%3E%3Cpath d='M12 7.4V12l3.1 2'/%3E%3C/svg%3E");
+  --pub-cross-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round'%3E%3Ccircle cx='12' cy='12' r='8.6'/%3E%3Cpath d='M9.2 9.2l5.6 5.6M14.8 9.2l-5.6 5.6'/%3E%3C/svg%3E");
   --pub-moon-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linejoin='round'%3E%3Cpath d='M19.5 14.6A8 8 0 0 1 9.4 4.5a8 8 0 1 0 10.1 10.1Z'/%3E%3C/svg%3E");
-  --pub-tile-top: var(--grad-accent);
+  /* a deeper pink for small white text (the date leaf's day, the current step's number) */
+  --pub-tile-top: linear-gradient(135deg, var(--accent) 0%, var(--accent-2) 100%);
 }
 
 /* ---------- page rhythm ---------- */
@@ -77,7 +80,7 @@
 }
 .pub-steps li.now .pub-steps-dot {
   color: var(--accent-ink);
-  background: var(--grad-accent);
+  background: var(--pub-tile-top);
   border-color: transparent;
   box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent-soft) 85%, transparent), var(--glow);
 }
@@ -798,10 +801,36 @@
 .get-in-touch > p:first-child { margin: 0; }
 
 .cancelled-note {
+  position: relative;
   border-color: color-mix(in srgb, var(--danger) 22%, var(--line));
   background: color-mix(in srgb, var(--danger-soft) 70%, var(--surface));
-  padding: 14px 16px;
+  padding: 14px 16px 14px 46px;
   line-height: 1.5;
+}
+/* gentle line icons on the notes: a clock for the notice period, a cross for cancelled */
+.cancelled-note::before,
+.manage .notice.warn::before,
+.cancel-sheet .notice.warn::before {
+  content: '';
+  position: absolute;
+  left: 15px;
+  top: 14px;
+  width: 20px;
+  height: 20px;
+  background: currentColor;
+  -webkit-mask: var(--pub-clock-mask) center / contain no-repeat;
+  mask: var(--pub-clock-mask) center / contain no-repeat;
+}
+.cancelled-note::before { top: 15px; background: var(--danger); -webkit-mask-image: var(--pub-cross-mask); mask-image: var(--pub-cross-mask); }
+.manage .notice.warn,
+.cancel-sheet .notice.warn {
+  position: relative;
+  padding: 13px 15px 13px 46px;
+  line-height: 1.5;
+  border-radius: 16px;
+  background:
+    linear-gradient(90deg, var(--lemon), var(--lemon-deep)) left / 4px 100% no-repeat,
+    var(--warn-soft);
 }
 .cancelled-note b { color: var(--danger); }
 
@@ -885,6 +914,7 @@
 
 /* small phones */
 @media (max-width: 360px) {
+  .pub-group { padding: 14px 14px 16px; }
   .menu-go { display: none; }
   .menu-leader { min-width: 10px; flex-basis: 10px; }
   .menu-meta { padding-right: 4px; }
@@ -901,3 +931,6 @@
 @media (prefers-reduced-motion: reduce) {
   .service.menu-row:active { transform: none; }
 }
+
+/* on the confirm step, the owner's own policy follows the warning in a quieter voice */
+.manage .notice.warn.stack > span + span { font-size: 0.88rem; opacity: 0.92; }
