@@ -436,7 +436,7 @@ test('the cancellation email depends on who cancelled', async () => {
   assert.ok(ownerLate.text.includes('As this was less than 24 hours before your appointment, our cancellation policy applies'));
 });
 
-test('the owner’s change alert lists what changed, and flags a late move', async () => {
+test('the owner’s change alert lists what changed, and flags a late change', async () => {
   const { sandbox } = loadScript({ fetchQueue: [], props: PROPS });
   const s = { business_name: 'Studio', timezone: 'Europe/London', public_site_url: 'https://x.example', cancel_notice_hours: 48 };
   const job = {
