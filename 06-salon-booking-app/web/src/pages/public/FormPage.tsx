@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../../api';
+import { BrandFooter, BrandHero, BrandIcon, Heart, LemonSlice, PolishBottle, ScriptTitle } from '../../components/brand';
 import { ConsultationFields } from '../../components/ConsultationFields';
 import { ErrorBox, Spinner, useAction, useLoad } from '../../components/ui';
 import { blankAnswers, validateAnswers } from '../../lib/consultation';
@@ -22,19 +23,29 @@ export function FormPage() {
   if (loading) return <Spinner />;
   if (!data) {
     return (
-      <div className="page page-public stack">
-        <h1>Consultation form</h1>
-        {error ? <ErrorBox error={error} /> : <div className="notice">This link has expired or isn’t valid. Please get in touch if you need a new one.</div>}
-        <Link className="btn" to="/book">Book an appointment</Link>
+      <div className="page page-public form-page form-missing">
+        <div className="card form-missing-card stack">
+          <LemonSlice size={64} className="form-missing-art" />
+          <h1>Consultation form</h1>
+          {error ? <ErrorBox error={error} /> : <div className="notice">This link has expired or isn’t valid. Please get in touch if you need a new one.</div>}
+          <Link className="btn primary block" to="/book">Book an appointment</Link>
+        </div>
       </div>
     );
   }
   if (data.submitted || done) {
     return (
-      <div className="page page-public stack centre">
-        <h1>Thank you{data.first_name ? `, ${data.first_name}` : ''}!</h1>
-        <p>Your consultation form has been received. See you on {fmtDayLong(data.starts_at)} at {fmtTime(data.starts_at)}.</p>
-        <p className="sub">Need to change or cancel? <Link to={`/manage/${token}`}>Manage your booking</Link></p>
+      <div className="page page-public form-page form-done">
+        <BrandHero name={data.business_name} compact nameAs="p" />
+        <section className="card form-thanks">
+          <span className="form-thanks-mark" aria-hidden="true">
+            <Heart filled size={34} className="form-thanks-heart" />
+          </span>
+          <h1>Thank you{data.first_name ? `, ${data.first_name}` : ''}!</h1>
+          <p>Your consultation form has been received. See you on <b>{fmtDayLong(data.starts_at)}</b> at <b>{fmtTime(data.starts_at)}</b>.</p>
+        </section>
+        <p className="sub centre">Need to change or cancel? <Link to={`/manage/${token}`}>Manage your booking</Link></p>
+        <BrandFooter />
       </div>
     );
   }
@@ -48,19 +59,32 @@ export function FormPage() {
   }
 
   return (
-    <div className="page page-public stack">
-      <div className="hero">
-        <h1>{data.business_name}</h1>
-        <p>Hi {data.first_name} — before your {data.service_name} on {fmtDayLong(data.starts_at)} at {fmtTime(data.starts_at)}, please answer a few quick questions so your treatment is safe for you.</p>
-      </div>
-      <div className="card">
+    <div className="page page-public form-page">
+      <BrandHero name={data.business_name} compact />
+      <section className="card form-intro">
+        <PolishBottle size={74} className="form-intro-bottle" />
+        <p className="form-kicker">Consultation form</p>
+        <p className="form-hello">Hi {data.first_name}<span className="visually-hidden"> —</span><Heart size={18} className="form-hello-heart" /></p>
+        <p className="form-intro-text">
+          before your <b>{data.service_name}</b> on <b>{fmtDayLong(data.starts_at)} at {fmtTime(data.starts_at)}</b>, please
+          answer a few quick questions so your treatment is safe for you.
+        </p>
+      </section>
+      <ScriptTitle className="form-title">Quick health check</ScriptTitle>
+      <div className="card form-card">
         <ConsultationFields answers={answers} onChange={setAnswers} consent={consent} onConsent={setConsent}
           signedName={signedName} onSignedName={setSignedName} businessName={data.business_name} />
       </div>
       <ErrorBox error={saveError} />
-      <button className="btn primary block" disabled={busy} onClick={submit}>{busy ? 'Sending…' : 'Send form'}</button>
-      <p className="sub centre">Need to change or cancel? <Link to={`/manage/${token}`}>Manage your booking</Link></p>
-      <p className="sub centre">See the <Link to="/privacy">privacy notice</Link> for how your information is kept.</p>
+      <button className="btn primary block form-send" disabled={busy} onClick={submit}>
+        {busy ? 'Sending…' : 'Send form'}
+        {!busy && <BrandIcon name="sparkle" size={20} strokeWidth={2} />}
+      </button>
+      <div className="form-links">
+        <p className="sub centre">Need to change or cancel? <Link to={`/manage/${token}`}>Manage your booking</Link></p>
+        <p className="sub centre">See the <Link to="/privacy">privacy notice</Link> for how your information is kept.</p>
+      </div>
+      <BrandFooter />
     </div>
   );
 }
