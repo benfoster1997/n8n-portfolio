@@ -508,8 +508,12 @@ function CancelSheet({ a, onClose, onDone }: { a: Appointment; onClose: () => vo
   const [notify, setNotify] = useState(!!a.client?.email);
   const [late, setLate] = useState(false);
   const { busy, error, run } = useAction();
-  // Inside the notice period: if the client is the one cancelling, it's a late cancellation.
-  const inNotice = s.cancel_notice_hours > 0 && Date.now() > freeChangeDeadline(a.starts_at, s.cancel_notice_hours).getTime();
+  // Inside the notice period, or the client already changed it inside one: if the
+  // client is the one cancelling, it's a late cancellation.
+  const changedLate = a.late_fee_pence != null;
+  const inNotice = changedLate
+    || (s.cancel_notice_hours > 0 && Date.now() > freeChangeDeadline(a.starts_at, s.cancel_notice_hours).getTime());
+  const who = firstName(a.client?.full_name) || 'The client';
   return (
     <Sheet title="Cancel appointment" onClose={onClose}>
       <div className="stack">
@@ -522,7 +526,9 @@ function CancelSheet({ a, onClose, onDone }: { a: Appointment; onClose: () => vo
         {inNotice && (
           <label className="check">
             <input type="checkbox" checked={late} onChange={(e) => setLate(e.target.checked)} />
-            <span>{firstName(a.client?.full_name) || 'The client'} cancelled with less than {s.cancel_notice_hours} hours’ notice — mark it as a late cancellation</span>
+            <span>{changedLate
+              ? `${who} already changed this booking with less than ${s.cancel_notice_hours} hours’ notice — mark this cancellation as late`
+              : `${who} cancelled with less than ${s.cancel_notice_hours} hours’ notice — mark it as a late cancellation`}</span>
           </label>
         )}
         {a.deposit_paid_at && <div className="notice warn">A {money(a.deposit_required_pence)} deposit was paid. If you’re refunding it, add a refund in Money.</div>}

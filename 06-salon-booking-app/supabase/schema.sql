@@ -189,9 +189,9 @@ create table if not exists public.appointments (
   -- When the start time last moved (set by trigger). A move the client wasn't
   -- emailed about gets a reminder for the new time.
   moved_at               timestamptz,
-  -- The full price payable under the cancellation policy, fixed the first time
-  -- the client changes or cancels inside the notice period. A cheaper treatment
-  -- or a later time chosen after that doesn't lower it.
+  -- The full price payable under the cancellation policy: the highest price the
+  -- booking had whenever the client changed or cancelled it inside the notice
+  -- period. A cheaper treatment or a later time chosen after that doesn't lower it.
   late_fee_pence         int check (late_fee_pence >= 0),
   -- The mobile typed with an online booking, when it differs from the client's
   -- record (the record is never changed from the booking page). The owner checks it.
