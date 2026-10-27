@@ -122,8 +122,8 @@ function BookingFlow({ info }: { info: BookingInfo }) {
       <BrandHero name={info.business_name} compact={step !== 'service'}
         tagline={step === 'service' || step === 'done' ? info.tagline : null}
         strapline={step === 'service' ? info.strapline : null}
-        intro={step === 'service' ? info.booking_intro : null}
-        location={step === 'service' ? info.location_note : null} />
+        intro={step === 'service' ? info.booking_intro : null} />
+      {/* no location in the hero: step 1 shows it as the Location badge, as on her price list */}
       {step !== 'done' && <Steps labels={['Treatment', 'Time', 'Details']} current={stepIndex} />}
 
       {step === 'service' && policy && (
@@ -169,10 +169,10 @@ function BookingFlow({ info }: { info: BookingInfo }) {
       {step === 'details' && service && slot && (
         <>
           <button className="btn ghost small pub-back" onClick={() => setStep('time')}><Icon name="back" size={18} /> Change time</button>
+          <ScriptTitle className="step-title">Your details</ScriptTitle>
           <Ticket iso={slot} tz={tz} kicker="Your appointment" title={service.name} price={money(service.price_pence)}
             lines={[`${fmtDayLong(slot, tz)} at ${fmtTime(slot, tz)}`, minutesLabel(service.duration_min)]} />
           <section className="pub-group">
-            <GroupHead icon="user">Your details</GroupHead>
             <Field label="Full name"><input type="text" autoComplete="name" value={details.full_name} maxLength={100} onChange={(e) => setDetails({ ...details, full_name: e.target.value })} /></Field>
             <Field label="Email" hint="Your confirmation is sent here."><input type="email" autoComplete="email" value={details.email} onChange={(e) => setDetails({ ...details, email: e.target.value })} /></Field>
             <Field label="Mobile"><input type="tel" autoComplete="tel" value={details.phone} onChange={(e) => setDetails({ ...details, phone: e.target.value })} /></Field>

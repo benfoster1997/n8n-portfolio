@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import { api } from '../../api';
 import { useOwner } from '../../components/owner';
 import { ErrorBox, Field, Icon, Seg, Sheet, Spinner, TopBar, useAction, useLoad, useToast } from '../../components/ui';
@@ -99,6 +99,7 @@ export function Money() {
           </div>
           <button className="btn block od-export" disabled={!rows.length || loading} onClick={exportCsv}><Glyph name="download" size={20} /> Download spreadsheet (CSV)</button>
           <p className="od-tax-note">
+            <span className="od-tax-note-ic" aria-hidden="true"><Glyph name="receipt" size={17} /></span>
             This is your record of money received, for your Self Assessment. Keep receipts for your expenses (products, training, insurance) separately — they reduce your tax bill.
           </p>
           {[...byDay.entries()].map(([day, list]) => (
@@ -112,7 +113,7 @@ export function Money() {
                     </span>
                     <div className="grow">
                       <div className="title">{p.client_name || p.description || KIND_LABEL[p.kind]}</div>
-                      <div className="meta">{[p.client_name ? p.description : null, KIND_LABEL[p.kind], METHOD_LABEL[p.method], p.note].filter(Boolean).join(' · ')}</div>
+                      <div className="meta"><MetaParts parts={[p.client_name ? p.description : null, KIND_LABEL[p.kind], METHOD_LABEL[p.method], p.note]} /></div>
                     </div>
                     <strong className="od-amt">{money(p.amount_pence)}</strong>
                     <button className="icon-btn od-del" aria-label="Delete entry"
@@ -133,6 +134,15 @@ export function Money() {
       {adding && <AddPaymentSheet tz={tz} onClose={() => setAdding(false)} onSaved={() => { setAdding(false); reload(); toast('Added to takings'); }} />}
     </div>
   );
+}
+
+/** "BIAB infill · Payment · Bank transfer", where a line can break only between the parts, not inside one. */
+function MetaParts({ parts }: { parts: (string | null | undefined)[] }) {
+  const list = parts.filter((t): t is string => !!t);
+  return <>{list.map((t, i) => {
+    const more = i < list.length - 1;
+    return <Fragment key={i}><span className="od-meta-part">{t}{more ? ' ·' : ''}</span>{more ? ' ' : ''}</Fragment>;
+  })}</>;
 }
 
 function AddPaymentSheet({ tz, onClose, onSaved }: { tz: string; onClose: () => void; onSaved: () => void }) {

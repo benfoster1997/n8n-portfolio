@@ -81,31 +81,32 @@ export function Privacy() {
 
       <Section n={1}>
         <ul className="privacy-list">
-          <li><b>Your name, email, mobile and bookings</b> — to make and manage your appointments and send confirmations and
+          <li><b>Your name, email, mobile and bookings</b>&nbsp;— to make and manage your appointments and send confirmations and
             reminders. <i>Basis: to provide the service you asked for (contract).</i></li>
-          <li><b>Changes you make to your booking</b> — your confirmation email has a private link to change or cancel your
+          <li><b>Changes you make to your booking</b>&nbsp;— your confirmation email has a private link to change or cancel your
             booking. Anyone with the link can use it, so please don’t share it. Changes you make there, and any reason you give
             for cancelling, are recorded so {business} can see them. <i>Basis: contract.</i></li>
-          <li><b>Payments you make</b> — to keep the business records HMRC requires. <i>Basis: legal obligation.</i></li>
-          <li><b>Treatment notes and photos of your nails</b> — to remember your preferences and keep accurate treatment
+          <li><b>Payments you make</b>&nbsp;— to keep the business records HMRC requires. <i>Basis: legal obligation.</i></li>
+          <li><b>Treatment notes and photos of your nails</b>&nbsp;— to remember your preferences and keep accurate treatment
             records. Photos are private and never posted anywhere without asking you first.
             <i> Basis: legitimate interest in keeping accurate treatment records.</i></li>
-          <li><b>Health and allergy information</b> (the consultation form, patch-test results and allergy notes) — only so your
+          <li><b>Health and allergy information</b> (the consultation form, patch-test results and allergy notes)&nbsp;— only so your
             treatments are safe for you. <i>Basis: your explicit consent (UK GDPR Article 9(2)(a)), which you give on the form
-            and can withdraw at any time.</i> It may be kept longer only if needed to deal with a legal claim.</li>
+            and can withdraw at any time.</i> <span className="privacy-note">It may be kept longer only if needed to deal with a
+            legal claim.</span></li>
         </ul>
       </Section>
 
       <Section n={2}>
         <p>A few providers handle your information only to provide their service to {business}:</p>
         <ul className="privacy-list">
-          <li><b>Supabase</b> — the database and photo storage. Records are stored in London; Supabase (a US company) may access
+          <li><b>Supabase</b>&nbsp;— the database and photo storage. Records are stored in London; Supabase (a US company) may access
             them for support and security under UK-approved safeguards.</li>
-          <li><b>Netlify</b> — hosts this booking website. It doesn’t store your booking, but its servers log technical data such as
+          <li><b>Netlify</b>&nbsp;— hosts this booking website. It doesn’t store your booking, but its servers log technical data such as
             IP addresses.</li>
-          <li><b>Google</b> — booking emails (your name, email, appointment and any deposit details) are sent from, and kept in,{' '}
+          <li><b>Google</b>&nbsp;— booking emails (your name, email, appointment and any deposit details) are sent from, and kept in,{' '}
             {business}’s Gmail account, and may be stored outside the UK.</li>
-          <li><b>WhatsApp</b> — if we message each other there.</li>
+          <li><b>WhatsApp</b>&nbsp;— if we message each other there.</li>
           <li>The <b>bank</b> sees the name on a deposit transfer; an <b>accountant and HMRC</b> may see payment records.</li>
         </ul>
         <p className="privacy-promise">

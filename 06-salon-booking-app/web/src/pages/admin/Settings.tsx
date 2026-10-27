@@ -7,6 +7,7 @@ import { BlockTimeSheet } from './Diary';
 import { ErrorBox, Field, Icon, Sheet, Spinner, TopBar, useAction, useLoad, useToast } from '../../components/ui';
 import { BrandIcon, Heart, LemonSlice, ScriptTitle, Strapline } from '../../components/brand';
 import { Glyph } from './Clients';
+import { AddOnsMenu } from '../../components/public/menu';
 import {
   DEFAULT_TEMPLATES, TEMPLATE_PLACEHOLDERS, checkHandle, downloadText, friendlyError, isPlausibleEmail, money, parseMenu, parsePounds,
   socialLink, type SocialSite,
@@ -159,32 +160,6 @@ const SOCIAL_FIELDS: { site: SocialSite; key: HandleKey; label: string }[] = [
 
 const MENU_EXAMPLE = 'Nail art\nSimple nail art | 50p per nail\n> Lots of colours counts as detailed. Just ask!\nExtras\nChrome powder | £5';
 
-/** The add-ons menu as the booking page will read it, so a slip in the format shows straight away. */
-function MenuPreview({ text }: { text: string | null }) {
-  const sections = parseMenu(text);
-  if (!sections.length) return null;
-  return (
-    <div className="card od-menu" role="group" aria-label="How your add-ons will read">
-      {sections.map((sec, i) => (
-        <div className="od-menu-sec" key={i}>
-          {sec.title && <ScriptTitle as="p" className="od-menu-title">{sec.title}</ScriptTitle>}
-          {sec.items.length > 0 && (
-            <ul className="od-menu-items">
-              {sec.items.map((it, j) => (
-                <li key={j} className={it.price ? '' : 'od-no-price'}>
-                  <span className="od-mi-name">{it.name}</span>
-                  {it.price && <span className="od-mi-price">{it.price}</span>}
-                </li>
-              ))}
-            </ul>
-          )}
-          {sec.notes.map((n, j) => <p className="od-menu-note" key={j}>{n}</p>)}
-        </div>
-      ))}
-    </div>
-  );
-}
-
 export function BookingPageSettings() {
   const f = useSettingsForm(['tagline', 'strapline', 'extras_menu', 'safety_note', 'instagram_handle', 'tiktok_handle', 'facebook_handle']);
   const d = f.draft;
@@ -228,12 +203,12 @@ export function BookingPageSettings() {
           line is a heading. Shown for information: clients add these on the day, they don’t book them online. For example:
           <span className="mono od-example">{MENU_EXAMPLE}</span>
         </>}>
-          <textarea className="od-menu-text" value={txt(d.extras_menu)} maxLength={2000} style={{ minHeight: 300 }} onChange={(e) => f.set('extras_menu', e.target.value)} />
+          <textarea className="od-menu-text" value={txt(d.extras_menu)} maxLength={2000} onChange={(e) => f.set('extras_menu', e.target.value)} />
         </Field>
         {priceAsHeading && (
           <div className="notice warn">“{priceAsHeading}” will show as a heading. To make it an item, put a | between the name and the price.</div>
         )}
-        {d.extras_menu?.trim() && <><div className="od-preview-label"><Glyph name="eye" size={16} /> How it reads on your booking page:</div><MenuPreview text={d.extras_menu} /></>}
+        {d.extras_menu?.trim() && <><div className="od-preview-label"><Glyph name="eye" size={16} /> How it reads on your booking page:</div><AddOnsMenu titleAs="p" className="od-addons-preview" label="How your add-ons will read" text={d.extras_menu} /></>}
       </SetCard>
 
       <SetCard icon={<BrandIcon name="shield-heart" size={18} />} title="Safety">
@@ -438,7 +413,10 @@ export function ServicesSettings() {
           <ul className="od-pl">{active.map((v) => (
             <li key={v.id}><button className="od-pl-row" onClick={() => setEdit(v)}>
               <span className="od-pl-line"><span className="od-pl-name">{v.name}</span><span className="od-pl-price">{money(v.price_pence)}</span></span>
-              <span className="od-pl-meta">{minutesLabel(v.duration_min)}{!v.online_bookable && ' · not bookable online'}</span>
+              <span className="od-pl-meta">
+                <span>{minutesLabel(v.duration_min)}{!v.online_bookable && ' · not bookable online'}</span>
+                <span className="od-pl-chev" aria-hidden="true"><Icon name="chev" size={16} /></span>
+              </span>
             </button></li>
           ))}</ul>
         )}
@@ -507,7 +485,7 @@ export function TimeOffSettings() {
           <ul className="list">{(data ?? []).map((t) => (
             <li key={t.id} className="list-row od-off-row">
               <span className="od-ic small lemon" aria-hidden="true"><Glyph name="calendarOff" size={18} /></span>
-              <div className="grow"><div className="title">{t.note || 'Time off'}</div><div className="meta">{fmtDayTime(t.starts_at, tz)} → {fmtDayTime(t.ends_at, tz)}</div></div>
+              <div className="grow"><div className="title">{t.note || 'Time off'}</div><div className="meta"><span className="od-nowrap">{fmtDayTime(t.starts_at, tz)}</span>{'\u00a0→ '}<span className="od-nowrap">{fmtDayTime(t.ends_at, tz)}</span></div></div>
               <button className="icon-btn" aria-label="Remove" onClick={async () => {
                 if (!window.confirm('Remove this time off? Clients will be able to book it.')) return;
                 try { await api.deleteTimeOff(t.id); reload(); } catch (e) { toast(friendlyError(e)); }
@@ -524,10 +502,10 @@ export function TimeOffSettings() {
 export function MessageSettings() {
   const f = useSettingsForm(['wa_template_reminder', 'wa_template_deposit', 'wa_template_confirmed']);
   const d = f.draft;
-  const box = (k: 'wa_template_reminder' | 'wa_template_deposit' | 'wa_template_confirmed', label: string, def: string) => (
-    <section className="card od-template">
+  const box = (k: 'wa_template_reminder' | 'wa_template_deposit' | 'wa_template_confirmed', label: string, def: string, long = false) => (
+    <section className={`card od-template${long ? ' od-template-long' : ''}`}>
       <Field label={label}>
-        <textarea style={{ minHeight: 130 }} value={d[k] ?? def} maxLength={1000} onChange={(e) => f.set(k, e.target.value)} />
+        <textarea value={d[k] ?? def} maxLength={1000} onChange={(e) => f.set(k, e.target.value)} />
         <button className="btn ghost small" style={{ alignSelf: 'flex-start' }} onClick={() => f.set(k, null)}>Reset to default</button>
       </Field>
     </section>
@@ -537,14 +515,17 @@ export function MessageSettings() {
       <section className="card stack od-set-card od-placeholders">
         <p className="sub">These fill in automatically when you tap a WhatsApp button. Words in curly brackets are swapped for the real details:</p>
         <p className="od-ph-list">{TEMPLATE_PLACEHOLDERS.map((x) => <code key={x}>{x}</code>)}</p>
-        <p className="sub"><span className="mono">{'{change_note}'}</span> tells the client how to change or cancel. Usually that’s their own link and the time to do it by. Once it’s inside your notice period, it gives the link and says your cancellation policy now applies. If they’ve already changed the booking inside your notice period, it gives the link and says the policy applies if they cancel, even when the appointment is now further off. With no notice period it’s just the link, and if clients can’t change bookings online (Deposits &amp; cancellations), it asks them to get in touch.</p>
-        <p className="sub"><span className="mono">{'{manage_link}'}</span> is the link on its own, and <span className="mono">{'{change_by}'}</span> is the last time to change without it counting as late — for a booking already inside your notice period that time has passed, so <span className="mono">{'{change_note}'}</span> is usually better.</p>
+        <details className="od-more">
+          <summary>How the change-or-cancel words work</summary>
+          <p className="sub"><span className="mono">{'{change_note}'}</span> tells the client how to change or cancel. Usually that’s their own link and the time to do it by. Once it’s inside your notice period, it gives the link and says your cancellation policy now applies. If they’ve already changed the booking inside your notice period, it gives the link and says the policy applies if they cancel, even when the appointment is now further off. With no notice period it’s just the link, and if clients can’t change bookings online (Deposits &amp; cancellations), it asks them to get in touch.</p>
+          <p className="sub"><span className="mono">{'{manage_link}'}</span> is the link on its own, and <span className="mono">{'{change_by}'}</span> is the last time to change without it counting as late — for a booking already inside your notice period that time has passed, so <span className="mono">{'{change_note}'}</span> is usually better.</p>
+        </details>
       </section>
       {[d.wa_template_reminder, d.wa_template_deposit, d.wa_template_confirmed].some((t) => t && /\{(manage_link|change_by)\}/.test(t)) && (
         <div className="notice warn">Your wording uses {'{manage_link}'} or {'{change_by}'}. These go out as they are, even when the time to change by has passed or clients can’t change bookings online. Use {'{change_note}'} to have that worded for you.</div>
       )}
       {box('wa_template_reminder', 'Reminder', DEFAULT_TEMPLATES.reminder)}
-      {box('wa_template_deposit', 'Deposit request', DEFAULT_TEMPLATES.deposit)}
+      {box('wa_template_deposit', 'Deposit request', DEFAULT_TEMPLATES.deposit, true)}
       {box('wa_template_confirmed', 'Booking confirmed', DEFAULT_TEMPLATES.confirmed)}
       <ErrorBox error={f.error} />
       <button className="btn primary block" disabled={f.busy}
@@ -605,12 +586,12 @@ export function EmailSettings() {
       </section>
       <div className="section-title">Set-up values for the script</div>
       <div className="card stack od-setup">
-        <div><div className="sub">SUPABASE_URL</div><div className="mono" style={{ overflowWrap: 'anywhere' }}>{url || '— (demo mode)'}</div></div>
+        <div><div className="od-key">SUPABASE_URL</div><div className="mono" style={{ overflowWrap: 'anywhere' }}>{url || '— (demo mode)'}</div></div>
         {url && <button className="btn small" onClick={() => copy(url, 'URL')}>Copy URL</button>}
-        <div><div className="sub">SUPABASE_ANON_KEY</div><div className="mono" style={{ overflowWrap: 'anywhere', fontSize: '0.75rem' }}>{key ? `${key.slice(0, 24)}…` : '— (demo mode)'}</div></div>
+        <div><div className="od-key">SUPABASE_ANON_KEY</div><div className="mono" style={{ overflowWrap: 'anywhere' }}>{key ? `${key.slice(0, 24)}…` : '— (demo mode)'}</div></div>
         {key && <button className="btn small" onClick={() => copy(key, 'Key')}>Copy key</button>}
-        <div><div className="sub">EMAIL_SECRET</div>
-          {secret ? <div className="mono" style={{ overflowWrap: 'anywhere' }}>{secret}</div> : <div className="sub">{s.email_secret_hash ? 'Hidden — make a new one if you’ve lost it.' : 'Not created yet.'}</div>}
+        <div><div className="od-key">EMAIL_SECRET</div>
+          {secret ? <div className="mono" style={{ overflowWrap: 'anywhere' }}>{secret}</div> : <div className="od-well">{s.email_secret_hash ? 'Hidden — make a new one if you’ve lost it.' : 'Not created yet.'}</div>}
         </div>
         {secret && <><button className="btn small" onClick={() => copy(secret, 'Secret')}>Copy secret</button>
           <div className="notice warn">Copy it now — it’s shown only once and never stored. Paste it into the script’s settings.</div></>}

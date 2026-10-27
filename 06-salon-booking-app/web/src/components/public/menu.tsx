@@ -1,7 +1,8 @@
 // The treatment menu, styled like her printed price list: script headings over a
-// brush swatch, a dotted leader to a hot-pink price, the length and description
-// in muted text beneath. Shared by the booking page and the manage page's change
-// flow so both look exactly the same. Styles are in styles/public.css.
+// brush swatch, a dotted leader to a hot-pink price (drawn in CSS from the end of
+// the name, so it follows a name that wraps), the length and description in muted
+// text beneath. Shared by the booking page and the manage page's change flow so
+// both look exactly the same. Styles are in styles/public.css.
 import { forwardRef, type ReactNode } from 'react';
 import { Badge, BrandIcon, Heart, PolishBottle, ScriptTitle } from '../brand';
 import { minutesLabel } from '../../lib/time';
@@ -34,7 +35,6 @@ export function TreatmentRow({ name, durationMin, pricePence, description, on, c
         {current && <span className="chip accent menu-current">Your current treatment</span>}
         <span className="menu-line">
           <span className="menu-name">{name}</span>
-          <span className="menu-leader" aria-hidden="true" />
           <span className="menu-price">{money(pricePence)}</span>
           <span className="menu-go" aria-hidden="true">
             <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth={2.6} strokeLinecap="round" strokeLinejoin="round"><path d="M9.5 5.5l6.5 6.5-6.5 6.5" /></svg>
@@ -51,33 +51,40 @@ export function TreatmentRow({ name, durationMin, pricePence, description, on, c
 
 /**
  * The add-ons price list (settings.extras_menu): one card per section, the polish bottle on
- * the first. For information only: add-ons are chosen and paid for on the day.
+ * the first. For information only: add-ons are chosen and paid for on the day. Settings shows
+ * the same component as a live preview, with paragraph titles (`titleAs="p"`) and a label.
  */
-export function AddOnsMenu({ text }: { text: string | null | undefined }) {
+export function AddOnsMenu({ text, titleAs = 'h2', className, label }: {
+  text: string | null | undefined; titleAs?: 'h2' | 'h3' | 'p'; className?: string; label?: string;
+}) {
   const sections = parseMenu(text).filter((s) => s.items.length || s.notes.length);
   if (!sections.length) return null;
   return (
-    <div className="addons">
+    <div className={`addons${className ? ` ${className}` : ''}`} role={label ? 'group' : undefined} aria-label={label}>
       <p className="addons-intro">
         <BrandIcon name="sparkle" size={18} className="addons-intro-icon" />
         <span>Add-ons are chosen and paid for on the day.</span>
       </p>
       {sections.map((s, i) => (
         <section key={i} className={`card addon-card${i === 0 ? ' addon-card--bottle' : ''}`}>
-          <ScriptTitle className="addon-title">{s.title ?? 'Add-ons'}</ScriptTitle>
+          <ScriptTitle as={titleAs} className="addon-title">{s.title ?? 'Add-ons'}</ScriptTitle>
           {s.items.length > 0 && (
             <ul className="addon-list" role="list">
               {s.items.map((it, j) => (
                 <li key={j} className="menu-line addon-row">
                   <span className="menu-name">{it.name}</span>
-                  {it.price && <><span className="menu-leader" aria-hidden="true" /><span className="menu-price">{it.price}</span></>}
+                  {it.price && <span className="menu-price">{it.price}</span>}
                 </li>
               ))}
             </ul>
           )}
           {(s.notes.length > 0 || i === 0) && (
             <div className="addon-foot">
-              {s.notes.map((n, j) => <p key={j} className="addon-note">{n}</p>)}
+              {/* rules are read exactly, so they're plain type, as on her price list; a short last
+                  note ("Just ask!") is handwritten on a brush swatch */}
+              {s.notes.map((n, j) => (
+                <p key={j} className={`addon-note addon-note--${j === s.notes.length - 1 && n.length <= 64 ? 'hand' : 'plain'}`}>{n}</p>
+              ))}
               {i === 0 && <PolishBottle className="addon-bottle" size={88} />}
             </div>
           )}

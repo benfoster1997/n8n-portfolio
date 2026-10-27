@@ -40,7 +40,6 @@ export function ClientView() {
   const past = data!.appts.filter((a) => !upcoming.includes(a));
   const spent = data!.appts.filter((a) => a.status === 'completed').reduce((n, a) => n + a.price_pence, 0);
   const visits = data!.appts.filter((a) => a.status === 'completed').length;
-  const latestTest = data!.tests[0];
   const consented = !!c.health_consent_at;
   const hasHealth = consented || !!c.allergies || data!.tests.length > 0 || data!.forms.length > 0;
 
@@ -103,7 +102,7 @@ export function ClientView() {
       <label className="check card od-regular">
         <input type="checkbox" checked={c.is_regular} disabled={act.busy}
           onChange={async (e) => { const v = e.target.checked; if (await act.run(() => api.updateClient(c.id, { is_regular: v }))) { toast(v ? 'Marked as a regular' : 'Updated'); reload(); } }} />
-        <span>Regular client — never asked for a new-client deposit<br />
+        <span>Regular client — never asked for a <span className="od-nowrap">new-client</span> deposit<br />
           <span className="sub">Tick this for regulars you’ve moved across from your old booking app.</span></span>
       </label>
 
@@ -142,7 +141,11 @@ export function ClientView() {
             <div className="btn-row"><button className="btn" onClick={() => setAllergies(null)}>Cancel</button><button className="btn primary" disabled={act.busy} onClick={saveAllergies}>Save</button></div>
           </>
         ) : consented && (
-          <button className="btn small" style={{ alignSelf: 'flex-start' }} onClick={() => setAllergies(c.allergies ?? '')}>{c.allergies ? 'Edit allergies' : 'Add allergies'}</button>
+          <div className="od-subhead">
+            <span className="od-ic small danger" aria-hidden="true"><Glyph name="alert" size={18} /></span>
+            <h3>Allergies</h3>
+            <button className="btn small" onClick={() => setAllergies(c.allergies ?? '')}>{c.allergies ? 'Edit allergies' : 'Add allergies'}</button>
+          </div>
         )}
 
         <div className="od-subhead">
@@ -155,7 +158,6 @@ export function ClientView() {
             {data!.tests.map((t) => <PatchRow key={t.id} t={t} tz={tz} onDeleted={reload} />)}
           </ul>
         )}
-        {latestTest && <p className="sub od-none">Last test {fmtDay(latestTest.tested_on + 'T12:00:00Z', tz)}.</p>}
 
         <div className="od-subhead">
           <span className="od-ic small lilac" aria-hidden="true"><Glyph name="doc" size={18} /></span>
@@ -169,7 +171,7 @@ export function ClientView() {
                 <li key={f.id}><button className="od-form-row" onClick={() => setForm(f)}>
                   <span className={`od-form-ic${flags ? ' flagged' : ''}`} aria-hidden="true"><Glyph name="doc" size={20} /></span>
                   <div className="grow"><div className="title">Form · {fmtDay(f.submitted_at, tz)}</div>
-                    <div className="meta">{flags ? <span className="flag">{flags} answer{flags === 1 ? '' : 's'} to check</span> : 'Nothing flagged'} · signed {f.signed_name}</div></div>
+                    <div className="meta">{flags ? <span className="flag">{flags} answer{flags === 1 ? '' : 's'} to check</span> : 'Nothing flagged'}{'\u00a0· '}<span className="od-signed">signed {f.signed_name}</span></div></div>
                   <span className="chev"><Icon name="chev" size={18} /></span>
                 </button></li>
               );
@@ -252,6 +254,7 @@ export function ClientView() {
             ))}
             <hr className="divider" />
             <p className="sub">Signed “{form.signed_name}” on {fmtDayTime(form.submitted_at, tz)}, with consent to store health information.</p>
+            <button className="btn block" onClick={() => setForm(null)}>Done</button>
           </div>
         </Sheet>
       )}
@@ -328,8 +331,11 @@ function PatchTestSheet({ clientId, tz, onClose, onSaved }: { clientId: string; 
       <div className="stack">
         <Field label="Date tested"><input type="date" value={f.tested_on} onChange={(e) => setF({ ...f, tested_on: e.target.value })} /></Field>
         <Field label="Product(s)"><input type="text" value={f.product} maxLength={200} placeholder="e.g. HEMA-free builder gel" onChange={(e) => setF({ ...f, product: e.target.value })} /></Field>
-        <Seg label="Result" value={f.result} onChange={(result) => setF({ ...f, result })}
-          options={[{ value: 'pass', label: 'No reaction' }, { value: 'reaction', label: 'Reaction' }, { value: 'pending', label: 'Waiting' }]} />
+        <div className="field">
+          <span aria-hidden="true">Result</span>
+          <Seg label="Result" value={f.result} onChange={(result) => setF({ ...f, result })}
+            options={[{ value: 'pass', label: 'No reaction' }, { value: 'reaction', label: 'Reaction' }, { value: 'pending', label: 'Waiting' }]} />
+        </div>
         <Field label="Notes"><input type="text" value={f.notes} maxLength={1000} onChange={(e) => setF({ ...f, notes: e.target.value })} /></Field>
         <ErrorBox error={error} />
         <button className="btn primary block" disabled={busy}

@@ -117,6 +117,27 @@ export function AppointmentView() {
     }
   }
 
+  // What the client changed online. While the booking is live it's the first thing to see, so it sits
+  // straight under the hero; on a cancelled booking the hero already says who cancelled.
+  const changesCard = changes && changes.length > 0 && (
+    <>
+      <div className="section-title">Changes made by the client</div>
+      <div className="card od-timeline"><ul>
+        {changes.map((c) => (
+          <li key={c.id} className={`od-tl-item${c.action === 'cancelled' ? ' od-tl-cancelled' : ''}`}>
+            <span className="od-tl-dot" aria-hidden="true" />
+            <div className="grow">
+              <div className="od-tl-head"><span className="title">{CHANGE_LABEL[c.action]}</span>{c.late && <LateChip />}</div>
+              {changeLines(c, tz).map((line) => <div key={line} className="od-tl-line">{line}</div>)}
+              {c.note && <div className="od-tl-note">“{c.note}”</div>}
+              <div className="od-tl-when">On {fmtDayTime(c.changed_at, tz)}</div>
+            </div>
+          </li>
+        ))}
+      </ul></div>
+    </>
+  );
+
   return (
     <div className="page stack od od-appt">
       <TopBar title={a.client?.full_name ?? 'Appointment'} back />
@@ -141,20 +162,21 @@ export function AppointmentView() {
           <div className="od-cancelled">
             <span className="od-cancelled-ic" aria-hidden="true" />
             <div className="grow">
-              <b>{a.cancelled_by ? CANCELLED_BY[a.cancelled_by] : 'Cancelled'}</b>{a.cancelled_at && ` · ${fmtDayTime(a.cancelled_at, tz)}`}
-              {a.cancel_reason && a.cancelled_by !== 'system' && <div>{a.cancelled_by === 'client' ? 'Their reason' : 'Reason'}: “{a.cancel_reason}”</div>}
+              <b>{a.cancelled_by ? CANCELLED_BY[a.cancelled_by] : 'Cancelled'}</b>
+              {a.cancelled_at && <span className="od-cancelled-when"><span className="visually-hidden"> · </span>{fmtDayTime(a.cancelled_at, tz)}</span>}
+              {a.cancel_reason && a.cancelled_by !== 'system' && <div className="od-cancelled-reason">{a.cancelled_by === 'client' ? 'Their reason' : 'Reason'}: “{a.cancel_reason}”</div>}
             </div>
           </div>
         )}
         <dl className="od-receipt">
           <div><dt>Price</dt><dd className="od-price">{money(a.price_pence)}</dd></div>
           <div><dt>Reference</dt><dd className="mono od-ref">{a.reference}</dd></div>
-          <div><dt>Booked</dt><dd>{a.source === 'online' ? 'Online' : 'By you'} · {fmtDayTime(a.created_at, tz)}</dd></div>
-          {a.is_new_client && <div><dt>Client</dt><dd>New client{a.has_form ? ' · form on file' : <span className="flag"> · no consultation form</span>}</dd></div>}
+          <div><dt>Booked</dt><dd>{a.source === 'online' ? 'Online' : 'By you'}{DOT}<span className="od-nowrap">{fmtDayTime(a.created_at, tz)}</span></dd></div>
+          {a.is_new_client && <div><dt>Client</dt><dd>New client{a.has_form ? <>{DOT}<span className="od-nowrap">form on file</span></> : <span className="flag">{DOT}no consultation form</span>}</dd></div>}
           {a.deposit_required_pence > 0 && (
             <div>
               <dt>Deposit</dt>
-              <dd>{money(a.deposit_required_pence)} · {a.deposit_paid_at ? `received ${fmtDayTime(a.deposit_paid_at, tz)}` : a.deposit_due_at ? <span className={overdue ? 'flag' : ''}>due by {fmtDayTime(a.deposit_due_at, tz)}{overdue ? ' (overdue)' : ''}</span> : 'not received'}</dd>
+              <dd>{money(a.deposit_required_pence)}{DOT}{a.deposit_paid_at ? <>received <span className="od-nowrap">{fmtDayTime(a.deposit_paid_at, tz)}</span></> : a.deposit_due_at ? <span className={overdue ? 'flag' : ''}>due{'\u00a0'}by <span className="od-nowrap">{fmtDayTime(a.deposit_due_at, tz)}</span>{overdue ? ' (overdue)' : ''}</span> : 'not received'}</dd>
             </div>
           )}
         </dl>
@@ -166,6 +188,8 @@ export function AppointmentView() {
           </details>
         )}
       </div>
+
+      {live && changesCard}
 
       {checkPhone && a.client && (
         <div className="notice warn stack od-check-phone" role="note" aria-label="Check their mobile">
@@ -215,7 +239,7 @@ export function AppointmentView() {
               <Icon name="whatsapp" size={20} /> WhatsApp {first}
             </a>
           )}
-          {owing && <button className="btn ok block" onClick={() => setSheet('late')}><Icon name="tick" size={20} /> Record payment received</button>}
+          {owing && <button className="btn primary block" onClick={() => setSheet('late')}><Icon name="tick" size={20} /> Record payment received</button>}
         </div>
       )}
 
@@ -226,7 +250,7 @@ export function AppointmentView() {
             <h3>Waiting for the {money(a.deposit_required_pence)} deposit</h3>
           </div>
           <p className="sub">When the money shows in your bank (reference <b className="mono od-ref-pill">{a.reference}</b>), mark it received. The client gets an email saying they’re confirmed.</p>
-          <button className="btn ok block" onClick={() => setSheet('deposit')}><Icon name="tick" size={20} /> Deposit received</button>
+          <button className="btn primary block" onClick={() => setSheet('deposit')}><Icon name="tick" size={20} /> Deposit received</button>
           {checkPhone && phone && <p className="sub" style={{ margin: 0 }}>Check their mobile above before you ask on WhatsApp.</p>}
           {phone && !checkPhone && <WhatsAppButton a={a} s={s} kind="deposit" label="Ask for the deposit on WhatsApp" />}
         </div>
@@ -241,9 +265,9 @@ export function AppointmentView() {
           )}
           <div className="od-actions-row">
             <button className="btn" onClick={() => setSheet('move')}>Change time</button>
-            {started && <button className="btn" onClick={noShow}>No-show</button>}
             <button className="btn danger" onClick={() => setSheet('cancel')}>Cancel</button>
           </div>
+          {started && <button className="btn ghost small od-noshow" onClick={noShow}>No-show</button>}
         </div>
       )}
 
@@ -274,7 +298,7 @@ export function AppointmentView() {
             <h3>Change or cancel link</h3>
           </div>
           <p className="sub">Lets {first} change or cancel this booking themselves.</p>
-          <div className="mono od-url">{changeUrl}</div>
+          <ChangeUrl url={changeUrl} />
           {checkPhone && phone && <p className="sub" style={{ margin: 0 }}>Check their mobile above before you send this link.</p>}
           <div className="btn-row">
             {phone && !checkPhone && (
@@ -289,24 +313,7 @@ export function AppointmentView() {
         </div>
       )}
 
-      {changes && changes.length > 0 && (
-        <>
-          <div className="section-title">Changes made by the client</div>
-          <div className="card od-timeline"><ul>
-            {changes.map((c) => (
-              <li key={c.id} className={`od-tl-item${c.action === 'cancelled' ? ' od-tl-cancelled' : ''}`}>
-                <span className="od-tl-dot" aria-hidden="true" />
-                <div className="grow">
-                  <div className="od-tl-head"><span className="title">{CHANGE_LABEL[c.action]}</span>{c.late && <LateChip />}</div>
-                  {changeLines(c, tz).map((line) => <div key={line} className="od-tl-line">{line}</div>)}
-                  {c.note && <div className="od-tl-note">“{c.note}”</div>}
-                  <div className="od-tl-when">On {fmtDayTime(c.changed_at, tz)}</div>
-                </div>
-              </li>
-            ))}
-          </ul></div>
-        </>
-      )}
+      {!live && changesCard}
 
       <div className="card stack od-notes">
         <div className="od-panel-head">
@@ -356,13 +363,27 @@ export function AppointmentView() {
   );
 }
 
-/** A little calendar page: month on a pink band, the day, the weekday. Decorative; the date is spelled out beside it. */
+/** A little calendar page: weekday on a pink band, the day, the month (as on the client's ticket). Decorative; the date is spelled out beside it. */
 function DateTile({ iso, tz }: { iso: string; tz: string }) {
   return (
     <div className="od-datetile" aria-hidden="true">
-      <span className="od-dt-mon">{fmt(iso, 'MMM', tz)}</span>
-      <span className="od-dt-day">{fmt(iso, 'd', tz)}</span>
       <span className="od-dt-dow">{fmt(iso, 'EEE', tz)}</span>
+      <span className="od-dt-day">{fmt(iso, 'd', tz)}</span>
+      <span className="od-dt-mon">{fmt(iso, 'MMM', tz)}</span>
+    </div>
+  );
+}
+
+/** " · " that never starts a line: a line can break only after the dot. */
+const DOT = '\u00a0· ';
+
+/** The change link, split so it wraps after the host and at the token's hyphens rather than mid-word. */
+function ChangeUrl({ url }: { url: string }) {
+  const at = url.indexOf('/manage/');
+  if (at < 0) return <div className="mono od-url">{url}</div>;
+  return (
+    <div className="mono od-url">
+      <span className="od-url-host">{url.slice(0, at)}</span><wbr />/manage/<wbr />{url.slice(at + '/manage/'.length)}
     </div>
   );
 }
@@ -429,7 +450,7 @@ function DepositSheet({ a, onClose, onDone }: { a: Appointment; onClose: () => v
         <MethodPicker value={method} onChange={setMethod} />
         <p className="sub od-sheet-note">This records {money(a.deposit_required_pence)} in your takings, confirms the booking and emails the client.</p>
         <ErrorBox error={error} />
-        <button className="btn ok block" disabled={busy} onClick={async () => { if (await run(() => api.markDepositPaid(a.id, method))) onDone(); }}>
+        <button className="btn primary block" disabled={busy} onClick={async () => { if (await run(() => api.markDepositPaid(a.id, method))) onDone(); }}>
           {busy ? 'Saving…' : 'Confirm deposit received'}
         </button>
       </div>
@@ -494,7 +515,7 @@ function LatePaymentSheet({ a, tz, amount: owed, onClose, onDone }: { a: Appoint
         <div className="od-amount"><Field label="Amount received (£)"><input type="text" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} /></Field></div>
         <MethodPicker value={method} onChange={setMethod} />
         <ErrorBox error={error} />
-        <button className="btn ok block" disabled={busy} onClick={save}>{busy ? 'Saving…' : 'Save'}</button>
+        <button className="btn primary block" disabled={busy} onClick={save}>{busy ? 'Saving…' : 'Save'}</button>
       </div>
     </Sheet>
   );
@@ -547,7 +568,7 @@ function MoveSheet({ a, tz, onClose, onDone }: { a: Appointment; tz: string; onC
   return (
     <Sheet title="Change time" onClose={onClose}>
       <div className="stack">
-        <div className="row">
+        <div className="row od-move-row">
           <Field label="Date"><input type="date" value={day} onChange={(e) => setDay(e.target.value)} /></Field>
           <Field label="Minutes"><input type="number" inputMode="numeric" min={5} step={5} value={duration} onChange={(e) => setDuration(e.target.value)} /></Field>
         </div>
@@ -563,7 +584,7 @@ function MoveSheet({ a, tz, onClose, onDone }: { a: Appointment; tz: string; onC
             <span>Email {first} their new time<br /><span className="sub">A “your booking has changed” email, sent within 10 minutes.</span></span>
           </label>
         ) : (
-          <p className="sub">There’s no email address for {first}, so they aren’t told automatically — send them a WhatsApp with the new time afterwards.</p>
+          <p className="notice warn od-move-note">There’s no email address for {first}, so they aren’t told automatically — send them a WhatsApp with the new time afterwards.</p>
         )}
         <ErrorBox error={error} />
         <button className="btn primary block" disabled={busy} onClick={save}>{busy ? 'Saving…' : 'Save new time'}</button>

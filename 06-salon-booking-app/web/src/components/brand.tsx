@@ -842,7 +842,7 @@ export function Socials({ instagram, tiktok, facebook, className }: {
   const shared = links.every((l) => l.h.toLowerCase() === links[0].h.toLowerCase());
   return (
     <div className={cx('brand-socials', className)}>
-      <ul className="brand-socials-list">
+      <ul className={cx('brand-socials-list', !shared && 'brand-socials-list--stacked')}>
         {links.map(({ k, h }) => (
           <li key={k}>
             <a className="brand-social" href={SOCIAL[k].url(encodeURIComponent(h))} target="_blank" rel="noopener noreferrer"

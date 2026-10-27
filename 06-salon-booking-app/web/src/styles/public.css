@@ -9,6 +9,8 @@
   --pub-clock-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='8.6'/%3E%3Cpath d='M12 7.4V12l3.1 2'/%3E%3C/svg%3E");
   --pub-cross-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round'%3E%3Ccircle cx='12' cy='12' r='8.6'/%3E%3Cpath d='M9.2 9.2l5.6 5.6M14.8 9.2l-5.6 5.6'/%3E%3C/svg%3E");
   --pub-moon-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linejoin='round'%3E%3Cpath d='M19.5 14.6A8 8 0 0 1 9.4 4.5a8 8 0 1 0 10.1 10.1Z'/%3E%3C/svg%3E");
+  /* a brush stroke with dry, ragged ends, stretched behind the handwritten add-on note */
+  --pub-brush-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 300 100' preserveAspectRatio='none'%3E%3Cpath d='M14 9Q80 2 158 7T290 6L297 15L289 23L298 33L291 45L299 57L290 68L296 80L287 93Q206 99 128 94T12 95L4 84L12 73L2 61L10 49L1 37L9 26L3 16Z'/%3E%3C/svg%3E");
   /* a deeper pink for small white text (the date leaf's day, the current step's number) */
   --pub-tile-top: linear-gradient(135deg, var(--accent) 0%, var(--accent-2) 100%);
 }
@@ -131,6 +133,11 @@
 .policy-body p + p { margin-top: -2px; }
 .policy-text { white-space: pre-wrap; }
 .policy-body .policy-small { font-size: 0.86rem; color: var(--muted); }
+/* on step 1 the policy is a compact note, so the menu starts higher; the details step shows it in full */
+.book--service .card.policy.policy-card { padding: 12px 16px 14px; gap: 6px 10px; }
+.book--service .policy-ring { width: 30px; height: 30px; box-shadow: inset 0 0 0 2px var(--surface), inset 0 0 0 3px var(--line-strong); }
+.book--service .policy-ring svg { width: 16px; height: 16px; }
+.book--service .policy-body p { font-size: 0.9rem; line-height: 1.45; }
 .policy-check { margin-top: 2px; padding: 12px 0 0; border-top: 1px dashed var(--line-strong); font-weight: 650; color: var(--ink-strong); }
 .card.policy.late .policy-ring {
   color: var(--warn);
@@ -198,20 +205,28 @@
 .service.menu-row:focus-visible { outline-offset: -2px; }
 .menu-current { margin: 0 0 6px; }
 
-.menu-line { display: flex; align-items: flex-end; gap: 6px; }
+/* the price sits on the name's last line; the name fills the space before it */
+.menu-line { display: flex; align-items: flex-end; gap: 8px; }
 .menu-name {
-  flex: 0 1 auto;
+  flex: 1 1 auto;
   min-width: 0;
+  overflow: hidden;
   font-weight: 750;
   font-size: 1.03rem;
   line-height: 1.35;
   color: var(--ink-strong);
   overflow-wrap: anywhere;
+  text-wrap: balance;
 }
-.menu-leader {
-  flex: 1 1 16px;
-  min-width: 16px;
-  margin: 0 2px 0.36em;
+/* the dotted leader, as on her price list: it runs on from the end of the name (wrapped or
+   not) to the price, and the name's box clips it */
+.menu-line:has(.menu-price) .menu-name::after {
+  content: '';
+  display: inline-block;
+  width: 100%;
+  height: 0;
+  margin: 0 -100% 0 8px;
+  vertical-align: 0.28em;
   border-bottom: 2px dotted color-mix(in srgb, var(--accent) 38%, var(--line-strong));
 }
 .menu-price {
@@ -292,16 +307,42 @@
   border-top: 1px dashed var(--line-strong);
 }
 .addon-card--bottle .addon-foot { min-height: 92px; padding-right: 92px; }
-.addon-note {
-  margin: 0;
+.addon-note { margin: 0; text-wrap: pretty; }
+/* the rules (what counts as advanced, and so on) are read exactly, so they're plain type */
+.addon-note--plain {
+  font-family: var(--font-sans);
+  font-weight: 500;
+  font-size: 0.92rem;
+  line-height: 1.5;
+  color: var(--ink);
+}
+/* the last note ("Just ask!") is handwritten on a brush swatch, as on her price list */
+.addon-note--hand {
+  position: relative;
+  isolation: isolate;
+  width: fit-content;
+  max-width: 100%;
+  margin-left: -2px;
+  padding: 6px 16px 8px;
   font-family: var(--font-hand);
   font-weight: 600;
-  font-size: 1.3rem;
-  line-height: 1.28;
-  color: var(--accent);
-  text-wrap: pretty;
+  font-size: 1.28rem;
+  line-height: 1.25;
+  color: var(--ink-strong);
+  text-wrap: balance;
+  transform: rotate(-2deg);
 }
-.addon-note + .addon-note { margin-top: 6px; }
+.addon-note--hand::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: var(--brush);
+  -webkit-mask: var(--pub-brush-mask) center / 100% 100% no-repeat;
+  mask: var(--pub-brush-mask) center / 100% 100% no-repeat;
+}
+.addon-note + .addon-note { margin-top: 8px; }
+.addon-note--plain + .addon-note--hand { margin-top: 12px; }
 .addon-bottle { position: absolute; right: -6px; bottom: -8px; pointer-events: none; }
 .addon-heart { position: absolute; top: 18px; right: 16px; opacity: 0.6; transform: rotate(10deg); }
 
@@ -489,7 +530,8 @@
 .ticket-line { font-size: 0.9rem; color: var(--muted); }
 .ticket-perf {
   position: relative;
-  z-index: 1;
+  /* above the stub, so both notches are whole half-circles punched out of the card */
+  z-index: 2;
   height: 0;
   margin: 0 18px;
   border-top: 2px dashed var(--line-strong);
@@ -516,6 +558,9 @@
   gap: 4px 14px;
   padding: 14px 18px 15px 22px;
   background: color-mix(in srgb, var(--surface-2) 75%, var(--surface));
+  /* its tint covers the card's inset hairline, so it draws its own round the sides and bottom */
+  border-radius: 0 0 var(--radius) var(--radius);
+  box-shadow: inset 1px 0 0 var(--line), inset -1px 0 0 var(--line), inset 0 -1px 0 var(--line);
 }
 .ticket-stub-label {
   font-size: 0.68rem;
@@ -531,7 +576,7 @@
   color: var(--ink-strong);
 }
 .ticket-stub-note { flex-basis: 100%; font-size: 0.86rem; color: var(--muted); }
-.ticket--muted .ticket-slice { filter: grayscale(0.7); opacity: 0.45; }
+.ticket--muted .ticket-slice { filter: grayscale(0.7); opacity: 0.25; }
 
 .date-tile {
   flex: none;
@@ -733,6 +778,8 @@
   margin: 0;
   padding: 14px 18px 16px 22px;
   background: color-mix(in srgb, var(--surface-2) 60%, var(--surface));
+  border-radius: 0 0 var(--radius) var(--radius);
+  box-shadow: inset 1px 0 0 var(--line), inset -1px 0 0 var(--line), inset 0 -1px 0 var(--line);
 }
 .appt-kv > div { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 .appt-kv .appt-kv-when { grid-column: 1 / -1; }
@@ -746,7 +793,10 @@
 .appt-kv dd { margin: 0; font-weight: 700; color: var(--ink-strong); overflow-wrap: anywhere; }
 .appt-kv .mono { font-size: 1.02rem; letter-spacing: 0.12em; }
 .appt-kv .appt-price { color: var(--accent); font-weight: 800; }
-.ticket--muted .ticket-title { color: var(--muted); }
+.ticket--muted .ticket-title,
+.ticket--muted .ticket-when,
+.ticket--muted .appt-kv dd,
+.ticket--muted .appt-kv .appt-price { color: var(--muted); }
 
 .deposit-card { gap: 12px !important; }
 .deposit-card p { margin: 0; line-height: 1.55; }
@@ -852,8 +902,8 @@
 }
 .compare > .to { border-top: 1px dashed var(--line-strong); padding: 20px 18px 16px; margin-top: -1px; }
 .compare > .to b { font-size: 1.1rem; color: var(--ink-strong); }
-.compare .to > span:not(.label):not(.sub) { font-weight: 650; color: var(--ink-strong); }
-.compare .to > span.changed { color: var(--accent); }
+.compare .to > span:not(.label, .sub, .changed) { font-weight: 650; color: var(--ink-strong); }
+.compare .to > span.changed { color: var(--accent); font-weight: 800; }
 .compare .to .changed { color: var(--accent); }
 
 .cancel-sheet { gap: 14px; }
@@ -910,13 +960,14 @@
   .pub-deposit .group-ring, .deposit-card .group-ring { background: color-mix(in srgb, var(--lemon) 14%, var(--surface)); }
   .celebrate-heart { filter: drop-shadow(0 10px 18px rgba(0, 0, 0, 0.45)); }
   .compare > .compare-arrow { box-shadow: 0 0 0 4px var(--surface), var(--glow); }
+  /* a greyed slice reads as a dull disc on plum */
+  .ticket--muted .ticket-slice { display: none; }
 }
 
 /* small phones */
 @media (max-width: 360px) {
   .pub-group { padding: 14px 14px 16px; }
   .menu-go { display: none; }
-  .menu-leader { min-width: 10px; flex-basis: 10px; }
   .menu-meta { padding-right: 4px; }
   .chosen-art { display: none; }
   .chosen { padding-left: 16px; }
@@ -934,3 +985,17 @@
 
 /* on the confirm step, the owner's own policy follows the warning in a quieter voice */
 .manage .notice.warn.stack > span + span { font-size: 0.88rem; opacity: 0.92; }
+
+/* ---------- no one-word last lines in short copy ---------- */
+.info-badges .brand-badge-text p,
+.menu-hint,
+.menu-meta,
+.policy-body p,
+.pub-deposit p,
+.pub-next li > span,
+.deposit-card p,
+.cancelled-note,
+.manage .notice { text-wrap: pretty; }
+/* a deadline or a date stays on one line */
+.deposit-card p > b,
+.policy-body p > b { white-space: nowrap; }

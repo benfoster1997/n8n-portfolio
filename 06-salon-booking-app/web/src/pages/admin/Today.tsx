@@ -161,7 +161,7 @@ export function Today() {
             </div>
           )}
 
-          {(lateCancels.length > 0 || deposits.length > 0 || noForm.length > 0) && <div className="section-title">Needs attention</div>}
+          {(lateCancels.length > 0 || deposits.length > 0 || noForm.length > 0) && <div className="section-title no-heart">Needs attention</div>}
           {lateCancels.length > 0 && (
             <div className="card tight attention td-attn">
               <AttentionHead icon="late" title="Late cancellations" count={lateCancels.length} />
@@ -216,7 +216,7 @@ export function Today() {
 
           {changes.length > 0 && (
             <>
-              <div className="section-title">Changed by clients</div>
+              <div className="section-title no-heart">Changed by clients</div>
               <div className="card tight td-changes"><ul className="list">
                 {changes.slice(0, 8).map((c) => (
                   <li key={c.id}><Link className="list-row td-chg-row" to={`/appointments/${c.appointment_id}`}>

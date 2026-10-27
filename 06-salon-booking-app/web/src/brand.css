@@ -298,6 +298,22 @@ h3.script-title { font-size: 1.65rem; }
   color: var(--ink, #2e3350);
 }
 .brand-social .brand-social-handle { padding-right: 6px; }
+/* A different handle per network: one centred column with a shared left edge,
+   so the pink circles line up whatever the handles' lengths. */
+.brand-socials-list--stacked {
+  flex-direction: column;
+  flex-wrap: nowrap;
+  align-items: flex-start;
+  gap: 8px;
+  max-width: 100%;
+}
+.brand-socials-list--stacked > li { max-width: 100%; }
+.brand-socials-list--stacked .brand-social { max-width: 100%; text-align: left; }
+.brand-socials-list--stacked .brand-social-icon { flex: none; }
+.brand-socials-list--stacked .brand-social-handle { min-width: 0; overflow-wrap: anywhere; }
+/* The footer's wide side padding keeps the note clear of the corner lemons, which
+   sit lower down; the column may use some of it so handles stay on one line. */
+.brand-footer .brand-socials-list--stacked { margin-inline: -44px; max-width: calc(100% + 88px); }
 
 /* ---------- footer ---------- */
 .brand-footer {

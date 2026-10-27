@@ -124,7 +124,11 @@ export function AppointmentNew() {
         {client && !newClient ? (
           <div className="od-picked">
             <Avatar name={client.full_name} />
-            <div className="grow"><div className="od-picked-name">{client.full_name}</div><div className="sub">{client.phone || client.email || ''}{visits !== null && ` · ${visits ? `${visits} visit${visits === 1 ? '' : 's'}` : client.is_regular ? 'Regular' : 'New client'}`}</div></div>
+            <div className="grow">
+              <div className="od-picked-name">{client.full_name}</div>
+              {/* the number, then the visit count on a line of its own (never a dangling " ·") */}
+              <div className="sub"><span className="od-nowrap">{client.phone || client.email || ''}</span>{visits !== null && <span className="od-picked-visits"><span className="visually-hidden"> · </span>{visits ? `${visits} visit${visits === 1 ? '' : 's'}` : client.is_regular ? 'Regular' : 'New client'}</span>}</div>
+            </div>
             <button className="btn small" onClick={() => setClientId(null)}>Change</button>
           </div>
         ) : newClient ? (
@@ -155,7 +159,7 @@ export function AppointmentNew() {
         )}
       </div>
 
-      <div className="card stack od-step done">
+      <div className="card stack od-step od-step-treatment done">
         <div className="od-step-head"><StepNum n={2} /><h3>Treatment</h3></div>
         <Field label="Treatment">
           <select value={serviceId} onChange={(e) => { setServiceId(e.target.value); setTime(''); }}>

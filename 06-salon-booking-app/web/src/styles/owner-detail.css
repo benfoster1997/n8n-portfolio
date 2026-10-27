@@ -137,7 +137,8 @@
 }
 .od-receipt dd {
   flex: 0 1 auto;
-  max-width: 66%;
+  max-width: 78%;
+  text-wrap: balance;
   margin: 0;
   text-align: right;
   color: var(--ink-strong);
@@ -218,7 +219,7 @@
   display: flex;
   flex-direction: column;
 }
-.od-dt-mon {
+.od-dt-dow {
   display: block;
   padding: 4px 0 3px;
   background: linear-gradient(135deg, var(--accent), var(--accent-2));
@@ -230,7 +231,7 @@
   text-indent: 0.18em;
 }
 .od-dt-day { display: block; font-size: 1.7rem; font-weight: 800; line-height: 1.1; padding-top: 3px; color: var(--ink-strong); font-variant-numeric: tabular-nums; }
-.od-dt-dow { display: block; padding-bottom: 6px; font-size: 0.7rem; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+.od-dt-mon { display: block; padding-bottom: 6px; font-size: 0.7rem; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
 
 .od-cancelled {
   position: relative;
@@ -247,6 +248,8 @@
   border: 1px solid color-mix(in srgb, var(--danger) 18%, transparent);
 }
 .od-cancelled b { color: inherit; }
+.od-cancelled-when { display: block; white-space: nowrap; font-size: 0.84rem; opacity: 0.85; }
+.od-cancelled-reason { margin-top: 6px; color: var(--ink); font-weight: 500; }
 .od-cancelled-ic {
   flex: none;
   width: 18px;
@@ -331,6 +334,7 @@
 .od-panel .btn.wa { font-size: 0.97rem; }
 .od-ref-pill {
   display: inline-block;
+  margin-right: 2px;
   padding: 0 7px;
   border-radius: 7px;
   background: var(--surface);
@@ -365,7 +369,8 @@
 .od-actions { display: flex; flex-direction: column; gap: 10px; }
 .od-finish { min-height: 58px; font-size: 1.08rem; gap: 10px; }
 .od-actions-row { display: flex; gap: 8px; }
-.od-actions-row > .btn { flex: 1 1 0; min-width: 0; padding: 0 8px; font-size: 0.95rem; min-height: 48px; }
+.od-actions-row > .btn { flex: 1 1 0; min-width: 0; padding: 0 8px; font-size: 0.95rem; min-height: 48px; white-space: nowrap; }
+.od-noshow { align-self: center; }
 
 .od-tool .sub { margin: 0; }
 .od-url {
@@ -376,8 +381,9 @@
   color: var(--ink);
   font-size: 0.8rem;
   line-height: 1.45;
-  overflow-wrap: anywhere;
+  overflow-wrap: anywhere; /* only a fallback: the link has <wbr> after the host and the token breaks at its hyphens */
 }
+.od-url-host { display: block; color: var(--muted); }
 
 /* the client's changes, as a timeline */
 .od-timeline { padding: 6px 18px; }
@@ -543,6 +549,7 @@
 .od-none { margin: 0; }
 .od-tests, .od-forms { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .od-test {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -551,9 +558,19 @@
   background: var(--surface-2);
   border: 1px solid var(--line);
 }
-.od-test-ok { border-left: 4px solid var(--ok); }
-.od-test-danger { border-left: 4px solid var(--danger); background: color-mix(in srgb, var(--danger-soft) 60%, var(--surface)); }
-.od-test-warn { border-left: 4px solid var(--lemon-deep); }
+.od-test::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 12px;
+  bottom: 12px;
+  width: 4px;
+  border-radius: 0 4px 4px 0;
+  background: var(--tone, var(--line-strong));
+}
+.od-test-ok { --tone: var(--ok); }
+.od-test-danger { --tone: var(--danger); background: color-mix(in srgb, var(--danger-soft) 60%, var(--surface)); }
+.od-test-warn { --tone: var(--lemon-deep); }
 .od-test-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
 .od-test-date { font-weight: 800; color: var(--ink-strong); font-variant-numeric: tabular-nums; }
 .od-test-detail { color: var(--muted); font-size: 0.88rem; margin-top: 2px; overflow-wrap: anywhere; }
@@ -591,7 +608,7 @@
 .od-form-ic.flagged { color: var(--danger); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--danger) 35%, transparent); }
 .od-health-delete { align-self: flex-start; margin-top: 6px; }
 
-.od-photos-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 18px 0 -2px; }
+.od-photos-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 12px 0 -4px; }
 .od-photos-head .section-title { margin: 0 6px; }
 .od-add-photos { cursor: pointer; flex: none; }
 .od-add-photos svg { color: var(--accent); }
@@ -639,7 +656,6 @@
   gap: 3px;
   height: 8px;
   margin-top: 12px;
-  max-width: 260px;
   border-radius: var(--radius-pill);
   overflow: hidden;
 }
@@ -679,17 +695,7 @@
   font-size: 0.86rem;
   line-height: 1.5;
 }
-.od-tax-note::before {
-  content: '';
-  position: absolute;
-  left: 14px;
-  top: 14px;
-  width: 17px;
-  height: 17px;
-  background: var(--accent);
-  -webkit-mask: var(--heart-mask) center / contain no-repeat;
-  mask: var(--heart-mask) center / contain no-repeat;
-}
+.od-tax-note-ic { position: absolute; left: 14px; top: 14px; display: flex; color: var(--accent); }
 .od-day .day-head h2 { font-size: 0.98rem; }
 .od-day-total { font-weight: 800; color: var(--accent); font-variant-numeric: tabular-nums; }
 .od-pay { gap: 11px; padding: 12px 6px 12px 14px; }
@@ -753,7 +759,12 @@
 }
 .od-picked-name { font-weight: 800; color: var(--ink-strong); overflow-wrap: anywhere; }
 .od-picked .sub { overflow-wrap: anywhere; text-wrap: pretty; }
+.od-picked-visits { display: block; }
 .od-picked .btn { flex: none; }
+/* on a narrow phone, "Change" drops under the details rather than crushing them */
+.od-picked { flex-wrap: wrap; }
+.od-picked .grow { flex: 1 1 140px; min-width: 0; }
+.od-picked .btn { margin-left: auto; }
 .od-matches { box-shadow: var(--shadow-sm); animation: none; }
 .od-matches .list-row { gap: 12px; padding: 10px 14px; }
 .od-new-client { gap: 8px; }
@@ -799,17 +810,6 @@
 .od-set-row .od-ic { transition: transform 0.25s var(--ease-spring); }
 .od-set-row:active .od-ic { transform: scale(0.92); }
 .od-signed-in { margin: 22px 0 0; text-align: center; color: var(--muted); font-size: 0.86rem; font-weight: 600; overflow-wrap: anywhere; }
-.od-signed-in::before {
-  content: '';
-  display: inline-block;
-  width: 12px;
-  height: 12px;
-  margin-right: 6px;
-  vertical-align: -1px;
-  background: var(--pink);
-  -webkit-mask: var(--heart-mask) center / contain no-repeat;
-  mask: var(--heart-mask) center / contain no-repeat;
-}
 
 /* ------------------------------------------------------------------ settings pages */
 .od-set-card { gap: 16px; }
@@ -817,6 +817,9 @@
 .od-set-intro { margin: -6px 0 0; }
 .od-page-intro { margin: -4px 4px 0; }
 .od-check-row { padding: 12px 14px; border-radius: 14px; background: var(--surface-2); border: 1px solid var(--line); }
+/* the label, then its explanation as a hint beneath (like the field hints on the same card) */
+.od-check-row > span { font-weight: 700; color: var(--ink-strong); line-height: 1.35; }
+.od-check-row .sub { display: block; margin-top: 4px; font-size: 0.82rem; font-weight: 500; line-height: 1.45; color: var(--muted); text-wrap: pretty; }
 .od-use-host { align-self: flex-start; }
 .od-set-cancel textarea { min-height: 168px !important; }
 .od-set-page .notice.warn { border-radius: 14px; }
@@ -845,72 +848,15 @@
 }
 .od-tagline .heart { margin-left: 4px; vertical-align: 0.1em; }
 .od-example { display: block; white-space: pre-line; margin-top: 8px; padding: 10px 12px; border-radius: 12px; background: var(--surface-2); border: 1px dashed var(--line-strong); color: var(--ink); line-height: 1.55; }
-.od-menu-text { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 15px !important; font-weight: 450 !important; line-height: 1.6; }
+.od-menu-text { font-family: var(--font-sans); font-size: 16px !important; line-height: 1.6; }
 .od-preview-label { display: flex; align-items: center; gap: 7px; color: var(--accent-text); font-size: 0.9rem; font-weight: 750; margin-bottom: -6px; }
 
-/* a mini price list: script heading on a brush stroke, name …… pink price */
-.od-menu {
-  position: relative;
-  padding: 16px 18px 18px;
-  border-color: var(--line-strong);
-  background:
-    radial-gradient(70% 60% at 100% 100%, color-mix(in srgb, var(--brush) 30%, transparent), transparent 70%),
-    var(--surface);
-  animation: none;
-}
-.od-menu-sec + .od-menu-sec { margin-top: 14px; }
-.od-menu-title { font-size: 1.75rem !important; margin: 0 0 6px 6px; line-height: 1.3; }
-.od-menu-items, .od-pl { list-style: none; margin: 0; padding: 0; }
-.od-menu-items li {
-  display: flex;
-  align-items: baseline;
-  gap: 0;
-  padding: 5px 0;
-  font-size: 0.98rem;
-  color: var(--ink);
-}
-.od-mi-name { flex: 0 1 auto; min-width: 0; overflow-wrap: anywhere; }
-.od-menu-items li::after {
-  content: '';
-  order: 1;
-  flex: 1 1 0;
-  min-width: 18px;
-  margin: 0 8px;
-  border-bottom: 2px dotted var(--od-leader);
-  transform: translateY(-4px);
-}
-.od-menu-items li.od-no-price::after { display: none; }
-.od-mi-price {
-  order: 2;
-  flex: 0 0 auto;
-  max-width: 46%;
-  text-align: right;
-  color: var(--pink);
-  font-weight: 800;
-  white-space: normal;
-}
-@media (prefers-color-scheme: light) { .od-mi-price { color: var(--accent); } }
-.od-menu-note {
-  position: relative;
-  margin: 8px 0 0;
-  padding-left: 20px;
-  color: var(--muted);
-  font-size: 0.88rem;
-  line-height: 1.45;
-}
-.od-menu-note::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 3px;
-  width: 13px;
-  height: 13px;
-  background: var(--pink);
-  -webkit-mask: var(--heart-mask) center / contain no-repeat;
-  mask: var(--heart-mask) center / contain no-repeat;
-}
+/* the add-ons preview uses the booking page's own markup and styles (public.css); the title size
+   there is scoped to the public pages, so set it here too */
+.od-set-page .addon-card .script-title { font-size: min(1.85rem, 7.4vw); }
 
 /* treatments & prices, as her price list */
+.od-pl { list-style: none; margin: 0; padding: 0; }
 .od-pricelist { padding: 16px 8px 10px; }
 .od-pricelist-title { margin: 0 0 4px 16px; font-size: 2rem; }
 .od-pl li + li { border-top: 1px dashed var(--line); margin: 0 12px; }
@@ -932,19 +878,28 @@
 }
 .od-pl-row:active { background: var(--surface-2); }
 @media (hover: hover) { .od-pl-row:hover { background: color-mix(in srgb, var(--surface-2) 70%, transparent); } }
-.od-pl-line { display: flex; align-items: baseline; width: 100%; min-width: 0; }
-.od-pl-name { flex: 0 1 auto; min-width: 0; font-weight: 750; color: var(--ink-strong); overflow-wrap: anywhere; }
-.od-pl-line::after {
-  content: '';
-  order: 1;
+.od-pl-line { display: flex; align-items: flex-end; align-items: last baseline; gap: 8px; width: 100%; min-width: 0; }
+.od-pl-name {
   flex: 1 1 0;
-  min-width: 18px;
-  margin: 0 8px;
-  border-bottom: 2px dotted var(--od-leader);
-  transform: translateY(-4px);
+  min-width: 0;
+  overflow: hidden;
+  overflow: clip; /* clips the leader without making the name a scroll box */
+  font-weight: 750;
+  color: var(--ink-strong);
+  overflow-wrap: anywhere;
+  text-wrap: pretty;
 }
-.od-pl-price { order: 2; flex: none; font-weight: 800; font-size: 1.08rem; color: var(--accent); font-variant-numeric: tabular-nums; }
-.od-pl-meta { color: var(--muted); font-size: 0.86rem; font-weight: 600; }
+.od-pl-name::after {
+  content: '';
+  display: inline-block;
+  width: 100vw;
+  margin: 0 -100vw 0 8px;
+  vertical-align: 0.28em;
+  border-bottom: 2px dotted var(--od-leader);
+}
+.od-pl-price { flex: none; font-weight: 800; font-size: 1.08rem; color: var(--accent); font-variant-numeric: tabular-nums; }
+.od-pl-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 0.86rem; font-weight: 600; }
+.od-pl-chev { display: inline-flex; flex: none; color: var(--od-leader); }
 
 /* opening hours */
 .od-day-card { gap: 12px; padding: 14px 16px 16px; }
@@ -959,6 +914,43 @@
 
 /* WhatsApp wording */
 .od-placeholders .sub { margin: 0; }
+/* the tokens in the explanation look like the chips above them */
+.od-placeholders .sub .mono {
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: var(--surface-3);
+  color: var(--accent-text);
+  font-size: 0.85em;
+  font-weight: 600;
+  box-shadow: inset 0 0 0 1px var(--od-pink-ring);
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+.od-more { margin: 0; }
+.od-more summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  list-style: none;
+  color: var(--accent);
+  font-weight: 750;
+  font-size: 0.92rem;
+}
+.od-more summary::-webkit-details-marker { display: none; }
+.od-more summary::after {
+  content: '';
+  flex: none;
+  width: 14px;
+  height: 14px;
+  background: currentColor;
+  -webkit-mask: var(--select-chevron) center / contain no-repeat;
+  mask: var(--select-chevron) center / contain no-repeat;
+  transition: transform 0.25s var(--ease);
+}
+.od-more[open] summary::after { transform: rotate(180deg); }
+.od-placeholders .od-more > p { margin-top: 2px; }
+.od-placeholders .od-more > p + p { margin-top: 10px; }
 .od-ph-list { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; }
 .od-ph-list code {
   padding: 3px 8px;
@@ -989,6 +981,9 @@
 .od-status-ok { background: var(--ok-soft); color: var(--ok); border-color: color-mix(in srgb, var(--ok) 22%, transparent); }
 .od-status-ok::before { background: var(--ok); box-shadow: 0 0 0 4px color-mix(in srgb, var(--ok) 20%, transparent); }
 .od-status.warn::before { background: var(--lemon-deep); }
+/* not set up: clients get no emails, so it reads as a warning, not a neutral note */
+.od-status-off { background: var(--warn-soft); color: var(--warn); border-color: color-mix(in srgb, var(--lemon-deep) 40%, transparent); }
+.od-status-off::before { background: var(--lemon-deep); box-shadow: 0 0 0 4px color-mix(in srgb, var(--lemon-deep) 22%, transparent); }
 .od-set-card > p { margin: 0; }
 .od-hearts { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .od-hearts li { position: relative; padding-left: 22px; }
@@ -1003,7 +998,9 @@
   -webkit-mask: var(--heart-mask) center / contain no-repeat;
   mask: var(--heart-mask) center / contain no-repeat;
 }
-.od-setup .mono { padding: 8px 10px; border-radius: 10px; background: var(--surface-2); margin-top: 3px; }
+.od-setup .mono, .od-setup .od-well { padding: 8px 10px; border-radius: 10px; background: var(--surface-2); margin-top: 3px; }
+.od-setup .od-well { color: var(--muted); font-size: 0.92rem; }
+.od-key { color: var(--muted); font-size: 0.72rem; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase; overflow-wrap: anywhere; }
 .od-setup .btn.small { align-self: flex-start; }
 
 /* backup and account */
@@ -1014,6 +1011,44 @@
 .od-account-who { margin: 0; min-width: 0; }
 .od-account-who dt { color: var(--muted); font-size: 0.72rem; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase; }
 .od-account-who dd { margin: 0; color: var(--ink-strong); font-weight: 700; overflow-wrap: anywhere; }
+
+/* ------------------------------------------------------------------ line breaks and rhythm */
+.od-nowrap { white-space: nowrap; }
+/* stacked pages: the section title sits 26px below the card above and 10px above its own card,
+   as on Settings (the stack's 14px gap is part of that) */
+.od.stack > .section-title { margin: 12px 6px -4px; }
+/* the client record's appointments show a date under the time ("Tue 27 Oct") */
+.od-client .appt-li { --appt-time: 4.4rem; }
+.od-client .appt-time small { white-space: nowrap; }
+.od-allergy-text { text-wrap: balance; }
+.od-health .od-none { text-wrap: pretty; }
+.od-form-row .meta { text-wrap: balance; }
+.od-form-row .od-signed { display: inline-block; }
+.od-pay .meta { text-wrap: balance; }
+.od-pay .od-meta-part { display: inline-block; }
+.od .sub, .od .field .hint, .od .list-row .meta, .od-set-card p, .od-hearts li { text-wrap: pretty; }
+/* new appointment, step 2: the step's heading already says "Treatment" (the label stays for screen readers) */
+.od-step-treatment > .od-step-head + .field > span:first-child {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+/* change-time sheet: Date and Minutes side by side, the same height */
+.od-move-row input { height: 52px; }
+.od-move-note { margin: 0; }
+
+/* settings text boxes grow to fit their words, so nothing scrolls inside them */
+@supports (field-sizing: content) {
+  .od-set-page textarea { field-sizing: content; min-height: 96px; max-height: 60vh; resize: none; }
+}
+@supports not (field-sizing: content) {
+  .od-template textarea { min-height: 230px; }
+  .od-template-long textarea { min-height: 340px; }
+  .od-menu-text { min-height: 440px; }
+}
 
 /* ------------------------------------------------------------------ small phones (SE, 320–359px) */
 @media (max-width: 359px) {

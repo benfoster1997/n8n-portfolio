@@ -103,13 +103,16 @@
   margin-top: 1px;
 }
 .appt-row > .chev { grid-area: chev; align-self: center; }
-/* two chips (cancelled late, or a deposit overdue): stacked beside both lines */
+/* two chips (cancelled late, or a deposit overdue): side by side under the treatment,
+   so the name and the treatment keep the full width */
 .list-row.appt-row.two-chips {
   grid-template-areas:
-    'time dot name chips chev'
-    'time dot meta chips chev';
+    'time dot name name chev'
+    'time dot meta meta chev'
+    'time dot chips chips chev';
+  grid-template-rows: auto auto 1fr;
 }
-.appt-row.two-chips .appt-chips { flex-direction: column; align-items: flex-end; }
+.appt-row.two-chips .appt-chips { flex-direction: row; justify-content: flex-start; max-width: none; margin-top: 6px; }
 
 /* where it sits against the clock */
 .appt-row.is-past .appt-dot { background: var(--line-strong); box-shadow: inset 0 0 0 2.5px var(--line-strong), 0 0 0 3px var(--surface); }
@@ -157,15 +160,12 @@
       'time dot chips chips chev';
     grid-template-rows: auto auto 1fr;
   }
-  .list-row.appt-row.two-chips {
-    grid-template-areas:
-      'time dot name name chev'
-      'time dot meta meta chev'
-      'time dot chips chips chev';
-  }
   .appt-chips, .appt-row.two-chips .appt-chips { flex-direction: row; justify-content: flex-start; max-width: none; margin-top: 5px; }
   .appt-row.is-off .appt-chips { grid-row: 3; align-self: start; }
 }
+
+/* section titles over problems (cancellations, things to chase) go without the heart */
+.section-title.no-heart::after { display: none; }
 
 /* the WhatsApp button's fallback when there's no number */
 .wa-none { font-size: 0.85rem; }
@@ -334,6 +334,11 @@
 .td-attn .appt-li:first-child > .appt-row,
 .td-attn .list > li:first-child > .list-row { padding-top: 10px; }
 .td-attn .appt-li:first-child { --appt-doty: 21px; }
+/* to-do rows, not a timeline: no dot or rail, and room for the date on one line */
+.td-attn .appt-li { --appt-time: 4.2rem; --appt-dotcol: 0px; }
+.td-attn .appt-dot,
+.td-attn .appt-row::before { display: none; }
+.td-attn .appt-time small { white-space: nowrap; }
 
 .list-row.td-late-row {
   display: grid;
@@ -375,9 +380,20 @@
 }
 .td-wa { margin-bottom: 10px; }
 
-/* changed by clients */
-.list-row.td-chg-row { align-items: flex-start; }
+/* changed by clients: icon | sentence and when | chevron, with a "Late" chip under the
+   text so it never takes a column of its own */
+.list-row.td-chg-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) 18px;
+  grid-template-areas:
+    'ico body chev'
+    '. chip chev';
+  column-gap: 12px;
+  row-gap: 0;
+  align-items: start;
+}
 .td-chg-ico {
+  grid-area: ico;
   flex: none;
   display: grid;
   place-items: center;
@@ -389,9 +405,10 @@
 }
 .td-chg-cancelled { color: var(--danger); background: var(--danger-soft); }
 .td-chg-text { font-size: 0.95rem; line-height: 1.42; color: var(--ink); }
+.td-chg-row > .grow { grid-area: body; }
 .td-chg-row .meta { margin-top: 2px; }
-.td-chg-row > .chip { margin-top: 2px; }
-.td-chg-row > .chev { align-self: center; }
+.td-chg-row > .chip { grid-area: chip; justify-self: start; margin-top: 6px; }
+.td-chg-row > .chev { grid-area: chev; align-self: center; }
 
 /* your booking link: a little Instagram-style link card */
 .card.td-link { padding: 16px; }
@@ -439,16 +456,6 @@
 .td-link-url svg { flex: none; margin-top: 2px; }
 .td-link-url span { min-width: 0; overflow-wrap: anywhere; }
 .td-link-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 14px; }
-.td-link-btns .btn {
-  min-height: 42px;
-  border-radius: 12px;
-  background: var(--surface-2);
-  border-color: var(--line);
-  color: var(--ink-strong);
-  box-shadow: none;
-}
-.td-link-btns .btn svg { color: var(--accent); }
-@media (hover: hover) { .td-link-btns .btn:hover { border-color: var(--line-strong); background: var(--surface-3); } }
 .td-link-hint { margin: 12px 0 0; font-size: 0.85rem; color: var(--muted); }
 
 @media (max-width: 359px) {
@@ -456,6 +463,7 @@
   .td-tile { padding: 10px 9px 9px; }
   .td-tile-label { font-size: 0.7rem; }
   .td-tile-note { font-size: 0.72rem; }
+  .td-attn .appt-li { --appt-time: 4rem; }
   .list-row.td-late-row {
     padding-left: 16px;
     grid-template-areas:
@@ -475,6 +483,16 @@
    Diary
    ========================================================================== */
 .dy-page .topbar .dy-block { min-height: 44px; padding: 0 16px; }
+/* the main action: the same filled pink circle as on Today */
+.dy-page .topbar .dy-add {
+  color: var(--accent-ink);
+  background: var(--grad-accent);
+  border: 0;
+  box-shadow: var(--glow), inset 0 1px 0 rgba(255, 255, 255, 0.22);
+}
+.dy-page .topbar .dy-add:active { background: var(--grad-accent); }
+.dy-page .topbar .dy-add svg { stroke-width: 2.2; }
+@media (hover: hover) { .dy-page .topbar .dy-add:hover { background: var(--grad-accent); box-shadow: var(--glow-strong); } }
 .dy-month {
   display: flex;
   align-items: center;
@@ -682,8 +700,9 @@
   mask: var(--tick-mask) center / contain no-repeat;
 }
 .rm-todo { color: var(--accent-text); }
-/* once opened, the button steps back so the ones still to send stand out */
-.rm-item.is-sent .btn.wa {
+/* once opened, or not due yet, the button steps back so the ones to send now stand out */
+.rm-item.is-sent .btn.wa,
+.rm-item:not(.is-due):not(.is-sent) .btn.wa {
   background: var(--surface);
   color: var(--ok);
   border-color: color-mix(in srgb, var(--ok) 40%, var(--line));

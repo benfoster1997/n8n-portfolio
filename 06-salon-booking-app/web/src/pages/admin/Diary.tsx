@@ -44,7 +44,7 @@ export function Diary() {
     <div className="page dy-page">
       <TopBar title="Diary" right={<>
         <button className="btn small dy-block" onClick={() => setBlocking(true)}>Block time</button>
-        <Link className="icon-btn" to={`/appointments/new?d=${day}`} aria-label="New appointment"><Icon name="plus" /></Link>
+        <Link className="icon-btn dy-add" to={`/appointments/new?d=${day}`} aria-label="New appointment"><Icon name="plus" /></Link>
       </>} />
       <div className="dy-month">
         <div className="dy-month-name">{fmt(week + 'T12:00:00Z', 'MMMM', tz)} <span>{fmt(week + 'T12:00:00Z', 'yyyy', tz)}</span></div>
@@ -102,7 +102,7 @@ export function Diary() {
       )}
       {cancelled.length > 0 && (
         <>
-          <div className="section-title">Cancelled</div>
+          <div className="section-title no-heart">Cancelled</div>
           <div className="card tight dy-cancelled"><ul className="list">{cancelled.map((a) => <ApptRow key={a.id} a={a} tz={tz} />)}</ul></div>
         </>
       )}
