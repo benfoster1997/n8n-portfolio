@@ -39,7 +39,7 @@ export function ApptRow({ a, tz, showDate, hideStatus }: {
           {a.service_name}
           {/* each separator stays on the line before it, so a line never starts with one */}
           {a.price_pence > 0 && <>{'\u00a0· '}<span className="appt-price">{money(a.price_pence)}</span></>}
-          {a.is_new_client && <>{'\u00a0· '}<span className="appt-new">New</span></>}
+          {a.is_new_client && <span className="appt-new-flag">{'\u00a0· '}<span className="appt-new">New</span></span>}
           {a.is_new_client && !a.has_form && a.status !== 'completed' && a.status !== 'cancelled' && <span className="flag">{'\u00a0· No\u00a0form'}</span>}
         </div>
         {chipCount > 0 ? (

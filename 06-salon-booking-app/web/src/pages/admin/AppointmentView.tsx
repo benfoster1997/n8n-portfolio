@@ -309,7 +309,7 @@ export function AppointmentView() {
             )}
             <button className="btn" onClick={() => copy(changeUrl, 'Link')}><Icon name="link" size={20} /> Copy link</button>
           </div>
-          <button className="btn ghost small" style={{ alignSelf: 'flex-start' }} disabled={act.busy} onClick={newLink}>Make a new link</button>
+          <button className="btn ghost small" style={{ alignSelf: 'center' }} disabled={act.busy} onClick={newLink}>Make a new link</button>
         </div>
       )}
 
@@ -589,8 +589,11 @@ function MoveSheet({ a, tz, onClose, onDone }: { a: Appointment; tz: string; onC
         ) : (
           <p className="notice warn od-move-note">There’s no email address for {first}, so they aren’t told automatically — send them a WhatsApp with the new time afterwards.</p>
         )}
-        <ErrorBox error={error} />
-        <button className="btn primary block" disabled={busy} onClick={save}>{busy ? 'Saving…' : 'Save new time'}</button>
+        {/* stays in view at the bottom of the sheet while a long list of free times scrolls behind it */}
+        <div className="od-sheet-foot">
+          <ErrorBox error={error} />
+          <button className="btn primary block" disabled={busy} onClick={save}>{busy ? 'Saving…' : 'Save new time'}</button>
+        </div>
       </div>
     </Sheet>
   );

@@ -232,7 +232,7 @@
   display: inline-block;
   width: 100%;
   height: 0;
-  margin: 0 -100% 0 8px;
+  margin: 0 calc(28px - 100%) 0 8px;
   vertical-align: 0.28em;
   border-bottom: 2px dotted color-mix(in srgb, var(--accent) 38%, var(--line-strong));
 }
@@ -268,7 +268,7 @@
 }
 .menu-time {
   display: inline-flex;
-  align-items: center;
+  align-items: baseline;
   gap: 4px;
   margin-right: 8px;
   padding: 0 8px 0 6px;
@@ -280,9 +280,10 @@
   line-height: 1.6;
   color: var(--ink);
   white-space: nowrap;
-  vertical-align: 1px;
+  vertical-align: baseline;
 }
-.menu-time .brand-icon { color: var(--pink); }
+/* the pill takes its baseline from its text, so '45 min' lines up with the description */
+.menu-time .brand-icon { align-self: center; color: var(--pink); }
 
 /* ---------- add-ons ---------- */
 .addons { display: flex; flex-direction: column; gap: 14px; }
@@ -428,7 +429,7 @@
   mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12h13M13 6l6 6-6 6'/%3E%3C/svg%3E") center / contain no-repeat;
 }
 @media (hover: hover) and (pointer: fine) { .slot-month-more { display: none; } }
-.page-public .date-strip { padding-top: 8px; }
+.page-public .date-strip { padding-top: 8px; padding-bottom: 22px; margin-bottom: -12px; } /* room for the selected pill's glow to fade inside the scroller */
 .page-public .date-pill { width: 62px; padding: 10px 0 10px; border-radius: 22px; }
 .page-public .date-pill .dom { font-size: 1.4rem; }
 .page-public .date-pill.new-month { margin-left: 10px; }
@@ -648,7 +649,7 @@
 }
 .pub-group > fieldset { display: flex; flex-direction: column; gap: 12px; }
 .group-head { display: flex; align-items: center; gap: 10px; margin: 0; padding: 0; }
-.group-head h2, .group-head h3, legend.group-head > span {
+.group-head h2, .group-head h3, legend.group-head > span:not(.group-ring) {
   margin: 0;
   font-size: 1.06rem;
   font-weight: 800;

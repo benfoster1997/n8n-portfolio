@@ -93,6 +93,8 @@
 }
 .appt-price { color: var(--accent); font-weight: 750; font-variant-numeric: tabular-nums; }
 .appt-new { color: var(--ink); font-weight: 750; }
+/* on the client's own record the flag says nothing new (Visits already does) */
+.od-client .appt-new-flag { display: none; }
 .appt-chips {
   grid-area: chips;
   display: flex;
@@ -142,6 +144,8 @@
 .appt-row.is-off .appt-dot { border-radius: 3px; transform: rotate(45deg) scale(0.85); box-shadow: inset 0 0 0 2.5px var(--lilac), 0 0 0 3px var(--surface); }
 .appt-row.is-off .appt-chips { align-self: center; grid-row: 1 / 3; }
 .appt-row.is-off .appt-chips .btn { min-height: 36px; padding: 0 14px; }
+/* the Edit button spans both lines, so a long note wraps beside it rather than under it */
+@media (min-width: 360px) { .appt-row.is-off .appt-meta { grid-column: 3; } }
 
 /* dividers start at the text, so they never cross the rail */
 .card.tight > .list > li.appt-li + li.appt-li,
@@ -203,14 +207,14 @@
   letter-spacing: 0.01em;
 }
 .td-add {
-  margin-top: 10px;
-  width: 48px;
-  height: 48px;
+  margin-top: 4px;           /* centred on the 26px line of the other tabs' title bars */
+  width: 44px;
+  height: 44px;
   color: var(--accent-ink);
   background: var(--grad-accent);
   box-shadow: var(--glow), inset 0 1px 0 rgba(255, 255, 255, 0.22);
 }
-.td-add svg { width: 24px; height: 24px; stroke-width: 2.2; }
+.td-add svg { width: 22px; height: 22px; stroke-width: 2.2; }
 .td-add:active { background: var(--grad-accent); }
 @media (hover: hover) { .td-add:hover { background: var(--grad-accent); box-shadow: var(--glow-strong); } }
 
@@ -564,6 +568,8 @@
 }
 
 .dy-page .day-head { align-items: center; margin: 18px 4px 10px; }
+/* too narrow for both: the date stays whole and the pill or count drops under it */
+.rm-page .day-head, .dy-page .day-head { flex-wrap: wrap; row-gap: 4px; }
 .dy-page .day-head h2 { font-size: 1.08rem; }
 .dy-hours {
   flex: none;
@@ -580,6 +586,8 @@
   white-space: nowrap;
 }
 .dy-hours.is-closed { background: var(--surface-2); color: var(--muted); box-shadow: inset 0 0 0 1px var(--line); }
+/* blocked all day: the lilac of blocked time, not the green of open */
+.dy-hours.is-off { background: color-mix(in srgb, var(--lilac) 22%, var(--surface)); color: var(--muted); box-shadow: inset 0 0 0 1px var(--line); }
 .dy-day .empty { padding: 34px 16px; }
 
 .dy-sheet-intro { margin: -4px 0 0; color: var(--muted); font-size: 0.9rem; }
@@ -616,7 +624,7 @@
   box-shadow: 0 6px 14px -6px rgba(37, 211, 102, 0.8);
 }
 .rm-page .day-head { align-items: center; margin: 24px 4px 10px; }
-.rm-day-sub { font-size: 0.82rem; font-weight: 700; color: var(--muted); font-variant-numeric: tabular-nums; }
+.rm-day-sub { font-size: 0.82rem; font-weight: 700; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .rm-day-sub.has-due { color: var(--accent-text); }
 
 .rm-card .list > li.rm-item { padding: 14px 14px 13px 16px; transition: background-color 0.3s var(--ease); }

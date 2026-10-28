@@ -688,7 +688,13 @@
 .od-stat-tips .od-stat-ic { color: var(--pink); }
 .od-stat-refunds .od-stat-ic { color: var(--danger); background: var(--danger-soft); }
 .od-stats .stat .label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.od-stats .stat .value { overflow-wrap: anywhere; }
+.od-stats .stat .value { white-space: nowrap; }
+/* the small tiles: values in a row line up at the bottom, even when one label wraps */
+.od-stats .stat:not(.od-stat-total) { display: flex; flex-direction: column; justify-content: space-between; }
+/* long figures (pence, thousands): a smaller size and no icons, so a number is never split */
+.od-stats-long .od-stat-ic { display: none; }
+.od-stats-long .stat:not(.od-stat-total) .value { font-size: 1.2rem; line-height: 32px; }
+.od-stats > .stat.od-stat-total .value.od-long { font-size: 2rem; }
 
 .od-export { margin-top: 12px; gap: 8px; }
 .od-tax-note {
@@ -1099,6 +1105,8 @@
 .od-pay .meta { text-wrap: balance; }
 .od-pay .od-meta-part { display: inline-block; }
 .od .sub, .od .field .hint, .od .list-row .meta, .od-set-card p, .od-hearts li, .od-panel > p { text-wrap: pretty; }
+/* the add-ons preview keeps the booking page's own balanced captions */
+.od-addons-preview .addons-intro, .od-addons-preview .addon-note--hand { text-wrap: balance; }
 /* new appointment, step 2: the step's heading already says "Treatment" (the label stays for screen readers) */
 .od-step-treatment > .od-step-head + .field > span:first-child {
   position: absolute;
@@ -1111,6 +1119,20 @@
 /* change-time sheet: Date and Minutes side by side, the same height */
 .od-move-row input { height: 52px; }
 .od-move-note { margin: 0; }
+/* change-time sheet: Save stays in view at the bottom while the free times scroll behind a soft fade.
+   Chromium sticks at the sheet's padding edge, so the negative offset (and margin) cancel the sheet's
+   bottom padding; the negative top margin cancels the stack gap, so at rest nothing moves. */
+.od-sheet-foot {
+  position: sticky;
+  bottom: calc(-22px - env(safe-area-inset-bottom));
+  z-index: 2;
+  margin: -14px -20px calc(-22px - env(safe-area-inset-bottom));
+  padding: 14px 20px calc(22px + env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: linear-gradient(to bottom, transparent, var(--bg) 14px);
+}
 
 /* settings text boxes grow to fit their words, so nothing scrolls inside them */
 @supports (field-sizing: content) {
@@ -1130,6 +1152,11 @@
   .od-contact > .btn { padding-left: 2px; padding-right: 2px; font-size: 0.8rem; }
   .od-actions-row > .btn { font-size: 0.86rem; padding: 0 4px; }
   .od-stats .stat .label { white-space: normal; letter-spacing: 0.1em; }
+  .od-stat-ic { display: none; }
+  .od-stat-row { min-height: 32px; }
+  .od-photos-head .section-title { white-space: nowrap; letter-spacing: 0.14em; margin: 0 2px; }
+  .od-photos-head .btn { padding-left: 12px; padding-right: 12px; }
+  .od-export { padding-left: 12px; padding-right: 12px; }
   .od-datetile { width: 56px; }
   .od-hero-main { gap: 12px; }
   .od-mini-stats dd { font-size: 0.94rem; }

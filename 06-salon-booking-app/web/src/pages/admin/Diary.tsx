@@ -31,6 +31,8 @@ export function Diary() {
   const cancelled = appts.filter((a) => a.status === 'cancelled');
   const off = (data?.off ?? []).filter((t) => t.starts_at < dayEnd && t.ends_at > dayStart);
   const hours = data?.hours.find((h) => h.weekday === isoWeekday(day));
+  // Blocked from start to end: the heading says so, rather than her usual opening hours.
+  const dayOff = off.some((t) => t.starts_at <= dayStart && t.ends_at >= dayEnd);
   const countFor = (d: string) => (data?.appts ?? []).filter((a) => a.status !== 'cancelled' && dateInZone(a.starts_at, tz) === d).length;
 
   // Blocked time and appointments in one line-up, in time order, so the rail reads down the day.
@@ -69,8 +71,8 @@ export function Diary() {
       </div>
       <div className="day-head dy-day-head">
         <h2>{fmtDayLong(day + 'T12:00:00Z', tz)}</h2>
-        <span className={`dy-hours${hours?.is_open ? '' : ' is-closed'}`}>
-          <BrandIcon name="clock" size={15} />{hours?.is_open ? `Open ${hours.open_time}–${hours.close_time}` : 'Closed'}
+        <span className={`dy-hours${dayOff ? ' is-off' : hours?.is_open ? '' : ' is-closed'}`}>
+          <BrandIcon name="clock" size={15} />{dayOff ? 'Day off' : hours?.is_open ? `Open ${hours.open_time}–${hours.close_time}` : 'Closed'}
         </span>
       </div>
       <ErrorBox error={error} />

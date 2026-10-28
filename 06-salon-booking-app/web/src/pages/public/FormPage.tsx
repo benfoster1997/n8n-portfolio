@@ -66,7 +66,7 @@ export function FormPage() {
         <p className="form-kicker">Consultation form</p>
         <p className="form-hello">Hi {data.first_name}<span className="visually-hidden"> —</span><Heart size={18} className="form-hello-heart" /></p>
         <p className="form-intro-text">
-          before your <b>{data.service_name}</b> on <b>{fmtDayLong(data.starts_at)} at {fmtTime(data.starts_at)}</b>, please
+          before your <b>{data.service_name}</b> on <b><span className="form-date">{fmtDayLong(data.starts_at)}</span> at {fmtTime(data.starts_at)}</b>, please
           answer a few quick questions so your treatment is safe for you.
         </p>
       </section>

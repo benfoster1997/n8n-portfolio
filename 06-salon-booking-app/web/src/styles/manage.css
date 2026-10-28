@@ -288,6 +288,8 @@
 .form-hello-heart { width: 0.55em; height: 0.55em; margin-left: 0.14em; vertical-align: 0.1em; transform: rotate(10deg); }
 .form-intro-text { margin: 0; font-size: 1rem; line-height: 1.6; color: var(--ink); text-wrap: pretty; }
 .form-intro-text::first-letter { text-transform: uppercase; }
+/* keep "Thursday 5 November" on one line */
+.form-date { white-space: nowrap; }
 
 .form-title { margin: 10px 0 -4px 2px; }
 .form-card { padding: 20px 18px 18px; }
@@ -330,6 +332,7 @@
 .form-thanks-heart { color: var(--pink); transform: translateY(1px) rotate(-6deg); }
 .form-thanks h1 { font-size: 2.5rem; }
 .form-thanks p { max-width: 30ch; margin: 4px auto 0; color: var(--ink); line-height: 1.6; text-wrap: balance; }
+.form-thanks p > b { white-space: nowrap; }
 
 /* short page: the lemon footer sits at the bottom of the screen */
 .form-done { min-height: 100vh; min-height: 100dvh; }

@@ -50,6 +50,9 @@ export function Money() {
   const labelSub = view === 'month' ? null : `6 Apr ${ty.from.slice(0, 4)} – 5 Apr ${ty.to.slice(0, 4)}`;
   // How the takings split between cash and bank transfer, for the little bar under the total.
   const cashShare = cash > 0 || bank > 0 ? Math.round((Math.max(cash, 0) / (Math.max(cash, 0) + Math.max(bank, 0))) * 100) : null;
+  // Long figures (pence, or thousands) get a smaller size and lose the tile icons, so a number never breaks in two.
+  const longStats = [cash, bank, tips, refunds].some((p) => money(p).length > 6);
+  const longTotal = money(total).length > 7;
 
   function exportCsv() {
     const lines = [['Date', 'Client', 'Description', 'Type', 'Paid by', 'Amount (£)', 'Note']];
@@ -80,11 +83,11 @@ export function Money() {
       <ErrorBox error={error} />
       {!current ? <Spinner /> : (
         <>
-          <div className="stat-grid od-stats">
+          <div className={`stat-grid od-stats${longStats ? ' od-stats-long' : ''}`}>
             <div className="stat od-stat-total" style={{ gridColumn: '1 / -1' }}>
               <LemonSlice size={92} className="od-stat-lemon" />
               <div className="label">Money received</div>
-              <div className="value">{money(total)}</div>
+              <div className={`value${longTotal ? ' od-long' : ''}`}>{money(total)}</div>
               {cashShare !== null && (
                 <div className="od-split" aria-hidden="true">
                   <span className="od-split-cash" style={{ width: `${cashShare}%` }} />
@@ -106,14 +109,20 @@ export function Money() {
             <div key={day} className="od-day">
               <div className="day-head"><h2>{fmt(`${day}T12:00:00Z`, 'EEE d MMM', tz)}</h2><span className="od-day-total">{money(list.reduce((n, p) => n + p.amount_pence, 0))}</span></div>
               <div className="card tight"><ul className="list">
-                {list.map((p) => (
+                {list.map((p) => {
+                  // Deposits and checkout tips are saved as "Deposit · BIAB new set": say the type once, not twice.
+                  const kind = KIND_LABEL[p.kind];
+                  const title = p.client_name || p.description || kind;
+                  const desc = p.client_name && p.description !== kind ? p.description : null;
+                  const kindSaid = [title, desc].some((t) => t === kind || !!t?.startsWith(`${kind} ·`));
+                  return (
                   <li key={p.id} className={`list-row od-pay${p.amount_pence < 0 ? ' od-pay-out' : ''}`}>
                     <span className={`od-ic small ${p.kind === 'refund' ? 'danger' : p.kind === 'tip' ? 'pink' : p.method === 'cash' ? 'lemon' : 'lilac'}`} aria-hidden="true">
                       {p.kind === 'refund' ? <Glyph name="refund" size={18} /> : p.kind === 'tip' ? <Heart size={16} /> : <Glyph name={p.method === 'cash' ? 'cash' : 'bank'} size={18} />}
                     </span>
                     <div className="grow">
-                      <div className="title">{p.client_name || p.description || KIND_LABEL[p.kind]}</div>
-                      <div className="meta"><MetaParts parts={[p.client_name ? p.description : null, KIND_LABEL[p.kind], METHOD_LABEL[p.method], p.note]} /></div>
+                      <div className="title">{title}</div>
+                      <div className="meta"><MetaParts parts={[desc, kindSaid ? null : kind, METHOD_LABEL[p.method], p.note]} /></div>
                     </div>
                     <strong className="od-amt">{money(p.amount_pence)}</strong>
                     <button className="icon-btn od-del" aria-label="Delete entry"
@@ -124,7 +133,8 @@ export function Money() {
                       <Icon name="trash" size={18} />
                     </button>
                   </li>
-                ))}
+                  );
+                })}
               </ul></div>
             </div>
           ))}
