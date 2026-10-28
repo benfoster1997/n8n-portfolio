@@ -36,10 +36,8 @@
 .sprig-bl { bottom: 0; left: 0; transform-origin: 0 100%; }
 .sprig-br { bottom: 0; right: 0; transform-origin: 100% 100%; }
 
-@media (prefers-color-scheme: dark) {
-  .sprig { filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.35)); }
-  .brand-art { filter: drop-shadow(0 2px 5px rgba(0, 0, 0, 0.3)); }
-}
+.sprig { filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.35)); }
+.brand-art { filter: drop-shadow(0 2px 5px rgba(0, 0, 0, 0.3)); }
 
 /* ---------- script heading over a brush swatch ---------- */
 .script-title {
@@ -68,9 +66,7 @@ h3.script-title { font-size: 1.65rem; }
   height: 1.1em;
   color: var(--brush, #f9c6d9); /* blush on light, a deep berry on plum */
 }
-@media (prefers-color-scheme: dark) {
-  .script-title .brush-dry { display: none; }
-}
+.script-title .brush-dry { display: none; }
 .script-title-heart {
   width: 0.48em;
   height: 0.48em;

@@ -16,20 +16,18 @@
   --od-wa-soft: #e3f7ea;
   --od-lemon-wash: color-mix(in srgb, var(--lemon-pale) 70%, transparent);
 }
-@media (prefers-color-scheme: dark) {
-  :root {
-    --od-lemon-bg: color-mix(in srgb, var(--lemon) 15%, var(--surface));
-    --od-lemon-ink: #f6d667;
-    --od-lemon-ring: color-mix(in srgb, var(--lemon) 35%, transparent);
-    --od-lilac-bg: color-mix(in srgb, #b9a1dc 20%, var(--surface));
-    --od-lilac-ink: #e0d2f5;
-    --od-lilac-ring: color-mix(in srgb, #b9a1dc 40%, transparent);
-    --od-pink-ring: color-mix(in srgb, var(--accent) 30%, transparent);
-    --od-leader: color-mix(in srgb, var(--line-strong) 80%, var(--accent) 20%);
-    --od-wa: #5fdc8f;
-    --od-wa-soft: color-mix(in srgb, #25d366 14%, var(--surface));
-    --od-lemon-wash: color-mix(in srgb, var(--lemon) 9%, transparent);
-  }
+:root {
+  --od-lemon-bg: color-mix(in srgb, var(--lemon) 15%, var(--surface));
+  --od-lemon-ink: #f6d667;
+  --od-lemon-ring: color-mix(in srgb, var(--lemon) 35%, transparent);
+  --od-lilac-bg: color-mix(in srgb, #b9a1dc 20%, var(--surface));
+  --od-lilac-ink: #e0d2f5;
+  --od-lilac-ring: color-mix(in srgb, #b9a1dc 40%, transparent);
+  --od-pink-ring: color-mix(in srgb, var(--accent) 30%, transparent);
+  --od-leader: color-mix(in srgb, var(--line-strong) 80%, var(--accent) 20%);
+  --od-wa: #5fdc8f;
+  --od-wa-soft: color-mix(in srgb, #25d366 14%, var(--surface));
+  --od-lemon-wash: color-mix(in srgb, var(--lemon) 9%, transparent);
 }
 
 /* ------------------------------------------------------------------ avatars */
@@ -58,9 +56,7 @@
 .od-tone-pink { --av-bg: var(--accent-soft); --av-ink: var(--accent-text); --av-ring: var(--od-pink-ring); }
 .od-tone-lemon { --av-bg: var(--od-lemon-bg); --av-ink: var(--od-lemon-ink); --av-ring: var(--od-lemon-ring); }
 .od-tone-lilac { --av-bg: var(--od-lilac-bg); --av-ink: var(--od-lilac-ink); --av-ring: var(--od-lilac-ring); }
-@media (prefers-color-scheme: dark) {
-  .od-avatar { background: radial-gradient(circle at 32% 26%, rgba(255, 255, 255, 0.1), transparent 58%), var(--av-bg); }
-}
+.od-avatar { background: radial-gradient(circle at 32% 26%, rgba(255, 255, 255, 0.1), transparent 58%), var(--av-bg); }
 
 /* ------------------------------------------------------------------ icon circles */
 .od-ic {

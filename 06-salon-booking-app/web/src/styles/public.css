@@ -974,15 +974,13 @@
 .pub-problem-body { text-align: left; }
 
 /* ---------- dark ("plum night") touches ---------- */
-@media (prefers-color-scheme: dark) {
-  .pub-sticky { box-shadow: 0 1px 0 rgba(255, 255, 255, 0.05) inset, 0 12px 30px -8px rgba(0, 0, 0, 0.6); }
-  .ticket-perf::before, .ticket-perf::after { box-shadow: inset 0 0 0 1px var(--line), inset 0 2px 4px rgba(0, 0, 0, 0.3); }
-  .pub-deposit .group-ring, .deposit-card .group-ring { background: color-mix(in srgb, var(--lemon) 14%, var(--surface)); }
-  .celebrate-heart { filter: drop-shadow(0 10px 18px rgba(0, 0, 0, 0.45)); }
-  .compare > .compare-arrow { box-shadow: 0 0 0 4px var(--surface), var(--glow); }
-  /* a greyed slice reads as a dull disc on plum */
-  .ticket--muted .ticket-slice { display: none; }
-}
+.pub-sticky { box-shadow: 0 1px 0 rgba(255, 255, 255, 0.05) inset, 0 12px 30px -8px rgba(0, 0, 0, 0.6); }
+.ticket-perf::before, .ticket-perf::after { box-shadow: inset 0 0 0 1px var(--line), inset 0 2px 4px rgba(0, 0, 0, 0.3); }
+.pub-deposit .group-ring, .deposit-card .group-ring { background: color-mix(in srgb, var(--lemon) 14%, var(--surface)); }
+.celebrate-heart { filter: drop-shadow(0 10px 18px rgba(0, 0, 0, 0.45)); }
+.compare > .compare-arrow { box-shadow: 0 0 0 4px var(--surface), var(--glow); }
+/* a greyed slice reads as a dull disc on plum */
+.ticket--muted .ticket-slice { display: none; }
 
 /* small phones */
 @media (max-width: 360px) {

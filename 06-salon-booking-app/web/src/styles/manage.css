@@ -565,14 +565,12 @@
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .login-card { background: var(--surface); }
 }
-@media (prefers-color-scheme: dark) {
-  /* opaque in dark mode: under plum glass the slice and blossom turn muddy, so they tuck behind the card instead */
-  .login-card {
-    background: var(--surface);
-    -webkit-backdrop-filter: none;
-    backdrop-filter: none;
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 24px 50px -20px rgba(0, 0, 0, 0.7);
-  }
+/* opaque in dark mode: under plum glass the slice and blossom turn muddy, so they tuck behind the card instead */
+.login-card {
+  background: var(--surface);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 24px 50px -20px rgba(0, 0, 0, 0.7);
 }
 .login-title { font-size: 2.2rem; margin-left: 2px; }
 .login-private { margin: 2px 0 16px; text-wrap: balance; }

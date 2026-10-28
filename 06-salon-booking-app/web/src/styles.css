@@ -1,10 +1,15 @@
 /* ==========================================================================
-   "Lemon & Blush" base theme
+   "Lemon & Blush" base theme, shown in its dark "plum night" version
    Tokens, type, the watercolour page, and every shared component class.
+   The app is dark only (the owner's choice), whatever the phone is set to:
+   the light values come first and the dark ones after them always win. To
+   offer a light theme again, wrap the dark rules (the plum night tokens here
+   and the dark touches in brand.css and styles/*.css) back in
+   @media (prefers-color-scheme: dark).
    Brand motifs live in brand.css; page-specific styles in styles/*.css.
    ========================================================================== */
 
-/* ---------- tokens: light ("blush") ---------- */
+/* ---------- tokens: shared, and the light ("blush") base ---------- */
 :root {
   --font-sans: 'Nunito Variable', 'Nunito', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   --font-script: 'Satisfy', 'Snell Roundhand', cursive;
@@ -74,57 +79,55 @@
   color-scheme: light;
 }
 
-/* ---------- tokens: dark ("plum night") ---------- */
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #1a1020;
-    --surface: #26182c;
-    --surface-2: #1f1425;
-    --surface-3: #36203c;
-    --line: #3d2a45;
-    --line-strong: #5b3d63;
-    --ink: #f4e8ef;
-    --ink-strong: #fff6fa;
-    --muted: #bfa9c3;
-    --pink: #ff6fb0;
-    --accent: #ff8ac0;
-    --accent-2: #f46aa9;
-    --accent-ink: #2b0d1f;
-    --accent-soft: #4a2142;
-    --brush: #6a2a58;
-    --lilac: #8d76a6;
-    --ok: #7fd6aa;
-    --ok-soft: #173327;
-    --warn: #f5c56a;
-    --warn-soft: #3a2c14;
-    --danger: #ff9a93;
-    --danger-soft: #45191e;
-    --shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 1px 2px rgba(0, 0, 0, 0.35), 0 10px 28px rgba(5, 0, 8, 0.38);
-    --shadow-lift: 0 16px 40px rgba(5, 0, 8, 0.55);
-    --grad-accent: linear-gradient(135deg, #ffa6cc 0%, #ff86bd 55%, #f46aa9 100%);
+/* ---------- tokens: dark ("plum night"), always on ---------- */
+:root {
+  --bg: #1a1020;
+  --surface: #26182c;
+  --surface-2: #1f1425;
+  --surface-3: #36203c;
+  --line: #3d2a45;
+  --line-strong: #5b3d63;
+  --ink: #f4e8ef;
+  --ink-strong: #fff6fa;
+  --muted: #bfa9c3;
+  --pink: #ff6fb0;
+  --accent: #ff8ac0;
+  --accent-2: #f46aa9;
+  --accent-ink: #2b0d1f;
+  --accent-soft: #4a2142;
+  --brush: #6a2a58;
+  --lilac: #8d76a6;
+  --ok: #7fd6aa;
+  --ok-soft: #173327;
+  --warn: #f5c56a;
+  --warn-soft: #3a2c14;
+  --danger: #ff9a93;
+  --danger-soft: #45191e;
+  --shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 1px 2px rgba(0, 0, 0, 0.35), 0 10px 28px rgba(5, 0, 8, 0.38);
+  --shadow-lift: 0 16px 40px rgba(5, 0, 8, 0.55);
+  --grad-accent: linear-gradient(135deg, #ffa6cc 0%, #ff86bd 55%, #f46aa9 100%);
 
-    --accent-text: #ffa3cd;
-    --ok-ink: #0d2a1c;
-    --danger-ink: #2a0a0a;
-    --glow: 0 8px 20px -6px rgba(255, 120, 185, 0.42), 0 2px 5px rgba(0, 0, 0, 0.3);
-    --glow-strong: 0 12px 28px -8px rgba(255, 120, 185, 0.5), 0 3px 8px rgba(0, 0, 0, 0.3);
-    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3), 0 3px 10px rgba(5, 0, 8, 0.25);
-    --ring: 0 0 0 4px rgba(255, 138, 192, 0.22);
-    --frost: rgba(44, 28, 51, 0.82);
-    --field-line: #694872;
-    --check-line: #c76b9b;
-    --seg-on: #3a2442;
-    --attention: color-mix(in srgb, #f6d23c 8%, var(--surface));
-    --backdrop: rgba(8, 2, 12, 0.6);
-    --wash-1: rgba(214, 21, 111, 0.2);
-    --wash-2: rgba(246, 210, 60, 0.07);
-    --wash-3: rgba(140, 100, 200, 0.2);
-    --wash-4: rgba(194, 24, 91, 0.14);
-    --grain-opacity: 0.35;
-    --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ff8ac0' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6.5 9.5l5.5 5.5 5.5-5.5'/%3E%3C/svg%3E");
-    --search-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ff8ac0' stroke-width='2' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='6.5'/%3E%3Cpath d='M16 16l4.5 4.5'/%3E%3C/svg%3E");
-    color-scheme: dark;
-  }
+  --accent-text: #ffa3cd;
+  --ok-ink: #0d2a1c;
+  --danger-ink: #2a0a0a;
+  --glow: 0 8px 20px -6px rgba(255, 120, 185, 0.42), 0 2px 5px rgba(0, 0, 0, 0.3);
+  --glow-strong: 0 12px 28px -8px rgba(255, 120, 185, 0.5), 0 3px 8px rgba(0, 0, 0, 0.3);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3), 0 3px 10px rgba(5, 0, 8, 0.25);
+  --ring: 0 0 0 4px rgba(255, 138, 192, 0.22);
+  --frost: rgba(44, 28, 51, 0.82);
+  --field-line: #694872;
+  --check-line: #c76b9b;
+  --seg-on: #3a2442;
+  --attention: color-mix(in srgb, #f6d23c 8%, var(--surface));
+  --backdrop: rgba(8, 2, 12, 0.6);
+  --wash-1: rgba(214, 21, 111, 0.2);
+  --wash-2: rgba(246, 210, 60, 0.07);
+  --wash-3: rgba(140, 100, 200, 0.2);
+  --wash-4: rgba(194, 24, 91, 0.14);
+  --grain-opacity: 0.35;
+  --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ff8ac0' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6.5 9.5l5.5 5.5 5.5-5.5'/%3E%3C/svg%3E");
+  --search-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ff8ac0' stroke-width='2' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='6.5'/%3E%3Cpath d='M16 16l4.5 4.5'/%3E%3C/svg%3E");
+  color-scheme: dark;
 }
 
 /* ---------- base ---------- */
@@ -963,9 +966,7 @@ input[type='checkbox'][disabled] { opacity: 0.5; cursor: default; }
   padding: calc(env(safe-area-inset-top) + 6px) 12px 6px;
   font-weight: 750;
 }
-@media (prefers-color-scheme: dark) {
-  .demo-banner { background: var(--surface-3); }
-}
+.demo-banner { background: var(--surface-3); }
 .demo-banner + .page { padding-top: 16px; }
 .spinner {
   width: 32px;

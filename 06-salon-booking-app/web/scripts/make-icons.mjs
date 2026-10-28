@@ -1,5 +1,5 @@
 // Renders the home-screen icons from one SVG: a pink polish bottle with a heart and a
-// gold cap, in front of a lemon slice and leaves, on a blush background. The art matches
+// gold cap, in front of a lemon slice and leaves, on the app's plum night background. The art matches
 // the illustrations in src/components/brand.tsx (drawn bold so it reads at 60px).
 //   npm run icons
 import sharp from 'sharp';
@@ -85,10 +85,10 @@ const svg = (pad) => Buffer.from(`
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
   <defs>
     <radialGradient id="bg" cx="0.3" cy="0.22" r="0.95">
-      <stop offset="0" stop-color="#fff6f9"/><stop offset="0.55" stop-color="#fcdbe7"/><stop offset="1" stop-color="#f5bcd2"/>
+      <stop offset="0" stop-color="#4a2a4f"/><stop offset="0.55" stop-color="#2c1a31"/><stop offset="1" stop-color="#1a1020"/>
     </radialGradient>
     <radialGradient id="wash" cx="0.82" cy="0.86" r="0.5">
-      <stop offset="0" stop-color="#fff1b0" stop-opacity=".75"/><stop offset="1" stop-color="#fff1b0" stop-opacity="0"/>
+      <stop offset="0" stop-color="#d6156f" stop-opacity=".35"/><stop offset="1" stop-color="#d6156f" stop-opacity="0"/>
     </radialGradient>
     <linearGradient id="lf1" x1="0" y1="1" x2=".25" y2="0"><stop offset="0" stop-color="#4c8636"/><stop offset=".5" stop-color="#7db35a"/><stop offset="1" stop-color="#a9d184"/></linearGradient>
     <linearGradient id="lf2" x1="0" y1="1" x2=".2" y2="0"><stop offset="0" stop-color="#2c5b22"/><stop offset=".55" stop-color="#4e8b3a"/><stop offset="1" stop-color="#64a046"/></linearGradient>

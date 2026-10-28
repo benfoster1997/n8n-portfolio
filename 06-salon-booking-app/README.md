@@ -73,12 +73,12 @@ no card processor, no SMS and no paid WhatsApp.
 - **Tax records survive client deletion.** Deleting a client (the right to erasure) removes their
   details, forms, patch tests and photos, but keeps a name on payments already received, because
   HMRC requires five years of records.
-- **It looks like her brand, not a template.** The design follows her printed price list: blush
-  pink, hand-drawn lemons and blossoms, a script name over a brush stroke, dotted leaders to pink
-  prices. Fonts and illustrations are bundled with the app (no font or image requests to other
-  sites), and there is a dark mode. Her tagline, strapline, nail-art and extras menu, safety note
-  and social links are settings (Settings → Booking page), not code, so the public repo holds only
-  invented demo text.
+- **It looks like her brand, not a template.** The design follows her printed price list:
+  hand-drawn lemons and blossoms, a script name over a brush stroke, dotted leaders to pink
+  prices. She wanted it dark, so every screen uses a plum "night" theme whatever the phone is set
+  to. Fonts and illustrations are bundled with the app (no font or image requests to other sites).
+  Her tagline, strapline, nail-art and extras menu, safety note and social links are settings
+  (Settings → Booking page), not code, so the public repo holds only invented demo text.
 
 ## Running it locally
 
