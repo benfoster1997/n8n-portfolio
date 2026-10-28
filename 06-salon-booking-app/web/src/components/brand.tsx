@@ -546,7 +546,7 @@ export function PolishBottle({ size = 72, className, style, tilt = 12 }: ArtProp
 
 /* --------------------------------------------------------------- icons */
 
-export type BrandIconName = 'shield-heart' | 'pin' | 'instagram' | 'tiktok' | 'facebook' | 'sparkle' | 'clock' | 'gift';
+export type BrandIconName = 'shield-heart' | 'pin' | 'instagram' | 'facebook' | 'sparkle' | 'clock' | 'gift';
 
 const ICONS: Record<BrandIconName, ReactNode> = {
   'shield-heart': (
@@ -566,12 +566,6 @@ const ICONS: Record<BrandIconName, ReactNode> = {
       <rect x="3.6" y="3.6" width="16.8" height="16.8" rx="5" />
       <circle cx="12" cy="12" r="3.9" />
       <circle cx="16.9" cy="7.1" r=".6" fill="currentColor" />
-    </>
-  ),
-  tiktok: (
-    <>
-      <path d="M13.6 3.6v11.6a3.7 3.7 0 1 1-3.7-3.7" />
-      <path d="M13.6 3.6c.4 2.8 2.3 4.6 5 4.9" />
     </>
   ),
   facebook: (
@@ -822,7 +816,6 @@ export function Badge({ icon, title, children, className, titleAs = 'h3' }: {
 
 const SOCIAL = {
   instagram: { label: 'Instagram', url: (h: string) => `https://www.instagram.com/${h}/` },
-  tiktok: { label: 'TikTok', url: (h: string) => `https://www.tiktok.com/@${h}` },
   facebook: { label: 'Facebook', url: (h: string) => `https://www.facebook.com/${h}` },
 } as const;
 type Handle = string | null | undefined;
@@ -831,12 +824,12 @@ type Handle = string | null | undefined;
  * Pink circle links with the "@handle"; renders nothing when no handle is set.
  * When every network shares one handle it is written once, after the icons.
  */
-export function Socials({ instagram, tiktok, facebook, className }: {
-  instagram?: Handle; tiktok?: Handle; facebook?: Handle; className?: string;
+export function Socials({ instagram, facebook, className }: {
+  instagram?: Handle; facebook?: Handle; className?: string;
 }) {
   const clean = (h: Handle) => (h ?? '').trim().replace(/^@/, '');
   const links = (Object.keys(SOCIAL) as (keyof typeof SOCIAL)[])
-    .map((k) => ({ k, h: clean({ instagram, tiktok, facebook }[k]) }))
+    .map((k) => ({ k, h: clean({ instagram, facebook }[k]) }))
     .filter((l) => l.h);
   if (!links.length) return null;
   const shared = links.every((l) => l.h.toLowerCase() === links[0].h.toLowerCase());
@@ -862,16 +855,16 @@ export function Socials({ instagram, tiktok, facebook, className }: {
 
 /** Socials, a handwritten thank-you, and lemon slices in the bottom corners. */
 export function BrandFooter({
-  instagram, tiktok, facebook, note = 'Thank you for supporting a small business', className, children,
+  instagram, facebook, note = 'Thank you for supporting a small business', className, children,
 }: {
-  instagram?: Handle; tiktok?: Handle; facebook?: Handle; note?: ReactNode; className?: string; children?: ReactNode;
+  instagram?: Handle; facebook?: Handle; note?: ReactNode; className?: string; children?: ReactNode;
 }) {
   return (
     <footer className={cx('brand-footer', className)}>
       <Sprig corner="bl" variant="slice" size={150} className="brand-footer-sprig" />
       <Sprig corner="br" variant="slice" size={150} className="brand-footer-sprig" />
       <div className="brand-footer-body">
-        <Socials instagram={instagram} tiktok={tiktok} facebook={facebook} />
+        <Socials instagram={instagram} facebook={facebook} />
         {note && (
           <p className="brand-footer-note">
             {note}<Heart className="brand-footer-heart" size={18} />

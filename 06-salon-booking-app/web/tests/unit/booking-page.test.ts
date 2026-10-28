@@ -70,7 +70,6 @@ describe('social handles', () => {
     expect(cleanHandle('https://www.instagram.com/your.nail_studio/?hl=en')).toBe('your.nail_studio');
     expect(cleanHandle('instagram.com/yournailstudio')).toBe('yournailstudio');
     expect(cleanHandle('http://instagr.am/yournailstudio')).toBe('yournailstudio');
-    expect(cleanHandle('https://www.tiktok.com/@yournailstudio?lang=en')).toBe('yournailstudio');
     expect(cleanHandle('https://m.facebook.com/YourNailStudio/')).toBe('YourNailStudio');
     expect(cleanHandle('https://www.facebook.com/YourNailStudio/about#top')).toBe('YourNailStudio');
     expect(cleanHandle('fb.com/YourNailStudio')).toBe('YourNailStudio');
@@ -86,14 +85,13 @@ describe('social handles', () => {
     expect(checkHandle('instagram', '@your.nail_studio')).toEqual({ handle: 'your.nail_studio', error: null });
     expect(checkHandle('instagram', 'a')).toEqual({ handle: 'a', error: null });
     expect(checkHandle('instagram', 'a'.repeat(30)).handle).toBe('a'.repeat(30));
-    expect(checkHandle('tiktok', 'https://www.tiktok.com/@your.nails_')).toEqual({ handle: 'your.nails_', error: null });
     expect(checkHandle('facebook', 'https://www.facebook.com/Your.Nail.Studio')).toEqual({ handle: 'Your.Nail.Studio', error: null });
   });
 
   it('blank is fine: no link is shown', () => {
     expect(checkHandle('instagram', '')).toEqual({ handle: null, error: null });
     expect(checkHandle('facebook', '   ')).toEqual({ handle: null, error: null });
-    expect(checkHandle('tiktok', null)).toEqual({ handle: null, error: null });
+    expect(checkHandle('instagram', null)).toEqual({ handle: null, error: null });
   });
 
   it('refuses what the database refuses, with a friendly message', () => {
@@ -102,8 +100,6 @@ describe('social handles', () => {
       ['instagram', 'your nail studio'],
       ['instagram', 'your-nails'],
       ['instagram', '<script>'],
-      ['tiktok', 'a'],
-      ['tiktok', 'a'.repeat(25)],
       ['facebook', 'Nail'],
       ['facebook', 'Your_Nail_Studio'],
       ['facebook', 'https://www.facebook.com/profile.php?id=1000123'],
@@ -119,8 +115,8 @@ describe('social handles', () => {
   });
 
   it('notices a link to the wrong site', () => {
-    expect(checkHandle('tiktok', 'https://www.instagram.com/yournailstudio/')).toEqual({
-      handle: null, error: 'That’s a link to Instagram. Paste your TikTok link here, or just your handle.' });
+    expect(checkHandle('facebook', 'https://www.instagram.com/yournailstudio/')).toEqual({
+      handle: null, error: 'That’s a link to Instagram. Paste your Facebook link here, or just your handle.' });
     expect(checkHandle('instagram', 'facebook.com/YourNailStudio').error).toMatch(/link to Facebook/);
   });
 
@@ -130,7 +126,6 @@ describe('social handles', () => {
 
   it('builds each site’s profile link', () => {
     expect(socialLink('instagram', 'your.nails')).toBe('https://www.instagram.com/your.nails/');
-    expect(socialLink('tiktok', 'your.nails')).toBe('https://www.tiktok.com/@your.nails');
     expect(socialLink('facebook', 'YourNailStudio')).toBe('https://www.facebook.com/YourNailStudio');
   });
 });

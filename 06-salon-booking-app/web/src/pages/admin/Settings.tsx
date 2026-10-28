@@ -153,17 +153,16 @@ export function BusinessSettings() {
   );
 }
 
-type HandleKey = 'instagram_handle' | 'tiktok_handle' | 'facebook_handle';
+type HandleKey = 'instagram_handle' | 'facebook_handle';
 const SOCIAL_FIELDS: { site: SocialSite; key: HandleKey; label: string }[] = [
   { site: 'instagram', key: 'instagram_handle', label: 'Instagram' },
-  { site: 'tiktok', key: 'tiktok_handle', label: 'TikTok' },
   { site: 'facebook', key: 'facebook_handle', label: 'Facebook page' },
 ];
 
 const MENU_EXAMPLE = 'Nail art\nSimple nail art | 50p per nail\n> Lots of colours counts as detailed. Just ask!\nExtras\nChrome powder | £5';
 
 export function BookingPageSettings() {
-  const f = useSettingsForm(['tagline', 'strapline', 'extras_menu', 'safety_note', 'instagram_handle', 'tiktok_handle', 'facebook_handle']);
+  const f = useSettingsForm(['tagline', 'strapline', 'extras_menu', 'safety_note', 'instagram_handle', 'facebook_handle']);
   const d = f.draft;
   // A price typed without its "|" turns the line into a heading: say so before it goes live.
   const priceAsHeading = parseMenu(d.extras_menu).find((x) => x.title && /£\s?\d|\d\s?p\b/i.test(x.title))?.title;

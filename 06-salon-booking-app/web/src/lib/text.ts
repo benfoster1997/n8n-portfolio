@@ -197,17 +197,13 @@ export function parseMenu(text: string | null | undefined): MenuSection[] {
   return sections;
 }
 
-export type SocialSite = 'instagram' | 'tiktok' | 'facebook';
+export type SocialSite = 'instagram' | 'facebook';
 
-/** The same patterns as the checks on settings.instagram_handle, tiktok_handle and facebook_handle. */
+/** The same patterns as the checks on settings.instagram_handle and facebook_handle. */
 export const SOCIAL_SITES: Record<SocialSite, { label: string; pattern: RegExp; hosts: RegExp; problem: string }> = {
   instagram: {
     label: 'Instagram', pattern: /^[A-Za-z0-9._]{1,30}$/, hosts: /^(instagram\.com|instagr\.am)$/i,
     problem: 'Check your Instagram handle: just the name after the @, like yournailstudio (letters, numbers, dots and underscores, up to 30).',
-  },
-  tiktok: {
-    label: 'TikTok', pattern: /^[A-Za-z0-9._]{2,24}$/, hosts: /^tiktok\.com$/i,
-    problem: 'Check your TikTok handle: just the name after the @, like yournailstudio (letters, numbers, dots and underscores, 2 to 24).',
   },
   facebook: {
     label: 'Facebook', pattern: /^[A-Za-z0-9.]{5,50}$/, hosts: /^(facebook\.com|fb\.com|fb\.me)$/i,
@@ -217,7 +213,7 @@ export const SOCIAL_SITES: Record<SocialSite, { label: string; pattern: RegExp; 
 };
 
 // A pasted profile link: the site, then the path.
-const SOCIAL_LINK = /^(?:https?:\/\/)?(?:(?:www|m|mobile|web)\.)?(instagram\.com|instagr\.am|tiktok\.com|facebook\.com|fb\.com|fb\.me)(?=$|[/?#])(?:\/+([^?#\s]*))?/i;
+const SOCIAL_LINK = /^(?:https?:\/\/)?(?:(?:www|m|mobile|web)\.)?(instagram\.com|instagr\.am|facebook\.com|fb\.com|fb\.me)(?=$|[/?#])(?:\/+([^?#\s]*))?/i;
 // Paths that are pages of the site, not someone's handle.
 const NOT_A_HANDLE = /^(profile\.php|people|pages|pg|groups|share|sharer\.php|p|reel|reels|explore|stories|tv|video|watch|events)$/i;
 
@@ -232,7 +228,7 @@ function linkHandle(t: string): { site: SocialSite; handle: string | null } | nu
 
 /**
  * "@yournailstudio", "https://www.instagram.com/yournailstudio/?hl=en" or
- * "tiktok.com/@yournailstudio" → "yournailstudio". Blank → null. A link with no
+ * "facebook.com/yournailstudio" → "yournailstudio". Blank → null. A link with no
  * handle in it comes back as typed. Use checkHandle() to check the result too.
  */
 export function cleanHandle(input: string | null | undefined): string | null {
@@ -261,9 +257,7 @@ export function checkHandle(site: SocialSite, input: string | null | undefined):
 /** The public profile link for a checked handle. */
 export function socialLink(site: SocialSite, handle: string): string {
   const h = encodeURIComponent(handle);
-  return site === 'instagram' ? `https://www.instagram.com/${h}/`
-    : site === 'tiktok' ? `https://www.tiktok.com/@${h}`
-    : `https://www.facebook.com/${h}`;
+  return site === 'instagram' ? `https://www.instagram.com/${h}/` : `https://www.facebook.com/${h}`;
 }
 
 /** Turn rows into a CSV that Excel and Google Sheets open cleanly (UTF-8 with BOM). */

@@ -80,7 +80,6 @@ create table if not exists public.settings (
   safety_note            text check (length(safety_note) <= 300),
   -- Handles only (no @, no web address), so a link can only ever go to that site.
   instagram_handle       text check (instagram_handle ~ '^[A-Za-z0-9._]{1,30}$'),
-  tiktok_handle          text check (tiktok_handle ~ '^[A-Za-z0-9._]{2,24}$'),
   facebook_handle        text check (facebook_handle ~ '^[A-Za-z0-9.]{5,50}$'),
   -- sha256 (hex) of the secret the email sender presents. The secret itself is never stored.
   email_secret_hash      text check (email_secret_hash ~ '^[0-9a-f]{64}$'),
@@ -353,8 +352,6 @@ alter table public.settings add column if not exists extras_menu text check (len
 alter table public.settings add column if not exists safety_note text check (length(safety_note) <= 300);
 alter table public.settings add column if not exists instagram_handle text
   check (instagram_handle ~ '^[A-Za-z0-9._]{1,30}$');
-alter table public.settings add column if not exists tiktok_handle text
-  check (tiktok_handle ~ '^[A-Za-z0-9._]{2,24}$');
 alter table public.settings add column if not exists facebook_handle text
   check (facebook_handle ~ '^[A-Za-z0-9.]{5,50}$');
 alter table public.email_outbox drop constraint if exists email_outbox_kind_check;
@@ -535,7 +532,6 @@ returns jsonb language sql stable security definer set search_path = public as $
     'extras_menu',            s.extras_menu,
     'safety_note',            s.safety_note,
     'instagram_handle',       s.instagram_handle,
-    'tiktok_handle',          s.tiktok_handle,
     'facebook_handle',        s.facebook_handle,
     'hours', (select coalesce(jsonb_agg(jsonb_build_object(
                 'weekday', h.weekday, 'is_open', h.is_open,

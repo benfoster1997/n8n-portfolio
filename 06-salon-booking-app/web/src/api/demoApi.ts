@@ -87,7 +87,6 @@ function demoSettings(): Settings {
     extras_menu: DEMO_EXTRAS_MENU,
     safety_note: 'Tools are cleaned between every client, and I use PPE for all nail work.',
     instagram_handle: null,
-    tiktok_handle: null,
     facebook_handle: null,
     email_secret_hash: null,
     email_last_poll_at: null,
@@ -295,7 +294,7 @@ export function demoApi(): Api {
         deposit_amount_pence: s.deposit_amount_pence, deposit_deadline_hours: s.deposit_deadline_hours,
         booking_enabled: s.booking_enabled, legal_name: s.legal_name, contact_email: s.owner_email,
         tagline: s.tagline, strapline: s.strapline, extras_menu: s.extras_menu, safety_note: s.safety_note,
-        instagram_handle: s.instagram_handle, tiktok_handle: s.tiktok_handle, facebook_handle: s.facebook_handle,
+        instagram_handle: s.instagram_handle, facebook_handle: s.facebook_handle,
         hours: db.hours,
         services: db.services.filter((v) => v.is_active && v.online_bookable).sort((a, b) => a.sort_order - b.sort_order)
           .map(({ id, name, description, duration_min, price_pence }) => ({ id, name, description, duration_min, price_pence })),

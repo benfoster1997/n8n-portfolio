@@ -44,7 +44,6 @@ export interface Settings {
   extras_menu: string | null;
   safety_note: string | null;
   instagram_handle: string | null;
-  tiktok_handle: string | null;
   facebook_handle: string | null;
   email_secret_hash: string | null;
   email_last_poll_at: string | null;
@@ -229,7 +228,6 @@ export interface BookingPageText {
   /** Handles only, no @ or web address: [A-Za-z0-9._], 1–30 characters. */
   instagram_handle: string | null;
   /** [A-Za-z0-9._], 2–24 characters. */
-  tiktok_handle: string | null;
   /** The page's name in its web address: [A-Za-z0-9.], 5–50 characters. */
   facebook_handle: string | null;
 }

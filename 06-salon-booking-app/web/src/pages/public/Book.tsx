@@ -41,7 +41,7 @@ export function Book() {
           <p>Online booking is paused at the moment. Please get in touch directly to book.</p>
         </Badge>
         <InfoBadges safety={info.safety_note} />
-        <BrandFooter instagram={info.instagram_handle} tiktok={info.tiktok_handle} facebook={info.facebook_handle} />
+        <BrandFooter instagram={info.instagram_handle} facebook={info.facebook_handle} />
       </div>
       </>
     );
@@ -113,7 +113,7 @@ function BookingFlow({ info }: { info: BookingInfo }) {
   }
 
   const stepIndex = { service: 0, time: 1, details: 2, done: 3 }[step];
-  const socials = { instagram: info.instagram_handle, tiktok: info.tiktok_handle, facebook: info.facebook_handle };
+  const socials = { instagram: info.instagram_handle, facebook: info.facebook_handle };
 
   return (
     <>

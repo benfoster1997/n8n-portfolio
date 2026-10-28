@@ -125,7 +125,7 @@ Open the app and go to **Settings**:
      item, a line starting with `>` is a note, and any other line is a heading. A preview under the box
      shows how it will read. It's for information only: clients add these on the day, not online.
    - A **safety note** for the PPE and hygiene badge.
-   - Her **Instagram, TikTok and Facebook** names. She can type the handle or paste the link to her profile.
+   - Her **Instagram and Facebook** names. She can type the handle or paste the link to her profile.
    - **Preview booking page** shows the result once it's saved.
 3. **Opening hours**: the days and times clients can book, and any lunch break.
 4. **Treatments & prices**: add each service, with how long it really takes (including removal).

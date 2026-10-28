@@ -58,7 +58,7 @@ beforeEach(async () => {
       cancel_notice_hours = 48, client_self_service = true,
       cancellation_policy = '48 hours notice or the full price is payable',
       tagline = null, strapline = null, extras_menu = null, safety_note = null,
-      instagram_handle = null, tiktok_handle = null, facebook_handle = null,
+      instagram_handle = null, facebook_handle = null,
       email_secret_hash = '${createHash('sha256').update(SECRET).digest('hex')}'
      where id = 1;
     update public.opening_hours set is_open = true, open_time = '09:00', close_time = '18:00',
@@ -1836,7 +1836,6 @@ const PAGE_TEXT = {
   extras_menu: 'Nail art\nSimple nail art | 50p per nail\n> Just ask!\nExtras\nChrome powder | £5',
   safety_note: 'Tools are cleaned between every client.',
   instagram_handle: 'your.nail_studio',
-  tiktok_handle: 'your.nails',
   facebook_handle: 'YourNailStudio',
 };
 const PAGE_KEYS = Object.keys(PAGE_TEXT);
@@ -1869,7 +1868,6 @@ test('the booking page settings are checked: handles only, and the text kept sho
     ['instagram_handle', '@your.nails'], ['instagram_handle', 'https://instagram.com/your.nails'],
     ['instagram_handle', 'a'.repeat(31)], ['instagram_handle', ''], ['instagram_handle', 'your nails'],
     ['instagram_handle', 'your.nails\n'], ['instagram_handle', 'javascript:alert(1)'],
-    ['tiktok_handle', 'a'], ['tiktok_handle', 'a'.repeat(25)], ['tiktok_handle', '@your.nails'],
     ['facebook_handle', 'Nail'], ['facebook_handle', 'Your_Nail_Studio'], ['facebook_handle', 'a'.repeat(51)],
     ['facebook_handle', 'profile.php?id=1000123'],
     ['tagline', 'x'.repeat(121)], ['strapline', 'x'.repeat(81)], ['extras_menu', 'x'.repeat(2001)],
@@ -1881,9 +1879,9 @@ test('the booking page settings are checked: handles only, and the text kept sho
   // Right up to the limits is fine, and so is clearing them again.
   await setPageText({
     tagline: 'x'.repeat(120), strapline: 'x'.repeat(80), extras_menu: 'x'.repeat(2000), safety_note: 'x'.repeat(300),
-    instagram_handle: 'a', tiktok_handle: 'a'.repeat(24), facebook_handle: 'a.b.c',
+    instagram_handle: 'a', facebook_handle: 'a.b.c',
   });
-  await setPageText({ ...PAGE_TEXT, instagram_handle: 'a'.repeat(30), tiktok_handle: 'ab', facebook_handle: 'a'.repeat(50) });
+  await setPageText({ ...PAGE_TEXT, instagram_handle: 'a'.repeat(30), facebook_handle: 'a'.repeat(50) });
   await setPageText(Object.fromEntries(PAGE_KEYS.map((k) => [k, null])));
   const s = (await db.query(`select ${PAGE_KEYS.join(', ')} from public.settings`)).rows[0];
   assert.deepEqual(Object.values(s), PAGE_KEYS.map(() => null));

@@ -400,7 +400,7 @@ function ManageBooking({ m, token, reload, setData }: {
       )}
 
       <p className="sub centre">How your information is used: <Link to="/privacy">privacy notice</Link>.</p>
-      {mode === 'view' && <BrandFooter instagram={info.instagram_handle} tiktok={info.tiktok_handle} facebook={info.facebook_handle} />}
+      {mode === 'view' && <BrandFooter instagram={info.instagram_handle} facebook={info.facebook_handle} />}
     </div>
 
     {cancelling && (
