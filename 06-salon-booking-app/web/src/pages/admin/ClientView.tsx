@@ -126,7 +126,7 @@ export function ClientView() {
         {consented ? (
           <div className="od-consent">
             <span className="od-ic ok small" aria-hidden="true"><BrandIcon name="shield-heart" size={18} /></span>
-            <p className="sub">Consent to keep health information: {fmtDay(c.health_consent_at!, tz)}{c.health_consent_note ? ` · ${c.health_consent_note}` : ''}</p>
+            <p className="sub">Consent to keep health information: <span className="od-nowrap">{fmtDay(c.health_consent_at!, tz)}</span>{c.health_consent_note ? ` · ${c.health_consent_note}` : ''}</p>
           </div>
         ) : (
           <div className="notice warn">
@@ -141,11 +141,14 @@ export function ClientView() {
             <div className="btn-row"><button className="btn" onClick={() => setAllergies(null)}>Cancel</button><button className="btn primary" disabled={act.busy} onClick={saveAllergies}>Save</button></div>
           </>
         ) : consented && (
-          <div className="od-subhead">
-            <span className="od-ic small danger" aria-hidden="true"><Glyph name="alert" size={18} /></span>
-            <h3>Allergies</h3>
-            <button className="btn small" onClick={() => setAllergies(c.allergies ?? '')}>{c.allergies ? 'Edit allergies' : 'Add allergies'}</button>
-          </div>
+          <>
+            <div className="od-subhead">
+              <span className={`od-ic small ${c.allergies ? 'danger' : 'lilac'}`} aria-hidden="true"><Glyph name="alert" size={18} /></span>
+              <h3>Allergies</h3>
+              <button className="btn small" onClick={() => setAllergies(c.allergies ?? '')}>{c.allergies ? 'Edit allergies' : 'Add allergies'}</button>
+            </div>
+            <p className="sub od-none">{c.allergies ? 'Shown in the alert at the top of this page.' : 'No allergies recorded.'}</p>
+          </>
         )}
 
         <div className="od-subhead">

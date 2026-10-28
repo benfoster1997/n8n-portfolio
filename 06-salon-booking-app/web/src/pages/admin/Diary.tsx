@@ -103,7 +103,7 @@ export function Diary() {
       {cancelled.length > 0 && (
         <>
           <div className="section-title no-heart">Cancelled</div>
-          <div className="card tight dy-cancelled"><ul className="list">{cancelled.map((a) => <ApptRow key={a.id} a={a} tz={tz} />)}</ul></div>
+          <div className="card tight dy-cancelled"><ul className="list">{cancelled.map((a) => <ApptRow key={a.id} a={a} tz={tz} hideStatus />)}</ul></div>
         </>
       )}
       {blocking && <BlockTimeSheet day={day} tz={tz} onClose={() => setBlocking(false)} onSaved={() => { setBlocking(false); reload(); }} />}

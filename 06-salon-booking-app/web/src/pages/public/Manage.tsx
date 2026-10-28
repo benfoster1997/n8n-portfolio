@@ -404,11 +404,11 @@ function ManageBooking({ m, token, reload, setData }: {
     </div>
 
     {cancelling && (
-      <Sheet title="Cancel your appointment?" onClose={closeCancel}>
+      <Sheet title="Cancel your appointment?" onClose={closeCancel} closeButton={false}>
         <div className="stack cancel-sheet">
           <div className="cancel-summary">
             <DateTile iso={b.starts_at} tz={tz} />
-            <p>{b.service_name} on {when(b.starts_at)}.</p>
+            <p><b className="cancel-what">{b.service_name}</b><span className="visually-hidden"> on </span><span className="cancel-when">{when(b.starts_at)}</span></p>
           </div>
           {late && (
             <div className="notice warn" role="note">

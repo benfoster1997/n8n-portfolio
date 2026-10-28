@@ -105,6 +105,13 @@
   padding: 14px 18px 18px 16px;
 }
 .card.policy.policy-card::after { top: auto; bottom: 12px; right: 14px; width: 14px; height: 14px; opacity: 0.55; }
+/* the late version sits beside the deposit card, so it takes the same lemon-tinted fill
+   (in dark mode --warn-soft is a muddy olive on plum) */
+.card.policy.policy-card.late {
+  background:
+    linear-gradient(90deg, var(--lemon), var(--lemon-deep)) top / 100% 4px no-repeat,
+    var(--attention);
+}
 .policy-ring {
   flex: none;
   display: grid;
@@ -306,7 +313,15 @@
   padding-top: 12px;
   border-top: 1px dashed var(--line-strong);
 }
-.addon-card--bottle .addon-foot { min-height: 92px; padding-right: 92px; }
+.addon-card--bottle .addon-foot {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: 12px;
+  align-items: end;
+}
+/* the rules run the full width; only the last note shares its row with the bottle */
+.addon-card--bottle .addon-note { grid-column: 1 / -1; }
+.addon-card--bottle .addon-note:last-of-type { grid-column: 1; }
 .addon-note { margin: 0; text-wrap: pretty; }
 /* the rules (what counts as advanced, and so on) are read exactly, so they're plain type */
 .addon-note--plain {
@@ -344,6 +359,7 @@
 .addon-note + .addon-note { margin-top: 8px; }
 .addon-note--plain + .addon-note--hand { margin-top: 12px; }
 .addon-bottle { position: absolute; right: -6px; bottom: -8px; pointer-events: none; }
+.addon-card--bottle .addon-bottle { position: static; grid-column: 2; margin: 0 -6px -8px 0; }
 .addon-heart { position: absolute; top: 18px; right: 16px; opacity: 0.6; transform: rotate(10deg); }
 
 .info-badges { display: grid; gap: 12px; }
@@ -880,7 +896,7 @@
   border-radius: 16px;
   background:
     linear-gradient(90deg, var(--lemon), var(--lemon-deep)) left / 4px 100% no-repeat,
-    var(--warn-soft);
+    var(--attention);
 }
 .cancelled-note b { color: var(--danger); }
 
@@ -917,7 +933,10 @@
   border-radius: 16px;
   box-shadow: var(--shadow-sm);
 }
-.cancel-summary p { margin: 0; font-weight: 650; color: var(--ink-strong); line-height: 1.45; }
+.cancel-summary p { margin: 0; display: flex; flex-direction: column; gap: 2px; min-width: 0; font-weight: 400; }
+/* the treatment being cancelled leads, as on the ticket */
+.cancel-what { font-size: 1.06rem; font-weight: 800; line-height: 1.3; color: var(--ink-strong); overflow-wrap: anywhere; }
+.cancel-when { font-weight: 650; color: var(--ink); line-height: 1.4; text-wrap: pretty; }
 
 /* ---------- loading and problem pages ---------- */
 .pub-loading {
@@ -974,7 +993,6 @@
   .ticket-slice { top: -36px; right: -36px; }
   .ticket-main { gap: 12px; padding-right: 30px; }
   .date-tile { width: 52px; }
-  .addon-card--bottle .addon-foot { padding-right: 78px; }
   .addon-bottle { width: 64px; height: 80px; }
   .pub-done-title { font-size: 2rem; }
 }
@@ -995,7 +1013,15 @@
 .pub-next li > span,
 .deposit-card p,
 .cancelled-note,
+.ticket-when,
 .manage .notice { text-wrap: pretty; }
+/* a treatment name is a title: balanced, so it breaks as "Gel polish" / "— hands"
+   (pretty leaves a last word alone when it is over a third of the line) */
+.ticket-title,
+.cancel-what { text-wrap: balance; }
 /* a deadline or a date stays on one line */
 .deposit-card p > b,
 .policy-body p > b { white-space: nowrap; }
+/* a footer link moves to the next line whole ("privacy notice"), not split in two */
+.book > p.sub.centre a,
+.manage > p.sub.centre a { white-space: nowrap; }

@@ -378,7 +378,9 @@
   font-weight: 800;
   font-variant-numeric: tabular-nums;
 }
-.td-wa { margin-bottom: 10px; }
+/* the WhatsApp reminders button: its own block above the day lists, as it covers more than tomorrow */
+.td-wa { margin: 24px 0 0; }
+.td-wa-note { margin: 6px 0 0; text-align: center; font-size: 0.8rem; color: var(--muted); }
 
 /* changed by clients: icon | sentence and when | chevron, with a "Late" chip under the
    text so it never takes a column of its own */

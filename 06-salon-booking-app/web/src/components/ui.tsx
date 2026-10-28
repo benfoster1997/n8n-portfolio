@@ -26,6 +26,7 @@ const paths: Record<string, ReactNode> = {
   search: <><circle cx="11" cy="11" r="6.5" /><path d="M16 16l4.5 4.5" /></>,
   link: <><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1" /><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1" /></>,
   trash: <><path d="M4 7h16M9.5 7V4.5h5V7M6.5 7l1 13h9l1-13" /></>,
+  close: <path d="M6 6l12 12M18 6L6 18" />,
 };
 
 export function Icon({ name, size = 24, title }: { name: keyof typeof paths | string; size?: number; title?: string }) {
@@ -97,7 +98,11 @@ const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]):not([t
  * VoiceOver users don't wander behind the backdrop; Escape closes it, and focus then goes
  * back to whatever opened it.
  */
-export function Sheet({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
+export function Sheet({ title, onClose, children, closeButton = true }: {
+  title: string; onClose: () => void; children: ReactNode;
+  /** A round Close (X) button beside the title; turn it off where the sheet already has its own way out. */
+  closeButton?: boolean;
+}) {
   const box = useRef<HTMLDivElement>(null);
   const titleId = useId();
   // The latest onClose, so a new function each render doesn't re-run the effect (and move focus again).
@@ -136,7 +141,14 @@ export function Sheet({ title, onClose, children }: { title: string; onClose: ()
       <div ref={box} className="sheet" role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1}
         onClick={(e) => e.stopPropagation()}>
         <div className="grabber" />
-        <h2 id={titleId}>{title}</h2>
+        <div className="sheet-head">
+          <h2 id={titleId}>{title}</h2>
+          {closeButton && (
+            <button type="button" className="icon-btn sheet-close" aria-label="Close" onClick={onClose}>
+              <Icon name="close" size={20} />
+            </button>
+          )}
+        </div>
         {children}
       </div>
     </div>

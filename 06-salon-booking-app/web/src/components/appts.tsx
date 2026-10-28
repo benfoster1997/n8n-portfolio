@@ -2,7 +2,7 @@ import { Link } from 'react-router-dom';
 import type { Appointment, ClientChange, Settings } from '../lib/types';
 import { fmtDayTime, fmtTime, minutesLabel } from '../lib/time';
 import { fillTemplate, money, templateFor, whatsappLink } from '../lib/text';
-import { Icon, LateChip, StatusChip } from './ui';
+import { Icon, LateChip, StatusChip, statusLabel } from './ui';
 
 /** Where an appointment sits against the clock, for the timeline dot: done, happening now, or still to come. */
 export function apptPhase(a: Pick<Appointment, 'status' | 'starts_at' | 'ends_at'>, now = Date.now()): 'cancelled' | 'past' | 'now' | 'future' {
@@ -15,13 +15,20 @@ export function apptPhase(a: Pick<Appointment, 'status' | 'starts_at' | 'ends_at
  * One appointment as a timeline row: the time in bold figures, a dot on a thin pink rail
  * (the rail joins up through a list), the client, treatment and price, and the status.
  */
-export function ApptRow({ a, tz, showDate }: { a: Appointment; tz: string; showDate?: (iso: string) => string }) {
-  const overdue = a.status === 'pending_deposit' && a.deposit_due_at && new Date(a.deposit_due_at) < new Date();
+export function ApptRow({ a, tz, showDate, hideStatus }: {
+  a: Appointment; tz: string; showDate?: (iso: string) => string;
+  /** Under a heading that already says the status (the diary's "Cancelled"): no status chip, only the extra flags. */
+  hideStatus?: boolean;
+}) {
+  const overdue = !!(a.status === 'pending_deposit' && a.deposit_due_at && new Date(a.deposit_due_at) < new Date());
   const phase = apptPhase(a);
   const lateCancel = a.status === 'cancelled' && a.cancelled_late;
+  const chipCount = (hideStatus ? 0 : 1) + (overdue ? 1 : 0) + (lateCancel ? 1 : 0);
+  // With the chip left out, screen readers still hear the status as part of the link.
+  const quietStatus = hideStatus && <span className="visually-hidden">{statusLabel(a.status)}</span>;
   return (
     <li className="appt-li">
-      <Link className={`list-row appt-row is-${phase} st-${a.status}${overdue || lateCancel ? ' two-chips' : ''}`} to={`/appointments/${a.id}`}>
+      <Link className={`list-row appt-row is-${phase} st-${a.status}${chipCount > 1 ? ' two-chips' : ''}`} to={`/appointments/${a.id}`}>
         <div className="appt-time">
           <span className="appt-clock">{fmtTime(a.starts_at, tz)}</span>
           <small title={minutesLabel(a.duration_min)}>{showDate ? showDate(a.starts_at) : `to ${fmtTime(a.ends_at, tz)}`}</small>
@@ -35,11 +42,14 @@ export function ApptRow({ a, tz, showDate }: { a: Appointment; tz: string; showD
           {a.is_new_client && <>{'\u00a0· '}<span className="appt-new">New</span></>}
           {a.is_new_client && !a.has_form && a.status !== 'completed' && a.status !== 'cancelled' && <span className="flag">{'\u00a0· No\u00a0form'}</span>}
         </div>
-        <div className="appt-chips">
-          <StatusChip status={a.status} />
-          {overdue && <span className="chip danger">Overdue</span>}
-          {lateCancel && <LateChip>Late cancel</LateChip>}
-        </div>
+        {chipCount > 0 ? (
+          <div className="appt-chips">
+            {quietStatus}
+            {!hideStatus && <StatusChip status={a.status} />}
+            {overdue && <span className="chip danger">Overdue</span>}
+            {lateCancel && <LateChip>Late cancel</LateChip>}
+          </div>
+        ) : quietStatus}
         <span className="chev"><Icon name="chev" size={18} /></span>
       </Link>
     </li>

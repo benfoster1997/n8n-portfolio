@@ -7,7 +7,7 @@ import { useOwner } from '../../components/owner';
 import { ErrorBox, Icon, LateChip, Spinner, useLoad, useToast } from '../../components/ui';
 import { addDays, fmt, fmtDay, fmtDayLong, fmtDayTime, fmtTime, startOfDayInstant, todayInZone, dateInZone } from '../../lib/time';
 import { money } from '../../lib/text';
-import { dueWhatsAppReminders, lateCharge, reminderDays } from '../../lib/reminders';
+import { dueWhatsAppReminders, lateCharge, reminderDates, reminderDays } from '../../lib/reminders';
 import type { ClientChange } from '../../lib/types';
 
 /** Small line pictures for the "needs attention" headers and client changes (decorative). */
@@ -68,6 +68,11 @@ export function Today() {
   const noForm = appts.filter((a) => a.is_new_client && !a.has_form && (a.status === 'confirmed' || a.status === 'pending_deposit')
     && new Date(a.starts_at) < new Date(Date.now() + 14 * 86400e3));
   const remindersToSend = dueWhatsAppReminders(appts, s);
+  // The reminder days run past tomorrow (72 hours = the next 3 days), so say which days the button covers.
+  const remindOn = reminderDates(s);
+  const lastReminderDay = remindOn[remindOn.length - 1]!;
+  const reminderSpan = remindOn.length === 1 ? 'For tomorrow’s appointments'
+    : `For the next ${remindOn.length} days, to ${fmtDay(lastReminderDay + 'T12:00:00Z', tz)}`;
   const changes = data?.changes ?? [];
   // Late cancellations (online, or ones she marked late after a call or WhatsApp) stay here
   // until what's owed is recorded in Money, even once the appointment's day has gone.
@@ -191,6 +196,15 @@ export function Today() {
             </div>
           )}
 
+          {remindersToSend.length > 0 && (
+            <>
+              <Link className="btn wa block td-wa" to="/reminders">
+                <Icon name="whatsapp" size={20} /> Send {remindersToSend.length} WhatsApp reminder{remindersToSend.length === 1 ? '' : 's'}
+              </Link>
+              <p className="td-wa-note">{reminderSpan}</p>
+            </>
+          )}
+
           <div className="day-head td-day-head">
             <h2>Today’s appointments</h2>
             {todays.length > 0 && <span className="td-count">{todays.length} booked</span>}
@@ -204,11 +218,6 @@ export function Today() {
             <h2>Tomorrow</h2>
             <span className="td-count">{tomorrow.length} booked</span>
           </div>
-          {remindersToSend.length > 0 && (
-            <Link className="btn wa block td-wa" to="/reminders">
-              <Icon name="whatsapp" size={20} /> Send {remindersToSend.length} WhatsApp reminder{remindersToSend.length === 1 ? '' : 's'}
-            </Link>
-          )}
           <div className="card tight td-timeline">
             {tomorrow.length ? <ul className="list">{tomorrow.map((a) => <ApptRow key={a.id} a={a} tz={tz} />)}</ul>
               : <div className="empty">Nothing booked tomorrow.</div>}

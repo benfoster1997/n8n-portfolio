@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
-import { NavLink, Outlet } from 'react-router-dom';
+import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { api } from '../api';
 import type { Session, Settings } from '../lib/types';
 import { Icon, Spinner } from './ui';
@@ -128,14 +128,22 @@ const TABS = [
   { to: '/settings', label: 'Settings', icon: 'settings', end: false },
 ];
 
+/** Pages with no tab of their own keep the tab they're opened from lit: appointments under Diary, reminders under Today. */
+function parentTab(pathname: string): string | null {
+  if (pathname.startsWith('/appointments')) return '/diary';
+  if (pathname.startsWith('/reminders')) return '/';
+  return null;
+}
+
 export function AdminLayout() {
+  const parent = parentTab(useLocation().pathname);
   return (
     <div className="app">
       {api.mode === 'demo' && <div className="demo-banner">Demo — invented data, saved only in this browser</div>}
       <Outlet />
       <nav className="tabbar" aria-label="Main">
         {TABS.map((t) => (
-          <NavLink key={t.to} to={t.to} end={t.end} className={({ isActive }) => (isActive ? 'active' : '')}>
+          <NavLink key={t.to} to={t.to} end={t.end} className={({ isActive }) => (isActive || t.to === parent ? 'active' : '')}>
             <Icon name={t.icon} />
             <span className="tab-label">{t.label}</span>
           </NavLink>

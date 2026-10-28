@@ -67,7 +67,7 @@ export function Money() {
 
   return (
     <div className="page od od-money">
-      <TopBar title="Money" right={<button className="icon-btn" aria-label="Add income or refund" onClick={() => setAdding(true)}><Icon name="plus" /></button>} />
+      <TopBar title="Money" right={<button className="icon-btn od-top-add" aria-label="Add income or refund" onClick={() => setAdding(true)}><Icon name="plus" /></button>} />
       <Seg label="Period" value={view} onChange={setView} options={[{ value: 'month', label: 'Month' }, { value: 'year', label: 'Tax year' }]} />
       <div className="od-period">
         <button className="icon-btn" aria-label="Previous" onClick={() => (view === 'month' ? setMonth(shiftMonth(month, -1)) : setYearOf(`${Number(ty.from.slice(0, 4)) - 1}-06-01`))}><Icon name="left" /></button>

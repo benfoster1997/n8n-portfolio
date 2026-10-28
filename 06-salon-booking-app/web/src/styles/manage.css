@@ -230,7 +230,6 @@
   min-width: 0;
   height: 58px;
   padding: 0 4px 13px;
-  overflow: hidden;
   /* one row of dots near the bottom: the line to sign on, as on a paper form */
   background:
     radial-gradient(circle, color-mix(in srgb, var(--muted) 70%, transparent) 0.9px, transparent 1.3px) 0 calc(100% - 15px) / 6px 3px repeat-x;
@@ -251,7 +250,10 @@
   font-family: var(--font-script);
   font-size: 2.05rem;
   line-height: 1.25;
-  padding: 0 0.15em 0 0.05em;
+  /* The clip box runs 0.4em below the line so script descenders (g, j, p, q, y)
+     are drawn in full; the matching negative margin keeps the baseline on the dots. */
+  padding: 0 0.15em 0.4em 0.05em;
+  margin-bottom: -0.4em;
   color: var(--muted);
   opacity: 0.55;
   transform: translateY(6px);

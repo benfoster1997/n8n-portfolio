@@ -234,12 +234,12 @@ export function AppointmentView() {
             <div key={p.id} className="od-paid">Payment recorded: {money(p.amount_pence)} by {METHOD_LABEL[p.method]}, {fmtDay(`${p.paid_on}T12:00:00Z`, tz)}</div>
           ))}
           {owing && charge.received > 0 && <p className="od-owed" style={{ margin: 0 }}>Still owed: {money(charge.owed)}.</p>}
+          {owing && <button className="btn primary block" onClick={() => setSheet('late')}><Icon name="tick" size={20} /> Record payment received</button>}
           {owing && phone && !checkPhone && (
             <a className="btn wa block" href={whatsappLink(phone, lateChargeMessage(a, s, charge))} target="_blank" rel="noreferrer">
               <Icon name="whatsapp" size={20} /> WhatsApp {first}
             </a>
           )}
-          {owing && <button className="btn primary block" onClick={() => setSheet('late')}><Icon name="tick" size={20} /> Record payment received</button>}
         </div>
       )}
 
@@ -574,9 +574,12 @@ function MoveSheet({ a, tz, onClose, onDone }: { a: Appointment; tz: string; onC
         </div>
         <Field label="Start time"><input type="time" step={300} value={time} onChange={(e) => setTime(e.target.value)} /></Field>
         {slots.length > 0 && (
-          <div className="slot-grid">
-            {slots.map((d) => { const t = fmtTime(d, tz); return <button key={t} className={`slot${t === time ? ' on' : ''}`} onClick={() => setTime(t)}>{t}</button>; })}
-          </div>
+          <>
+            <span className="od-slots-label">Free times for a {minutesLabel(Number(duration) || a.duration_min)} appointment:</span>
+            <div className="slot-grid">
+              {slots.map((d) => { const t = fmtTime(d, tz); return <button key={t} className={`slot${t === time ? ' on' : ''}`} onClick={() => setTime(t)}>{t}</button>; })}
+            </div>
+          </>
         )}
         {email ? (
           <label className="check">

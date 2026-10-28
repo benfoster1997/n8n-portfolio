@@ -12,13 +12,13 @@ import {
   DEFAULT_TEMPLATES, TEMPLATE_PLACEHOLDERS, checkHandle, downloadText, friendlyError, isPlausibleEmail, money, parseMenu, parsePounds,
   socialLink, type SocialSite,
 } from '../../lib/text';
-import { WEEKDAY_NAMES, fmtDayTime, minutesLabel, todayInZone } from '../../lib/time';
+import { WEEKDAY_NAMES, fmtDay, fmtDayTime, fmtTime, minutesLabel, todayInZone } from '../../lib/time';
 import type { OpeningHours, Service, Settings as S } from '../../lib/types';
 
 type Group = 'business' | 'bookings' | 'messages' | 'data';
 const SECTIONS: { to: string; label: string; sub: string; icon: ReactNode; group: Group }[] = [
-  { to: 'business', label: 'Business details', sub: 'Name, booking page text, your email', icon: <Glyph name="store" />, group: 'business' },
-  { to: 'booking-page', label: 'Booking page', sub: 'Tagline, add-ons, safety note, socials', icon: <BrandIcon name="sparkle" size={20} />, group: 'business' },
+  { to: 'business', label: 'Business details', sub: 'Name, welcome line, area, contact details', icon: <Glyph name="store" />, group: 'business' },
+  { to: 'booking-page', label: 'Booking page', sub: 'Tagline, strapline, add-ons, safety, socials', icon: <BrandIcon name="sparkle" size={20} />, group: 'business' },
   { to: 'hours', label: 'Opening hours', sub: 'When clients can book', icon: <Glyph name="clock" />, group: 'business' },
   { to: 'services', label: 'Treatments & prices', sub: 'What clients can book', icon: <Glyph name="polish" />, group: 'business' },
   { to: 'time-off', label: 'Time off', sub: 'Holidays and blocked time', icon: <Glyph name="calendarOff" />, group: 'business' },
@@ -129,7 +129,9 @@ export function BusinessSettings() {
       <SetCard icon={<BrandIcon name="sparkle" size={18} />} title="On your booking page">
         <Field label="Booking page welcome" hint="A line or two shown above your treatments."><textarea value={txt(d.booking_intro)} maxLength={1000} onChange={(e) => f.set('booking_intro', e.target.value)} /></Field>
         <Field label="Area (shown publicly)" hint="e.g. “Home studio near the high street — full address in your confirmation”">
-          <input type="text" value={txt(d.location_note)} maxLength={200} onChange={(e) => f.set('location_note', e.target.value)} />
+          {/* wraps so she can read the whole line, but stays one line: a pressed Return becomes a space */}
+          <textarea className="od-area" rows={2} value={txt(d.location_note)} maxLength={200}
+            onChange={(e) => f.set('location_note', e.target.value.replace(/\s*\n\s*/g, ' '))} />
         </Field>
         <label className="check od-check-row"><input type="checkbox" checked={d.booking_enabled} onChange={(e) => f.set('booking_enabled', e.target.checked)} />
           <span>Online booking is open<br /><span className="sub">Untick to pause new online bookings (e.g. while you’re away).</span></span></label>
@@ -181,7 +183,10 @@ export function BookingPageSettings() {
   }
   return (
     <Page title="Booking page">
-      <p className="sub od-page-intro">These dress up your booking page. Leave any of them blank to leave it off.</p>
+      <div className="od-page-intro">
+        <p className="sub">These dress up your booking page. Leave any of them blank to leave it off.</p>
+        <Link className="od-text-link" to="/settings/business">Your welcome line and area are in <span className="od-nowrap">Business details<Icon name="chev" size={16} /></span></Link>
+      </div>
       <SetCard icon={<Heart size={17} />} title="Your words">
         <Field label="Tagline" hint="A short line in pink handwriting under your business name, e.g. “Happy hands, happy you”.">
           <input type="text" value={txt(d.tagline)} maxLength={120} onChange={(e) => f.set('tagline', e.target.value)} />
@@ -201,7 +206,7 @@ export function BookingPageSettings() {
         <Field label="Add-ons menu" hint={<>
           One per line. <strong>Name | price</strong> is an item, a line starting with <strong>&gt;</strong> is a note, and any other
           line is a heading. Shown for information: clients add these on the day, they don’t book them online. For example:
-          <span className="mono od-example">{MENU_EXAMPLE}</span>
+          <span className="mono od-example">{MENU_EXAMPLE.split('\n').map((l, i) => <span key={i} className="od-ex-line">{l}</span>)}</span>
         </>}>
           <textarea className="od-menu-text" value={txt(d.extras_menu)} maxLength={2000} onChange={(e) => f.set('extras_menu', e.target.value)} />
         </Field>
@@ -469,6 +474,21 @@ function ServiceSheet({ initial, onClose, onSaved }: { initial: Partial<Service>
   );
 }
 
+/** "Sun 1 Nov · all day" for whole days (the end is midnight after the last day), otherwise both times;
+    the arrow starts the second part, so a line never ends on it. */
+function TimeOffWhen({ starts, ends, tz }: { starts: string; ends: string; tz: string }) {
+  if (fmtTime(starts, tz) === '00:00' && fmtTime(ends, tz) === '00:00') {
+    // noon the day before the end: the last day off, whatever the clocks did that night
+    const last = new Date(new Date(ends).getTime() - 12 * 3600e3);
+    const first = fmtDay(starts, tz);
+    const lastDay = fmtDay(last, tz);
+    return first === lastDay
+      ? <><span className="od-nowrap">{first}</span>{' · all day'}</>
+      : <><span className="od-nowrap">{first} –</span>{' '}<span className="od-nowrap">{lastDay}</span>{' · all day'}</>;
+  }
+  return <><span className="od-nowrap">{fmtDayTime(starts, tz)}</span>{' '}<span className="od-nowrap">→ {fmtDayTime(ends, tz)}</span></>;
+}
+
 export function TimeOffSettings() {
   const { settings: s } = useOwner();
   const toast = useToast();
@@ -485,7 +505,7 @@ export function TimeOffSettings() {
           <ul className="list">{(data ?? []).map((t) => (
             <li key={t.id} className="list-row od-off-row">
               <span className="od-ic small lemon" aria-hidden="true"><Glyph name="calendarOff" size={18} /></span>
-              <div className="grow"><div className="title">{t.note || 'Time off'}</div><div className="meta"><span className="od-nowrap">{fmtDayTime(t.starts_at, tz)}</span>{'\u00a0→ '}<span className="od-nowrap">{fmtDayTime(t.ends_at, tz)}</span></div></div>
+              <div className="grow"><div className="title">{t.note || 'Time off'}</div><div className="meta"><TimeOffWhen starts={t.starts_at} ends={t.ends_at} tz={tz} /></div></div>
               <button className="icon-btn" aria-label="Remove" onClick={async () => {
                 if (!window.confirm('Remove this time off? Clients will be able to book it.')) return;
                 try { await api.deleteTimeOff(t.id); reload(); } catch (e) { toast(friendlyError(e)); }

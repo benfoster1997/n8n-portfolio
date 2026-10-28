@@ -85,7 +85,7 @@ export function Clients() {
 
   return (
     <div className="page od od-clients">
-      <TopBar title="Clients" right={<button className="icon-btn" aria-label="Add client" onClick={() => setAdding(true)}><Icon name="plus" /></button>} />
+      <TopBar title="Clients" right={<button className="icon-btn od-top-add" aria-label="Add client" onClick={() => setAdding(true)}><Icon name="plus" /></button>} />
       <div className="od-search">
         <input type="search" placeholder={`Search ${data?.length ?? ''} clients`} value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search clients" />
       </div>
