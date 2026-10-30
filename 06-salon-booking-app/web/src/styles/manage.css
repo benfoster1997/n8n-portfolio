@@ -1,0 +1,588 @@
+/* The health questions (components/ConsultationFields.tsx, on the booking page and the
+   consultation form), the consultation form page (/form/:token), the privacy notice
+   (/privacy) and the owner's sign-in screen (pages/admin/Login.tsx). */
+
+/* ==========================================================================
+   Health questions: one calm block per question, dotted dividers like the
+   leaders on her price list, a sliding Yes/No switch, and a consent and
+   signature panel set apart at the end.
+   ========================================================================== */
+.consult { display: flex; flex-direction: column; min-width: 0; }
+
+.consult-q {
+  min-width: 0;
+  margin: 0;
+  padding: 20px 0;
+  border: 0;
+}
+.consult-q:first-child { padding-top: 6px; }
+.consult-q + .consult-q {
+  /* a dotted rule, as on the printed menu */
+  background: radial-gradient(circle, var(--line-strong) 1.1px, transparent 1.6px) 0 0 / 8px 4px repeat-x;
+}
+
+/* A floated legend behaves like an ordinary block, so it sits inside the block's spacing. */
+.consult-legend {
+  float: left;
+  width: 100%;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin: 0 0 14px;
+  padding: 0;
+}
+.consult-answer { clear: both; }
+
+.consult-num {
+  position: relative;
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  margin-top: -1px;
+  border-radius: 50%;
+  border: 1.5px solid var(--pink);
+  background: var(--surface);
+  color: var(--accent-text);
+  font-size: 0.8rem;
+  font-weight: 800;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  transition: background-color 0.25s var(--ease), border-color 0.25s, color 0.15s, box-shadow 0.25s var(--ease);
+}
+/* answered: the number turns into a pink tick */
+.consult-num::after {
+  content: '';
+  position: absolute;
+  inset: 6px;
+  background: var(--accent-ink);
+  -webkit-mask: var(--tick-mask) center / contain no-repeat;
+  mask: var(--tick-mask) center / contain no-repeat;
+  transform: scale(0);
+  transition: transform 0.3s var(--ease-spring);
+}
+.consult-q:has(.consult-seg [aria-checked='true']) .consult-num {
+  background: var(--grad-accent);
+  border-color: transparent;
+  color: transparent;
+  box-shadow: 0 4px 10px -4px rgba(214, 21, 111, 0.6);
+}
+.consult-q:has(.consult-seg [aria-checked='true']) .consult-num::after { transform: scale(1); }
+
+.consult-ask { display: flex; flex-direction: column; gap: 3px; min-width: 0; padding-top: 2px; }
+.consult-question {
+  font-size: 1rem;
+  font-weight: 750;
+  line-height: 1.4;
+  letter-spacing: 0;
+  color: var(--ink-strong);
+  text-wrap: pretty;
+}
+.consult-hint {
+  font-size: 0.88rem;
+  font-weight: 500;
+  line-height: 1.45;
+  color: var(--muted);
+  text-wrap: pretty;
+}
+
+/* ---------- Yes / No: a pill switch with a sliding thumb ---------- */
+.consult-seg { display: flex; }
+.consult-seg button { min-height: 46px; font-size: 1rem; }
+.consult-seg button.on { font-weight: 800; }
+@supports selector(:has(*)) {
+  .consult-seg { position: relative; isolation: isolate; }
+  .consult-seg button { position: relative; z-index: 1; }
+  .consult-seg button.on { background: transparent; box-shadow: none; }
+  .consult-seg::before {
+    content: '';
+    position: absolute;
+    z-index: 0;
+    top: 4px;
+    bottom: 4px;
+    left: 4px;
+    width: calc(50% - 6px);
+    border-radius: var(--radius-pill);
+    background: var(--seg-on);
+    box-shadow: 0 1px 2px rgba(214, 21, 111, 0.1), 0 4px 12px -2px rgba(214, 21, 111, 0.2), inset 0 0 0 1px var(--line);
+    opacity: 0;
+    transform: scale(0.9);
+    transition: transform 0.38s var(--ease), opacity 0.2s var(--ease);
+  }
+  .consult-seg:has(> button.on)::before { opacity: 1; transform: none; }
+  .consult-seg:has(> button:last-child.on)::before { transform: translateX(calc(100% + 4px)); }
+}
+
+/* details, when the answer is Yes: hangs off the switch with a little pink bracket */
+.consult-details {
+  position: relative;
+  margin-top: 10px;
+  padding-left: 22px;
+  animation: consult-reveal 0.35s var(--ease) both;
+}
+.consult-details::before {
+  content: '';
+  position: absolute;
+  left: 8px;
+  top: -6px;
+  width: 10px;
+  height: 32px;
+  border-left: 2px solid var(--brush);
+  border-bottom: 2px solid var(--brush);
+  border-bottom-left-radius: 10px;
+}
+@keyframes consult-reveal { from { opacity: 0; transform: translateY(-6px); } }
+
+/* ---------- "Tick all that apply": a neat grouped checklist ---------- */
+.consult-checks {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background-color: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+.check.consult-check {
+  gap: 13px;
+  min-height: 50px;
+  padding: 13px 14px;
+  font-size: 0.97rem;
+  line-height: 1.4;
+  color: var(--ink);
+  transition: background-color 0.2s var(--ease), color 0.2s;
+}
+.consult-check input[type='checkbox'] { margin-top: -2px; }
+.consult-check + .consult-check {
+  background-image: linear-gradient(var(--line), var(--line));
+  background-position: 51px 0;
+  background-size: calc(100% - 51px) 1px;
+  background-repeat: no-repeat;
+}
+.consult-check:has(input:checked) {
+  background-color: color-mix(in srgb, var(--accent-soft) 65%, var(--surface));
+  color: var(--ink-strong);
+  font-weight: 650;
+}
+@media (hover: hover) {
+  .consult-check:not(:has(input:checked)):hover { background-color: var(--surface-2); }
+}
+
+/* ---------- consent and signature: a blush panel at the end ---------- */
+.consult-consent {
+  position: relative;
+  margin-top: 10px;
+  padding: 16px 16px 18px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background:
+    radial-gradient(110% 70% at 100% 0%, color-mix(in srgb, var(--brush) 32%, transparent), transparent 70%),
+    color-mix(in srgb, var(--surface-3) 55%, var(--surface));
+}
+.consult-consent-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 6px;
+  font-size: 0.74rem;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--accent-text);
+}
+.consult-consent-icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  color: var(--pink);
+  background: var(--surface);
+  border: 1.5px solid var(--pink);
+  box-shadow: inset 0 0 0 3px var(--surface), inset 0 0 0 4px var(--line-strong);
+}
+.check.consult-tick {
+  gap: 13px;
+  padding: 12px 0;
+  font-size: 0.95rem;
+  line-height: 1.5;
+  color: var(--ink);
+}
+.consult-tick + .consult-tick { border-top: 1px solid color-mix(in srgb, var(--line-strong) 55%, transparent); }
+.consult-tick input[type='checkbox'] { margin-top: 0; }
+
+.consult-sign {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 8px;
+  padding-top: 14px;
+  border-top: 1px solid color-mix(in srgb, var(--line-strong) 55%, transparent);
+}
+/* the typed name, previewed as a signature over a dotted line */
+.consult-pad {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  min-width: 0;
+  height: 58px;
+  padding: 0 4px 13px;
+  /* one row of dots near the bottom: the line to sign on, as on a paper form */
+  background:
+    radial-gradient(circle, color-mix(in srgb, var(--muted) 70%, transparent) 0.9px, transparent 1.3px) 0 calc(100% - 15px) / 6px 3px repeat-x;
+}
+.consult-pad-x {
+  flex: none;
+  margin-bottom: 4px;
+  font-size: 1.05rem;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--muted);
+}
+.consult-pad-name {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-family: var(--font-script);
+  font-size: 2.05rem;
+  line-height: 1.25;
+  /* The clip box runs 0.4em below the line so script descenders (g, j, p, q, y)
+     are drawn in full; the matching negative margin keeps the baseline on the dots. */
+  padding: 0 0.15em 0.4em 0.05em;
+  margin-bottom: -0.4em;
+  color: var(--muted);
+  opacity: 0.55;
+  transform: translateY(6px);
+  transition: color 0.2s, opacity 0.2s;
+}
+.consult-pad.is-signed .consult-pad-name { color: var(--ink); opacity: 1; }
+
+/* ==========================================================================
+   The consultation form page (/form/:token)
+   ========================================================================== */
+.form-page { display: flex; flex-direction: column; gap: 16px; }
+.form-page > .brand-hero { margin-bottom: -2px; }
+
+.form-intro { display: flow-root; padding: 18px 18px 20px; }
+.form-intro-bottle { float: right; margin: -2px -4px 6px 10px; }
+.form-kicker {
+  margin: 2px 0 0;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--accent-text);
+}
+.form-hello {
+  margin: 2px 0 6px;
+  font-family: var(--font-hand);
+  font-weight: 600;
+  font-size: 1.95rem;
+  line-height: 1.15;
+  color: var(--pink);
+}
+.form-hello-heart { width: 0.55em; height: 0.55em; margin-left: 0.14em; vertical-align: 0.1em; transform: rotate(10deg); }
+.form-intro-text { margin: 0; font-size: 1rem; line-height: 1.6; color: var(--ink); text-wrap: pretty; }
+.form-intro-text::first-letter { text-transform: uppercase; }
+/* keep "Thursday 5 November" on one line */
+.form-date { white-space: nowrap; }
+
+.form-title { margin: 10px 0 -4px 2px; }
+.form-card { padding: 20px 18px 18px; }
+/* in its own card, the consent panel becomes the card's footer band */
+.form-card .consult-consent {
+  margin: 14px -18px -18px;
+  padding: 18px 18px 20px;
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-radius: 0 0 calc(var(--radius) - 1px) calc(var(--radius) - 1px);
+}
+
+.form-send { min-height: 58px; margin-top: 4px; font-size: 1.08rem; letter-spacing: 0.02em; }
+.form-send .brand-icon { margin-right: -4px; }
+.form-links { display: flex; flex-direction: column; gap: 2px; }
+.form-links p { margin: 0; text-wrap: balance; }
+.form-page > .brand-footer { margin-top: 4px; }
+
+/* thank-you */
+.form-thanks {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 30px 22px 28px;
+  text-align: center;
+}
+.form-thanks-mark {
+  display: grid;
+  place-items: center;
+  width: 84px;
+  height: 84px;
+  margin-bottom: 10px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 32% 26%, var(--surface), var(--accent-soft) 78%);
+  border: 1.5px solid var(--pink);
+  box-shadow: 0 0 0 8px color-mix(in srgb, var(--accent-soft) 55%, transparent), var(--shadow);
+  animation: pop 0.6s var(--ease-spring) 0.15s backwards;
+}
+.form-thanks-heart { color: var(--pink); transform: translateY(1px) rotate(-6deg); }
+.form-thanks h1 { font-size: 2.5rem; }
+.form-thanks p { max-width: 30ch; margin: 4px auto 0; color: var(--ink); line-height: 1.6; text-wrap: balance; }
+.form-thanks p > b { white-space: nowrap; }
+
+/* short page: the lemon footer sits at the bottom of the screen */
+.form-done { min-height: 100vh; min-height: 100dvh; }
+.form-done > .brand-footer { margin-top: auto; }
+
+/* a link that has expired */
+.form-missing { min-height: 72dvh; justify-content: center; }
+.form-missing-card { align-items: center; padding: 28px 22px 24px; text-align: center; }
+.form-missing-card .notice { text-align: left; }
+
+/* ==========================================================================
+   Privacy notice (/privacy): numbered sections with icons, contents at the top
+   ========================================================================== */
+.privacy { display: flex; flex-direction: column; gap: 14px; max-width: 700px; }
+.privacy-for {
+  margin: 6px 0 0;
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--ink);
+}
+
+.privacy-toc { padding: 16px 18px 8px; }
+.privacy-toc-title {
+  margin: 0 0 4px;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--accent-text);
+}
+.privacy-toc ol { margin: 0; padding: 0; list-style: none; }
+.privacy-toc li + li { background: radial-gradient(circle, var(--line-strong) 1px, transparent 1.5px) 36px 0 / 7px 3px repeat-x; }
+.privacy-toc a {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+  padding: 6px 0;
+  color: var(--ink-strong);
+  font-weight: 700;
+  line-height: 1.35;
+  text-decoration: none;
+}
+.privacy-toc a::after {
+  content: '';
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin-left: auto;
+  background: var(--accent);
+  opacity: 0.6;
+  -webkit-mask: var(--select-chevron) center / contain no-repeat;
+  mask: var(--select-chevron) center / contain no-repeat;
+}
+@media (hover: hover) { .privacy-toc a:hover { color: var(--accent); } }
+.privacy-toc-num {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 1.5px solid var(--pink);
+  color: var(--accent-text);
+  font-size: 0.78rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.privacy-section { padding: 20px 20px 18px; scroll-margin-top: 16px; }
+.privacy-head {
+  display: grid;
+  grid-template-columns: 46px 1fr;
+  column-gap: 13px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.privacy-icon {
+  grid-row: span 2;
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  color: var(--pink);
+  background: var(--surface);
+  border: 1.5px solid var(--pink);
+  box-shadow: inset 0 0 0 3px var(--surface), inset 0 0 0 4px var(--line-strong);
+}
+.privacy-num {
+  align-self: end;
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  color: var(--accent-text);
+  font-variant-numeric: tabular-nums;
+}
+.privacy-head h2 { align-self: start; font-size: 1.14rem; line-height: 1.3; text-wrap: balance; }
+
+.privacy-section p { margin: 0 0 12px; font-size: 1rem; line-height: 1.65; color: var(--ink); }
+.privacy-section p, .privacy-list li, .privacy-list i { text-wrap: pretty; }
+.privacy-toc a > span:last-child { text-wrap: balance; }
+.privacy-section > :last-child { margin-bottom: 0; }
+
+.privacy-list { margin: 0; padding: 0; list-style: none; font-size: 1rem; line-height: 1.65; color: var(--ink); }
+.privacy-list li { position: relative; padding: 12px 0 12px 24px; }
+.privacy-list li:first-child { padding-top: 2px; }
+.privacy-list li:last-child { padding-bottom: 2px; }
+.privacy-list li + li { border-top: 1px solid var(--line); }
+.privacy-list li::before {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: calc(12px + 0.72em);
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--pink);
+  -webkit-mask: none;
+  mask: none;
+  transform: none;
+}
+.privacy-list li:first-child::before { top: calc(2px + 0.72em); }
+/* the lawful basis for each item, as a small tag underneath */
+.privacy-list i {
+  display: block;
+  width: fit-content;
+  margin: 8px 0 2px;
+  padding: 5px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  font-style: normal;
+  font-size: 0.88rem;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.privacy-keep b { display: block; text-wrap: balance; }
+/* a closing sentence under a basis tag */
+.privacy-note { display: block; margin-top: 8px; }
+
+.privacy-promise {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 14px 0 0 !important;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--surface-3) 70%, var(--surface));
+  border: 1px solid var(--line);
+  color: var(--ink-strong) !important;
+  font-weight: 650;
+}
+.privacy-promise-heart { margin-top: 3px; }
+.privacy-contact {
+  padding: 13px 15px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--surface-3) 70%, var(--surface));
+}
+/* on the pink tint, links take the deeper pink so they stay above 4.5:1 */
+.privacy-contact a { color: var(--accent-text); }
+.privacy-back { margin: 8px 0 0; text-align: center; }
+.privacy-back .btn { min-width: 200px; }
+
+/* ==========================================================================
+   Owner sign-in: sprigs in the corners, the wordmark, a frosted card
+   ========================================================================== */
+.login {
+  position: relative;
+  isolation: isolate;
+  min-height: 100vh;
+  min-height: 100dvh;
+  overflow: clip;
+  padding:
+    env(safe-area-inset-top)
+    max(16px, env(safe-area-inset-right))
+    calc(env(safe-area-inset-bottom) + 36px)
+    max(16px, env(safe-area-inset-left));
+}
+.login-sprig { width: clamp(124px, 37vw, 196px); }
+.login .sprig-tl, .login .sprig-tr { top: env(safe-area-inset-top, 0px); }
+.login-sprig--low { width: clamp(104px, 30vw, 160px); opacity: 0.95; }
+@media (max-height: 760px) { .login-sprig--low { display: none; } }
+
+.login-inner {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  max-width: 420px;
+  margin: 0 auto;
+  padding-top: clamp(78px, 24vw, 104px);
+}
+.login-brand { text-align: center; }
+.login-wordmark {
+  --wm-max: 3.5rem;
+  margin: 0 auto 14px;
+  text-shadow: 0 0 12px var(--bg), 0 0 3px var(--bg);
+}
+.login-strapline { font-size: 0.72rem; }
+
+.login-stage { position: relative; }
+.login-behind { position: absolute; z-index: 0; pointer-events: none; }
+/* up and out past the card's corner, clear of the subtitle; on narrower phones it tucks further
+   right and a little lower so it never reaches MONEY in the centred strapline above */
+.login-behind--slice {
+  top: clamp(-40px, calc(38px - 19.5vw), -24px);
+  right: clamp(-64px, calc(25vw - 144px), -44px);
+  transform: rotate(18deg);
+}
+.login-behind--blossom { left: -22px; bottom: -24px; transform: rotate(-12deg); }
+.login-card {
+  position: relative;
+  z-index: 1;
+  padding: 22px 20px 20px;
+  border-radius: 28px;
+  background: color-mix(in srgb, var(--surface) 64%, transparent);
+  -webkit-backdrop-filter: blur(18px) saturate(1.6);
+  backdrop-filter: blur(18px) saturate(1.6);
+  border: 1px solid color-mix(in srgb, var(--line-strong) 55%, transparent);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.55),
+    0 2px 6px rgba(214, 21, 111, 0.06),
+    0 22px 48px -18px rgba(214, 21, 111, 0.3);
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .login-card { background: var(--surface); }
+}
+/* opaque in dark mode: under plum glass the slice and blossom turn muddy, so they tuck behind the card instead */
+.login-card {
+  background: var(--surface);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 24px 50px -20px rgba(0, 0, 0, 0.7);
+}
+.login-title { font-size: 2.2rem; margin-left: 2px; }
+.login-private { margin: 2px 0 16px; text-wrap: balance; }
+.login-demo { margin-bottom: 16px; background: color-mix(in srgb, var(--surface-3) 60%, transparent); }
+.login-submit { min-height: 54px; margin-top: 4px; font-size: 1.04rem; }
+.login-alt { margin-top: 8px; }
+.login-book { margin: 0; text-wrap: balance; }
+.login-book a, .form-links a { white-space: nowrap; }
+
+@media (prefers-reduced-motion: no-preference) {
+  .login-sprig { animation: brand-sprig-in 0.9s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+  .login .sprig-tr { animation-delay: 0.08s; }
+  .login-brand { animation: brand-rise 0.7s 0.1s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+  .login-stage { animation: enter 0.6s var(--ease) 0.18s backwards; }
+}

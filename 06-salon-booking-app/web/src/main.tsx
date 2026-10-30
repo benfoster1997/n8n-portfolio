@@ -1,0 +1,26 @@
+import { StrictMode } from 'react';
+import { createRoot } from 'react-dom/client';
+import { App } from './App';
+import '@fontsource/satisfy/latin-400.css';
+import '@fontsource-variable/nunito/wght.css';
+import '@fontsource-variable/dancing-script/wght.css';
+import './styles.css';
+import './brand.css';
+import './styles/public.css';
+import './styles/manage.css';
+import './styles/owner.css';
+import './styles/owner-detail.css';
+
+createRoot(document.getElementById('root')!).render(
+  <StrictMode>
+    <App />
+  </StrictMode>,
+);
+
+// Offline support: lets the app open from the home screen with no signal and
+// load instantly. Only the app's own files are cached — never client data.
+if ('serviceWorker' in navigator && import.meta.env.PROD) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => { /* not critical */ });
+  });
+}

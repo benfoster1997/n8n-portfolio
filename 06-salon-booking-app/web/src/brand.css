@@ -1,0 +1,344 @@
+/* Brand motifs: illustrations, script headings, hero and footer (components/brand.tsx).
+   Colours come from the theme tokens in styles.css (--pink, --brush, --lemon…), so the
+   art follows light and dark mode. The lemons, leaves and blossoms keep their colours. */
+
+:root {
+  /* the page's side padding; the hero and footer bleed into it so sprigs reach the edge */
+  --brand-gutter: 16px;
+}
+
+.brand-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.brand-art,
+.brand-icon,
+.heart { display: inline-block; flex: none; vertical-align: middle; }
+.heart { color: var(--pink, #e8197f); }
+
+/* ---------- sprigs: absolutely pinned to a corner of the nearest positioned box ---------- */
+.sprig {
+  position: absolute;
+  z-index: 0;
+  pointer-events: none;
+  height: auto;
+  overflow: visible; /* the art runs past the box; the hero/footer edge (the screen edge on a phone) trims it */
+  filter: drop-shadow(0 2px 3px rgba(140, 40, 80, 0.12));
+}
+.sprig-tl { top: 0; left: 0; transform-origin: 0 0; }
+.sprig-tr { top: 0; right: 0; transform-origin: 100% 0; }
+.sprig-bl { bottom: 0; left: 0; transform-origin: 0 100%; }
+.sprig-br { bottom: 0; right: 0; transform-origin: 100% 100%; }
+
+.sprig { filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.35)); }
+.brand-art { filter: drop-shadow(0 2px 5px rgba(0, 0, 0, 0.3)); }
+
+/* ---------- script heading over a brush swatch ---------- */
+.script-title {
+  margin: 0;
+  font-family: var(--font-script, 'Satisfy', cursive);
+  font-weight: 400;
+  font-size: 2rem;
+  line-height: 1.3;
+  letter-spacing: 0;
+  color: var(--ink-strong, #1d1a1e);
+}
+h1.script-title { font-size: 2.35rem; }
+h3.script-title { font-size: 1.65rem; }
+.script-title-inner {
+  position: relative;
+  display: inline-block;
+  isolation: isolate;
+  padding: 0 0.12em 0 0.08em;
+}
+.script-title .brush {
+  position: absolute;
+  z-index: -1;
+  left: -0.32em;
+  top: 0.2em;
+  width: calc(100% + 0.8em);
+  height: 1.1em;
+  color: var(--brush, #f9c6d9); /* blush on light, a deep berry on plum */
+}
+.script-title .brush-dry { display: none; }
+.script-title-heart {
+  width: 0.48em;
+  height: 0.48em;
+  margin-left: 0.2em;
+  vertical-align: 0.18em;
+  color: var(--pink, #e8197f);
+}
+.script-title:focus { outline: none; }
+.script-title:focus-visible .script-title-inner { outline: 2px solid var(--accent, #d6156f); outline-offset: 4px; border-radius: 6px; }
+
+/* ---------- wordmark: the business name, sized to fit its length ---------- */
+.wordmark {
+  --wm-min: 1.6rem;
+  --wm-max: 3.3rem;
+  --wm-k: 0.47; /* Satisfy's average letter width, in em */
+  display: block;
+  margin: 0;
+  font-family: var(--font-script, 'Satisfy', cursive);
+  font-weight: 400;
+  line-height: 1.12;
+  letter-spacing: 0;
+  color: var(--ink-strong, #1d1a1e);
+  font-size: clamp(var(--wm-min), calc((100vw - 48px) / (var(--wm-chars, 12) * var(--wm-k))), var(--wm-max));
+  font-size: clamp(var(--wm-min), calc(100cqi / (var(--wm-chars, 12) * var(--wm-k))), var(--wm-max));
+}
+.wordmark-md { --wm-min: 1.5rem; --wm-max: 2.5rem; }
+.wordmark-sm { --wm-min: 1.4rem; --wm-max: 1.9rem; }
+.wordmark-2 { line-height: 1.04; }
+.wordmark-line { display: block; white-space: nowrap; }
+.wordmark-heart {
+  width: 0.36em;
+  height: 0.36em;
+  margin-left: 0.08em;
+  vertical-align: 0.42em;
+  color: var(--pink, #e8197f);
+  transform: rotate(12deg);
+}
+
+/* ---------- strapline: spaced capitals with tiny hearts ---------- */
+.strapline {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  row-gap: 4px;
+  margin: 0;
+  font-family: var(--font-sans, 'Nunito Variable', sans-serif);
+  font-weight: 700;
+  font-size: clamp(0.69rem, 3.25vw, 0.8rem);
+  line-height: 1.5;
+  letter-spacing: 0.32em;
+  text-transform: uppercase;
+  color: var(--ink, #2e3350);
+}
+.strapline-item { display: inline-flex; align-items: center; white-space: nowrap; }
+.strapline-word { margin-right: -0.32em; }
+.strapline-heart { margin: 0 0.7em 0 0.9em; color: var(--pink, #e8197f); }
+
+/* ---------- the booking-page hero ---------- */
+.brand-hero {
+  position: relative;
+  isolation: isolate;
+  margin: 0 calc(-1 * var(--brand-gutter));
+  padding: 112px calc(var(--brand-gutter) + 6px) 8px;
+  text-align: center;
+  overflow: clip;
+}
+.brand-hero .sprig { width: clamp(140px, 41vw, 204px); }
+/* as the page's first block, the hero rises into the page's top padding so the sprigs
+   sit at the very top of the screen (below the status bar) */
+.page > .brand-hero:first-child { margin-top: -16px; }
+.brand-hero-body { position: relative; z-index: 1; container-type: inline-size; }
+.brand-hero-name {
+  margin: 0 auto 8px;
+  /* a soft halo of page colour keeps the name crisp where a leaf tip passes behind */
+  text-shadow: 0 0 10px var(--bg, #fdf0f4), 0 0 3px var(--bg, #fdf0f4);
+}
+.brand-hero .strapline { margin: 0 auto 6px; }
+.brand-hero-tagline {
+  margin: 2px auto 0;
+  font-family: var(--font-hand, 'Dancing Script', cursive);
+  font-weight: 600;
+  font-size: 1.6rem;
+  line-height: 1.2;
+  color: var(--pink, #e8197f);
+  text-wrap: balance;
+}
+.brand-hero-tagline-heart { width: 0.62em; height: 0.62em; margin-left: 0.18em; vertical-align: 0.06em; }
+.brand-hero-intro {
+  max-width: 32ch;
+  margin: 14px auto 0;
+  font-size: 1rem;
+  line-height: 1.5;
+  color: var(--ink, #2e3350);
+  text-wrap: pretty;
+}
+.brand-hero-location {
+  max-width: 34ch;
+  margin: 10px auto 0;
+  font-size: 0.94rem;
+  line-height: 1.45;
+  color: var(--muted, #6f6480);
+  text-wrap: balance;
+}
+.brand-hero-pin { margin: -3px 3px 0 0; color: var(--pink, #e8197f); }
+.brand-hero-dot { position: absolute; z-index: 0; color: var(--pink, #e8197f); opacity: 0.75; }
+.brand-hero-dot--a { top: 150px; left: calc(var(--brand-gutter) - 4px); transform: rotate(-14deg); }
+.brand-hero-dot--b { top: 166px; right: calc(var(--brand-gutter) - 2px); transform: rotate(12deg); }
+
+.brand-hero--compact { padding-top: 58px; }
+.brand-hero--compact .sprig { width: clamp(92px, 26vw, 128px); }
+.brand-hero--compact .brand-hero-name { margin-bottom: 4px; }
+.brand-hero--compact .brand-hero-tagline { font-size: 1.4rem; }
+.brand-hero--compact .brand-hero-dot { display: none; }
+
+/* once the page is narrower than the window, there is no screen edge to run off: show the whole cluster */
+@media (min-width: 721px) {
+  .brand-hero { overflow: visible; }
+  .brand-footer { overflow: visible; }
+}
+@media (min-width: 560px) {
+  .brand-hero { padding-top: 64px; }
+  .brand-hero-body { max-width: 440px; margin: 0 auto; }
+  .brand-hero-dot--a { top: 170px; left: 15%; }
+  .brand-hero-dot--b { top: 120px; right: 16%; }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .brand-hero .sprig,
+  .brand-footer .sprig { animation: brand-sprig-in 0.9s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+  .brand-hero .sprig-tr { animation-delay: 0.08s; }
+  .brand-hero-body { animation: brand-rise 0.7s 0.1s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+}
+@keyframes brand-sprig-in {
+  from { opacity: 0; transform: scale(0.86) rotate(-3deg); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes brand-rise {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* ---------- badge cards: icon in a pink ring, script title, short text ---------- */
+.brand-badge {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 34px 14px 14px;
+  background: var(--surface, #fff);
+  border: 1px solid var(--line, #f5d3e0);
+  border-radius: var(--radius, 18px);
+  box-shadow: var(--shadow, none);
+}
+.brand-badge-ring {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  color: var(--pink, #e8197f);
+  background: var(--surface, #fff);
+  border: 1.5px solid var(--pink, #e8197f);
+  box-shadow: inset 0 0 0 4px var(--surface, #fff), inset 0 0 0 5px var(--line-strong, #eeb5cb);
+}
+.brand-badge-body { min-width: 0; }
+.brand-badge-title {
+  margin: 0 0 2px;
+  font-family: var(--font-script, 'Satisfy', cursive);
+  font-weight: 400;
+  font-size: 1.5rem;
+  line-height: 1.2;
+  color: var(--ink-strong, #1d1a1e);
+}
+.brand-badge-text { font-size: 0.95rem; line-height: 1.45; color: var(--ink, #2e3350); }
+.brand-badge-text p { margin: 0; }
+.brand-badge-heart { position: absolute; right: 12px; bottom: 10px; opacity: 0.8; transform: rotate(8deg); }
+
+/* ---------- social links ---------- */
+.brand-socials {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px 12px;
+}
+.brand-socials-list {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.brand-social {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  border-radius: var(--radius-pill, 999px);
+  color: var(--ink, #2e3350);
+  text-decoration: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.brand-social-icon {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  color: var(--accent-ink, #fff);
+  background: var(--grad-accent, var(--accent, #d6156f));
+  box-shadow: 0 4px 12px rgba(214, 21, 111, 0.24);
+  transition: transform 0.15s ease;
+}
+.brand-social:active .brand-social-icon { transform: scale(0.94); }
+.brand-social:focus-visible { outline: none; }
+.brand-social:focus-visible .brand-social-icon { outline: 2px solid var(--accent, #d6156f); outline-offset: 3px; }
+.brand-social-handle {
+  font-weight: 700;
+  font-size: 0.95rem;
+  letter-spacing: 0.02em;
+  color: var(--ink, #2e3350);
+}
+.brand-social .brand-social-handle { padding-right: 6px; }
+/* A different handle per network: one centred column with a shared left edge,
+   so the pink circles line up whatever the handles' lengths. */
+.brand-socials-list--stacked {
+  flex-direction: column;
+  flex-wrap: nowrap;
+  align-items: flex-start;
+  gap: 8px;
+  max-width: 100%;
+}
+.brand-socials-list--stacked > li { max-width: 100%; }
+.brand-socials-list--stacked .brand-social { max-width: 100%; text-align: left; }
+.brand-socials-list--stacked .brand-social-icon { flex: none; }
+.brand-socials-list--stacked .brand-social-handle { min-width: 0; overflow-wrap: anywhere; }
+/* The footer's wide side padding keeps the note clear of the corner lemons, which
+   sit lower down; the column may use some of it so handles stay on one line. */
+.brand-footer .brand-socials-list--stacked { margin-inline: -44px; max-width: calc(100% + 88px); }
+
+/* ---------- footer ---------- */
+.brand-footer {
+  position: relative;
+  isolation: isolate;
+  margin: 28px calc(-1 * var(--brand-gutter)) 0;
+  padding: 18px calc(var(--brand-gutter) + 60px) 64px;
+  text-align: center;
+  overflow: clip;
+}
+.brand-footer .sprig { width: clamp(132px, 38vw, 176px); }
+.brand-footer-body { position: relative; z-index: 1; display: flex; flex-direction: column; align-items: center; gap: 12px; }
+.brand-footer-note {
+  margin: 4px 0 0;
+  font-family: var(--font-hand, 'Dancing Script', cursive);
+  font-weight: 600;
+  font-size: 1.5rem;
+  line-height: 1.22;
+  color: var(--pink, #e8197f);
+  text-wrap: balance;
+}
+.brand-footer-heart { width: 0.62em; height: 0.62em; margin-left: 0.16em; vertical-align: 0.04em; }
+.brand-footer-swash { margin-top: -10px; color: var(--pink, #e8197f); opacity: 0.85; }
+
+/* ---------- small pictures inside cards ---------- */
+/* e.g. <div class="card brand-has-bottle"> … <PolishBottle className="brand-card-bottle" /></div> */
+.brand-has-bottle { position: relative; }
+.brand-card-bottle { position: absolute; right: 10px; bottom: 10px; pointer-events: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .brand-social-icon { transition: none; }
+}

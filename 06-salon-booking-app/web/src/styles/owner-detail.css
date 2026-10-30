@@ -1,0 +1,1171 @@
+/* Owner detail screens: appointment, new appointment, clients, client record, money, settings.
+   Everything is scoped under `.od` (set on each screen's root) or uses an `od-` class, so it
+   can't leak into the other owner screens. Built on the tokens in styles.css. */
+
+/* ------------------------------------------------------------------ local tokens */
+:root {
+  --od-lemon-bg: var(--lemon-pale);
+  --od-lemon-ink: #7d5200;                    /* 6:1 on --lemon-pale */
+  --od-lemon-ring: color-mix(in srgb, var(--lemon-deep) 45%, transparent);
+  --od-lilac-bg: #f1eaf7;
+  --od-lilac-ink: #5d4877;                    /* 6.4:1 on --od-lilac-bg */
+  --od-lilac-ring: color-mix(in srgb, var(--lilac) 75%, transparent);
+  --od-pink-ring: color-mix(in srgb, var(--accent) 22%, transparent);
+  --od-leader: color-mix(in srgb, var(--line-strong) 85%, var(--accent) 15%);
+  --od-wa: #1fa855;
+  --od-wa-soft: #e3f7ea;
+  --od-lemon-wash: color-mix(in srgb, var(--lemon-pale) 70%, transparent);
+}
+:root {
+  --od-lemon-bg: color-mix(in srgb, var(--lemon) 15%, var(--surface));
+  --od-lemon-ink: #f6d667;
+  --od-lemon-ring: color-mix(in srgb, var(--lemon) 35%, transparent);
+  --od-lilac-bg: color-mix(in srgb, #b9a1dc 20%, var(--surface));
+  --od-lilac-ink: #e0d2f5;
+  --od-lilac-ring: color-mix(in srgb, #b9a1dc 40%, transparent);
+  --od-pink-ring: color-mix(in srgb, var(--accent) 30%, transparent);
+  --od-leader: color-mix(in srgb, var(--line-strong) 80%, var(--accent) 20%);
+  --od-wa: #5fdc8f;
+  --od-wa-soft: color-mix(in srgb, #25d366 14%, var(--surface));
+  --od-lemon-wash: color-mix(in srgb, var(--lemon) 9%, transparent);
+}
+
+/* ------------------------------------------------------------------ avatars */
+.od-avatar {
+  --av: 44px;
+  flex: none;
+  width: var(--av);
+  height: var(--av);
+  border-radius: 50%;
+  display: inline-grid;
+  place-items: center;
+  font-weight: 800;
+  font-size: calc(var(--av) * 0.36);
+  letter-spacing: 0.04em;
+  line-height: 1;
+  user-select: none;
+  -webkit-user-select: none;
+  background:
+    radial-gradient(circle at 32% 26%, rgba(255, 255, 255, 0.75), transparent 58%),
+    var(--av-bg);
+  color: var(--av-ink);
+  box-shadow: inset 0 0 0 1.5px var(--av-ring), 0 2px 6px -2px rgba(214, 21, 111, 0.18);
+}
+.od-avatar-sm { --av: 38px; }
+.od-avatar-lg { --av: 76px; font-size: 1.65rem; box-shadow: inset 0 0 0 2px var(--av-ring), 0 0 0 5px color-mix(in srgb, var(--av-bg) 60%, transparent), var(--shadow-sm); }
+.od-tone-pink { --av-bg: var(--accent-soft); --av-ink: var(--accent-text); --av-ring: var(--od-pink-ring); }
+.od-tone-lemon { --av-bg: var(--od-lemon-bg); --av-ink: var(--od-lemon-ink); --av-ring: var(--od-lemon-ring); }
+.od-tone-lilac { --av-bg: var(--od-lilac-bg); --av-ink: var(--od-lilac-ink); --av-ring: var(--od-lilac-ring); }
+.od-avatar { background: radial-gradient(circle at 32% 26%, rgba(255, 255, 255, 0.1), transparent 58%), var(--av-bg); }
+
+/* ------------------------------------------------------------------ icon circles */
+.od-ic {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: inline-grid;
+  place-items: center;
+  color: var(--accent);
+  background: radial-gradient(circle at 30% 25%, var(--surface), var(--accent-soft) 72%);
+  box-shadow: inset 0 0 0 1px var(--od-pink-ring);
+}
+.od-ic svg { width: 21px; height: 21px; }
+.od-ic.small { width: 34px; height: 34px; }
+.od-ic.small svg { width: 18px; height: 18px; }
+.od-ic.lemon { color: var(--od-lemon-ink); background: radial-gradient(circle at 30% 25%, var(--surface), var(--od-lemon-bg) 72%); box-shadow: inset 0 0 0 1px var(--od-lemon-ring); }
+.od-ic.lilac { color: var(--od-lilac-ink); background: radial-gradient(circle at 30% 25%, var(--surface), var(--od-lilac-bg) 72%); box-shadow: inset 0 0 0 1px var(--od-lilac-ring); }
+.od-ic.ok { color: var(--ok); background: radial-gradient(circle at 30% 25%, var(--surface), var(--ok-soft) 72%); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ok) 25%, transparent); }
+.od-ic.danger { color: var(--danger); background: radial-gradient(circle at 30% 25%, var(--surface), var(--danger-soft) 72%); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--danger) 25%, transparent); }
+.od-ic.wa { color: var(--od-wa); background: radial-gradient(circle at 30% 25%, var(--surface), var(--od-wa-soft) 72%); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--od-wa) 30%, transparent); }
+
+/* a card's heading with its icon */
+.od-panel-head { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.od-panel-head h3 { flex: 1; min-width: 0; font-size: 1.06rem; overflow-wrap: anywhere; }
+.od-panel-head .btn { flex: none; }
+
+/* small coloured tags (allergy, regular, …) */
+.od-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 9px 2px 7px;
+  border-radius: var(--radius-pill);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+.od-tag::before {
+  content: '';
+  width: 12px;
+  height: 12px;
+  flex: none;
+  background: currentColor;
+  -webkit-mask: var(--heart-mask) center / contain no-repeat;
+  mask: var(--heart-mask) center / contain no-repeat;
+}
+.od-tag-allergy { background: var(--danger-soft); color: var(--danger); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--danger) 22%, transparent); }
+.od-tag-allergy::before { -webkit-mask-image: var(--alert-mask); mask-image: var(--alert-mask); }
+.od-tag-regular { background: var(--od-lemon-bg); color: var(--od-lemon-ink); box-shadow: inset 0 0 0 1px var(--od-lemon-ring); }
+.od-tag-pink { background: var(--accent-soft); color: var(--accent-text); box-shadow: inset 0 0 0 1px var(--od-pink-ring); }
+
+/* ------------------------------------------------------------------ receipt rows: name …… price */
+.od-receipt { margin: 0; display: flex; flex-direction: column; gap: 9px; }
+.od-receipt > div { display: flex; align-items: baseline; min-width: 0; }
+.od-receipt dt {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  color: var(--muted);
+  font-size: 0.92rem;
+  font-weight: 650;
+}
+.od-receipt dt::after {
+  content: '';
+  flex: 1 1 0;
+  min-width: 14px;
+  margin: 0 8px 0 9px;
+  border-bottom: 2px dotted var(--od-leader);
+  transform: translateY(-4px);
+}
+.od-receipt dd {
+  flex: 0 1 auto;
+  max-width: 78%;
+  text-wrap: balance;
+  margin: 0;
+  text-align: right;
+  color: var(--ink-strong);
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.od-receipt .od-price { color: var(--accent); font-weight: 800; font-size: 1.14rem; letter-spacing: -0.005em; }
+.od-receipt .flag { color: var(--danger); }
+.od-receipt-total { padding-top: 9px; border-top: 1px solid var(--line); }
+.od-receipt-total dt { color: var(--ink-strong); font-weight: 800; }
+
+/* ------------------------------------------------------------------ contact tiles */
+.od-contact { display: flex; gap: 10px; }
+.od-contact > .btn {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 70px;
+  flex-direction: column;
+  gap: 5px;
+  padding: 10px 6px 9px;
+  border-radius: 22px;
+  font-size: 0.86rem;
+  font-weight: 750;
+  line-height: 1.15;
+}
+.od-contact > .btn svg { width: 23px; height: 23px; }
+.od-contact > .btn:not(.wa) svg { color: var(--accent); }
+.od-contact > span.sub { align-self: center; }
+
+/* ------------------------------------------------------------------ appointment */
+.od-hero { position: relative; overflow: hidden; padding: 18px 18px 16px; }
+.od-hero::before {
+  /* a soft blush bloom in the corner, like the washes on the page */
+  content: '';
+  position: absolute;
+  inset: -40px -50px auto auto;
+  width: 200px;
+  height: 160px;
+  background: radial-gradient(closest-side, color-mix(in srgb, var(--brush) 55%, transparent), transparent);
+  pointer-events: none;
+}
+.od-hero-main { position: relative; display: flex; gap: 16px; align-items: flex-start; }
+.od-hero-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.od-hero-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 2px; }
+.od-hero-service {
+  font-size: 1.32rem;
+  font-weight: 800;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+  color: var(--ink-strong);
+  overflow-wrap: anywhere;
+}
+.od-when { display: flex; flex-direction: column; gap: 1px; margin-top: 2px; }
+.od-when-line { order: -1; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.od-when-time { font-size: 1.12rem; font-weight: 800; color: var(--accent); font-variant-numeric: tabular-nums; letter-spacing: 0.005em; }
+.od-when-dur {
+  padding: 1px 9px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 750;
+}
+.od-when-day { color: var(--muted); font-size: 0.94rem; font-weight: 600; }
+.od-hero-cancelled .od-when-time, .od-hero-no_show .od-when-time { color: var(--muted); text-decoration: line-through; text-decoration-thickness: 1.5px; }
+.od-hero-completed .od-when-time { color: var(--ink-strong); }
+
+.od-datetile {
+  flex: none;
+  width: 62px;
+  border-radius: 16px;
+  overflow: hidden;
+  text-align: center;
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--line-strong), 0 6px 14px -6px rgba(214, 21, 111, 0.35);
+  display: flex;
+  flex-direction: column;
+}
+.od-dt-dow {
+  display: block;
+  padding: 4px 0 3px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  color: var(--accent-ink);
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  text-indent: 0.18em;
+}
+.od-dt-day { display: block; font-size: 1.7rem; font-weight: 800; line-height: 1.1; padding-top: 3px; color: var(--ink-strong); font-variant-numeric: tabular-nums; }
+.od-dt-mon { display: block; padding-bottom: 6px; font-size: 0.7rem; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+
+.od-cancelled {
+  position: relative;
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  margin-top: 14px;
+  padding: 11px 14px;
+  border-radius: 14px;
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: 0.92rem;
+  font-weight: 600;
+  border: 1px solid color-mix(in srgb, var(--danger) 18%, transparent);
+}
+.od-cancelled b { color: inherit; }
+.od-cancelled-when { display: block; white-space: nowrap; font-size: 0.84rem; opacity: 0.85; }
+.od-cancelled-reason { margin-top: 6px; color: var(--ink); font-weight: 500; }
+.od-cancelled-ic {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+  background: currentColor;
+  -webkit-mask: var(--alert-mask) center / contain no-repeat;
+  mask: var(--alert-mask) center / contain no-repeat;
+}
+
+.od-hero .od-receipt {
+  position: relative;
+  margin-top: 16px;
+  padding-top: 15px;
+  border-top: 2px dashed var(--line);
+}
+.od-ref { letter-spacing: 0.08em; }
+.od-quote {
+  position: relative;
+  margin-top: 14px;
+  padding: 11px 14px 11px 16px;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--surface-3) 70%, var(--surface));
+  border-left: 3px solid var(--pink);
+  font-size: 0.94rem;
+  color: var(--ink);
+}
+.od-quote b { color: var(--accent-text); }
+.od-agreed { margin-top: 12px; }
+.od-agreed summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  list-style: none;
+  font-weight: 650;
+}
+.od-agreed summary::-webkit-details-marker { display: none; }
+.od-agreed summary::before {
+  content: '';
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--ok-soft) no-repeat center / 13px;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ok) 25%, transparent);
+}
+.od-agreed summary::after {
+  content: '';
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin-left: auto;
+  background: var(--accent);
+  -webkit-mask: var(--select-chevron) center / contain no-repeat;
+  mask: var(--select-chevron) center / contain no-repeat;
+  transition: transform 0.25s var(--ease);
+}
+.od-agreed[open] summary::after { transform: rotate(180deg); }
+.od-agreed summary { position: relative; }
+.od-agreed p { margin: 4px 0 0 30px; padding: 10px 12px; border-radius: 12px; background: var(--surface-2); }
+/* the tick inside the green circle */
+.od-agreed { position: relative; }
+.od-agreed::before {
+  content: '';
+  position: absolute;
+  left: 5px;
+  top: 16px;
+  width: 12px;
+  height: 12px;
+  background: var(--ok);
+  -webkit-mask: var(--tick-mask) center / contain no-repeat;
+  mask: var(--tick-mask) center / contain no-repeat;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.od-check-phone { border-radius: var(--radius); }
+
+.od-panel > p, .od-panel > .sub { margin: 0; }
+.od-panel .btn, .od-tool .btn { padding-left: 16px; padding-right: 16px; }
+/* the money-owed cards lead with the pink action; WhatsApp steps back, as on Reminders */
+.od-panel .btn.wa {
+  font-size: 0.97rem;
+  background: var(--surface);
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 40%, var(--line));
+  box-shadow: var(--shadow-sm);
+}
+.od-ref-pill {
+  display: inline-block;
+  margin-right: 2px;
+  padding: 0 7px;
+  border-radius: 7px;
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+  color: var(--ink-strong);
+  letter-spacing: 0.08em;
+}
+.od-paid {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 13px;
+  border-radius: 14px;
+  background: var(--ok-soft);
+  color: var(--ok);
+  font-size: 0.92rem;
+  font-weight: 700;
+  border: 1px solid color-mix(in srgb, var(--ok) 20%, transparent);
+}
+.od-paid::before {
+  content: '';
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  background: currentColor;
+  -webkit-mask: var(--tick-mask) center / contain no-repeat;
+  mask: var(--tick-mask) center / contain no-repeat;
+}
+.od-owed { font-weight: 800; color: var(--ink-strong); }
+
+.od-actions { display: flex; flex-direction: column; gap: 10px; }
+.od-finish { min-height: 58px; font-size: 1.08rem; gap: 10px; }
+.od-actions-row { display: flex; gap: 8px; }
+.od-actions-row > .btn { flex: 1 1 0; min-width: 0; padding: 0 8px; font-size: 0.95rem; min-height: 48px; white-space: nowrap; }
+.od-noshow { align-self: center; }
+
+.od-tool .sub { margin: 0; }
+.od-url {
+  padding: 11px 13px;
+  border-radius: 12px;
+  background: var(--surface-2);
+  border: 1px dashed var(--line-strong);
+  color: var(--ink);
+  font-size: 0.8rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere; /* only a fallback: the link has <wbr> after the host and the token breaks at its hyphens */
+}
+.od-url-host { display: block; color: var(--muted); }
+
+/* the client's changes, as a timeline */
+.od-timeline { padding: 6px 18px; }
+.od-timeline ul { list-style: none; margin: 0; padding: 0; }
+.od-tl-item { position: relative; display: flex; gap: 14px; padding: 12px 0; }
+.od-tl-item + .od-tl-item { border-top: 1px dashed var(--line); }
+.od-tl-dot {
+  position: relative;
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin-top: 4px;
+  border-radius: 50%;
+  background: var(--surface);
+  box-shadow: inset 0 0 0 3px var(--pink), 0 0 0 4px var(--accent-soft);
+}
+.od-tl-cancelled .od-tl-dot { box-shadow: inset 0 0 0 3px var(--danger), 0 0 0 4px var(--danger-soft); }
+.od-tl-item:not(:last-child) .od-tl-dot::after {
+  content: '';
+  position: absolute;
+  left: 6px;
+  top: 20px;
+  height: calc(100% + 14px);
+  width: 2px;
+  background: linear-gradient(var(--line-strong), transparent);
+}
+.od-tl-item:not(:last-child) { overflow: visible; }
+.od-tl-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.od-tl-head .title { font-weight: 800; color: var(--ink-strong); }
+.od-tl-line { color: var(--ink); font-size: 0.92rem; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.od-tl-note { color: var(--accent-text); font-size: 0.92rem; font-style: italic; margin-top: 2px; }
+.od-tl-when { color: var(--muted); font-size: 0.8rem; font-weight: 600; margin-top: 3px; }
+
+.od-notes textarea { min-height: 88px; background: var(--surface-2); }
+
+.od-email { gap: 12px; }
+.od-email .meta::before {
+  content: '';
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 6px;
+  border-radius: 50%;
+  vertical-align: 0.08em;
+  background: var(--muted);
+}
+.od-email-sent .meta::before { background: var(--ok); }
+.od-email-waiting .meta::before { background: var(--lemon-deep); }
+.od-email-failed .meta { color: var(--danger); }
+.od-email-failed .meta::before { background: var(--danger); }
+
+/* sheets */
+.od-receipt-sheet {
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-sm);
+}
+.od-receipt-sheet dt { color: var(--ink); }
+.od-amount input { font-size: 1.45rem; font-weight: 800; min-height: 56px; font-variant-numeric: tabular-nums; color: var(--accent); }
+.od-amount-tip input { font-size: 1.15rem; min-height: 50px; color: var(--ink-strong); }
+
+/* ------------------------------------------------------------------ clients list */
+.od-search { position: sticky; top: 8px; z-index: 5; margin-bottom: 12px; }
+.od-search input[type='search'] {
+  min-height: 52px;
+  border-radius: var(--radius-pill);
+  border-color: var(--line-strong);
+  background-color: var(--frost);
+  -webkit-backdrop-filter: blur(14px) saturate(1.5);
+  backdrop-filter: blur(14px) saturate(1.5);
+  box-shadow: var(--shadow-sm), inset 0 1px 2px rgba(214, 21, 111, 0.04);
+  padding-left: 48px;
+  background-position: 18px center;
+}
+.od-check-card {
+  margin: 0 0 12px;
+  padding: 12px 16px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+}
+.od-client-list .od-client-row { gap: 13px; padding: 12px 16px; min-height: 68px; }
+.od-name-line { display: flex; align-items: center; flex-wrap: wrap; gap: 3px 8px; min-width: 0; }
+.od-name-line .title { overflow-wrap: anywhere; min-width: 0; }
+.od-client-list .list > li + li { background-position: 73px 0 !important; background-size: calc(100% - 89px) 1px !important; }
+
+/* ------------------------------------------------------------------ client record */
+.od-profile { position: relative; overflow: hidden; padding: 18px; display: flex; flex-direction: column; gap: 16px; }
+.od-profile::before {
+  content: '';
+  position: absolute;
+  inset: -60px auto auto -50px;
+  width: 220px;
+  height: 170px;
+  background: radial-gradient(closest-side, color-mix(in srgb, var(--brush) 50%, transparent), transparent);
+  pointer-events: none;
+}
+.od-profile > * { position: relative; }
+.od-profile-top { display: flex; align-items: center; gap: 16px; min-width: 0; }
+.od-profile-contact { flex: 1; min-width: 0; margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.od-profile-contact dt { color: var(--muted); font-size: 0.7rem; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase; }
+.od-profile-contact dd { margin: 0; color: var(--ink-strong); font-weight: 650; overflow-wrap: anywhere; line-height: 1.35; }
+.od-mini-stats {
+  margin: 0;
+  display: grid;
+  grid-template-columns: 0.8fr 0.9fr 1.3fr;
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--surface-2) 80%, var(--surface));
+  border: 1px solid var(--line);
+}
+.od-mini-stats > div { padding: 10px 8px 9px; text-align: center; min-width: 0; }
+.od-mini-stats > div + div { border-left: 1px solid var(--line); }
+.od-mini-stats dt { color: var(--muted); font-size: 0.66rem; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; }
+.od-mini-stats dd { margin: 1px 0 0; color: var(--ink-strong); font-weight: 800; font-size: 1.02rem; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; line-height: 1.3; }
+.od-mini-stats > div:nth-child(2) dd { color: var(--accent); }
+
+.od-allergy {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 14px 16px;
+  border-radius: var(--radius);
+  background:
+    linear-gradient(90deg, var(--danger), color-mix(in srgb, var(--danger) 70%, var(--pink))) left / 5px 100% no-repeat,
+    var(--danger-soft);
+  border: 1px solid color-mix(in srgb, var(--danger) 25%, transparent);
+  box-shadow: 0 8px 20px -12px color-mix(in srgb, var(--danger) 70%, transparent);
+  color: var(--danger);
+}
+.od-allergy-ic {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--danger) 30%, transparent);
+  position: relative;
+}
+.od-allergy-ic::after {
+  content: '';
+  position: absolute;
+  inset: 7px;
+  background: var(--danger);
+  -webkit-mask: var(--alert-mask) center / contain no-repeat;
+  mask: var(--alert-mask) center / contain no-repeat;
+}
+.od-allergy-label { font-size: 0.72rem; font-weight: 800; letter-spacing: 0.16em; text-transform: uppercase; }
+.od-allergy-text { font-weight: 750; font-size: 1.02rem; line-height: 1.4; color: var(--danger); overflow-wrap: anywhere; }
+
+.od-book { gap: 8px; }
+.od-regular { padding: 12px 16px; }
+.od-note-text { margin: 0; white-space: pre-wrap; color: var(--ink); }
+.od-client-notes .btn svg { color: var(--accent); }
+
+.od-health { gap: 12px; }
+.od-consent { display: flex; align-items: flex-start; gap: 10px; }
+.od-consent .sub { margin: 4px 0 0; }
+.od-subhead { display: flex; align-items: center; gap: 10px; margin-top: 8px; padding-top: 16px; border-top: 1px solid var(--line); }
+.od-subhead h3 { flex: 1; min-width: 0; }
+.od-none { margin: 0; }
+.od-tests, .od-forms { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.od-test {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 6px 10px 14px;
+  border-radius: 14px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+}
+.od-test::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 12px;
+  bottom: 12px;
+  width: 4px;
+  border-radius: 0 4px 4px 0;
+  background: var(--tone, var(--line-strong));
+}
+.od-test-ok { --tone: var(--ok); }
+.od-test-danger { --tone: var(--danger); background: color-mix(in srgb, var(--danger-soft) 60%, var(--surface)); }
+.od-test-warn { --tone: var(--lemon-deep); }
+.od-test-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.od-test-date { font-weight: 800; color: var(--ink-strong); font-variant-numeric: tabular-nums; }
+.od-test-detail { color: var(--muted); font-size: 0.88rem; margin-top: 2px; overflow-wrap: anywhere; }
+.od-test .icon-btn { color: var(--muted); }
+.od-form-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 60px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: transform 0.16s var(--ease), border-color 0.2s;
+}
+.od-form-row:active { transform: scale(0.985); }
+@media (hover: hover) { .od-form-row:hover { border-color: var(--line-strong); } }
+.od-form-row .title { font-weight: 750; color: var(--ink-strong); }
+.od-form-row .meta { color: var(--muted); font-size: 0.86rem; }
+.od-form-ic {
+  flex: none;
+  width: 36px;
+  height: 42px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  background: var(--surface);
+  color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--line-strong), 0 2px 5px -2px rgba(214, 21, 111, 0.2);
+}
+.od-form-ic.flagged { color: var(--danger); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--danger) 35%, transparent); }
+.od-health-delete { align-self: flex-start; margin-top: 6px; }
+
+.od-photos-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 12px 0 -4px; }
+.od-photos-head .section-title { margin: 0 6px; }
+.od-add-photos { cursor: pointer; flex: none; }
+.od-add-photos svg { color: var(--accent); }
+.od-photos-empty { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 8px; padding: 22px 18px; border-style: dashed; border-color: var(--line-strong); box-shadow: none; background: color-mix(in srgb, var(--surface) 70%, transparent); }
+.od-photos-empty .sub { margin: 0; max-width: 28ch; }
+.od-photo-grid { gap: 10px; }
+.od-photo-grid button { border-radius: 20px; border: 3px solid var(--surface); box-shadow: 0 0 0 1px var(--line), var(--shadow-sm); }
+.od-photo-grid button:nth-child(3n + 1) { border-top-left-radius: 26px; }
+.od-photo-full { border-radius: 20px; box-shadow: var(--shadow); }
+.od-delete { margin-top: 18px; gap: 8px; }
+
+.od-form-sheet { gap: 10px; }
+.od-qa { padding: 10px 14px; border-radius: 14px; background: var(--surface); border: 1px solid var(--line); }
+.od-qa.flagged { background: var(--danger-soft); border-color: color-mix(in srgb, var(--danger) 25%, transparent); }
+.od-qa-q { color: var(--muted); font-size: 0.86rem; }
+.od-qa-a { color: var(--ink-strong); font-weight: 700; margin-top: 2px; overflow-wrap: anywhere; }
+.od-qa-a.flag { color: var(--danger); }
+
+/* ------------------------------------------------------------------ money */
+.od-money .seg { margin-top: 2px; }
+.od-period {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 12px 0 14px;
+  padding: 4px;
+  border-radius: var(--radius-pill);
+  background: var(--frost);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-sm);
+}
+.od-period .icon-btn { background: var(--surface); box-shadow: inset 0 0 0 1px var(--line); }
+.od-period-label { flex: 1; min-width: 0; text-align: center; display: flex; flex-direction: column; align-items: center; line-height: 1.15; }
+.od-period-label strong { font-size: 1.05rem; font-weight: 800; color: var(--ink-strong); letter-spacing: 0.01em; }
+.od-period-sub { font-size: 0.78rem; font-weight: 650; color: var(--muted); margin-top: 2px; }
+
+.od-stats { gap: 10px; }
+.od-stats .stat { padding: 14px 16px 13px; }
+.od-stat-total { padding: 18px 20px 18px !important; }
+.od-stat-total .label { color: var(--accent-text); }
+.od-stats > .stat.od-stat-total .value { font-size: 2.5rem; letter-spacing: -0.02em; line-height: 1.1; margin-top: 4px; }
+.od-stat-lemon { position: absolute; right: -22px; top: -24px; opacity: 0.95; transform: rotate(-18deg); pointer-events: none; }
+.od-split {
+  display: flex;
+  gap: 3px;
+  height: 8px;
+  margin-top: 12px;
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+}
+.od-split span { display: block; min-width: 0; border-radius: var(--radius-pill); }
+.od-split span[style*='width: 0%'] { display: none; }
+.od-split-cash { background: linear-gradient(90deg, var(--lemon), var(--lemon-deep)); }
+.od-split-bank { background: linear-gradient(90deg, #c9b3e6, #a688cf); }
+.od-stat-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 2px; }
+.od-stat-row .value { margin-top: 0; min-width: 0; }
+.od-stat-ic {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  margin-right: -4px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.od-stat-cash .od-stat-ic { color: var(--od-lemon-ink); background: var(--od-lemon-bg); box-shadow: inset 0 0 0 1px var(--od-lemon-ring); }
+.od-stat-bank .od-stat-ic { color: var(--od-lilac-ink); background: var(--od-lilac-bg); box-shadow: inset 0 0 0 1px var(--od-lilac-ring); }
+.od-stat-tips .od-stat-ic { color: var(--pink); }
+.od-stat-refunds .od-stat-ic { color: var(--danger); background: var(--danger-soft); }
+.od-stats .stat .label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.od-stats .stat .value { white-space: nowrap; }
+/* the small tiles: values in a row line up at the bottom, even when one label wraps */
+.od-stats .stat:not(.od-stat-total) { display: flex; flex-direction: column; justify-content: space-between; }
+/* long figures (pence, thousands): a smaller size and no icons, so a number is never split */
+.od-stats-long .od-stat-ic { display: none; }
+.od-stats-long .stat:not(.od-stat-total) .value { font-size: 1.2rem; line-height: 32px; }
+.od-stats > .stat.od-stat-total .value.od-long { font-size: 2rem; }
+
+.od-export { margin-top: 12px; gap: 8px; }
+.od-tax-note {
+  margin: 12px 2px 4px;
+  padding: 12px 14px 12px 42px;
+  position: relative;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--surface) 65%, transparent);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.86rem;
+  line-height: 1.5;
+}
+.od-tax-note-ic { position: absolute; left: 14px; top: 14px; display: flex; color: var(--accent); }
+.od-day .day-head h2 { font-size: 0.98rem; }
+.od-day-total { font-weight: 800; color: var(--accent); font-variant-numeric: tabular-nums; }
+/* the detail line runs on under the amount and the bin, so it rarely needs a second line */
+.od-pay {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto 44px;
+  grid-template-areas:
+    'ic title amt del'
+    'ic meta meta meta';
+  column-gap: 11px;
+  row-gap: 2px;
+  align-items: center;
+  padding: 12px 6px 12px 14px;
+}
+.od-pay > .grow { display: contents; }
+.od-pay > .od-ic { grid-area: ic; }
+.od-pay .title { grid-area: title; overflow-wrap: anywhere; }
+.od-pay .meta { grid-area: meta; overflow-wrap: anywhere; }
+.od-amt { grid-area: amt; font-variant-numeric: tabular-nums; font-weight: 800; color: var(--ink-strong); font-size: 1.04rem; white-space: nowrap; }
+.od-pay-out .od-amt { color: var(--danger); }
+/* the 44px tap target hangs over the row's padding instead of making the first line taller */
+.od-del { grid-area: del; color: var(--muted); margin: -11px 0 -11px -4px; }
+.od-day .card.tight > .list > li + li { background-position: 59px 0; background-size: calc(100% - 75px) 1px; }
+
+/* ------------------------------------------------------------------ new appointment: calm steps */
+.od-step { position: relative; overflow: visible; }
+.od-step + .od-step::before {
+  /* a dotted thread joining the steps */
+  content: '';
+  position: absolute;
+  left: 34px;
+  top: -16px;
+  height: 18px;
+  border-left: 2px dotted var(--line-strong);
+}
+.od-step-head { display: flex; align-items: center; gap: 12px; }
+.od-step-head h3 { font-size: 1.08rem; }
+.od-step-num {
+  flex: none;
+  position: relative;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  font-size: 0.95rem;
+  color: var(--accent-text);
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1.5px var(--od-pink-ring);
+  transition: background-color 0.3s var(--ease), box-shadow 0.3s var(--ease);
+}
+.od-step.done .od-step-num { background: var(--grad-accent); box-shadow: var(--glow); }
+.od-step.done .od-step-num > span { opacity: 0; }
+.od-step-num::after {
+  content: '';
+  position: absolute;
+  inset: 9px;
+  background: var(--accent-ink);
+  -webkit-mask: var(--tick-mask) center / contain no-repeat;
+  mask: var(--tick-mask) center / contain no-repeat;
+  transform: scale(0);
+  transition: transform 0.3s var(--ease-spring);
+}
+.od-step.done .od-step-num::after { transform: scale(1); }
+.od-picked {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 10px 10px 12px;
+  border-radius: 16px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  min-width: 0;
+}
+.od-picked-name { font-weight: 800; color: var(--ink-strong); overflow-wrap: anywhere; }
+.od-picked .sub { overflow-wrap: anywhere; text-wrap: pretty; }
+.od-picked-visits { display: block; }
+.od-picked .btn { flex: none; }
+/* on a narrow phone, "Change" drops under the details rather than crushing them */
+.od-picked { flex-wrap: wrap; }
+.od-picked .grow { flex: 1 1 140px; min-width: 0; }
+.od-picked .btn { margin-left: auto; }
+.od-matches { box-shadow: var(--shadow-sm); animation: none; }
+.od-matches .list-row { gap: 12px; padding: 10px 14px; }
+.od-new-client { gap: 8px; }
+.od-slots-label { color: var(--muted); font-size: 0.88rem; font-weight: 700; }
+.od-no-slots { padding: 14px; border-radius: 14px; background: var(--surface-2); text-align: center; }
+.od-any-time { align-self: center; }
+.od-add { min-height: 58px; font-size: 1.08rem; margin-top: 4px; }
+
+/* ------------------------------------------------------------------ settings home */
+.od-biz {
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 18px;
+  background:
+    radial-gradient(70% 120% at 100% 0%, var(--od-lemon-wash), transparent 70%),
+    radial-gradient(60% 120% at 0% 100%, color-mix(in srgb, var(--brush) 40%, transparent), transparent 70%),
+    var(--surface);
+}
+.od-biz-badge {
+  flex: none;
+  width: 58px;
+  height: 58px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1.5px var(--od-pink-ring), 0 0 0 4px color-mix(in srgb, var(--accent-soft) 70%, transparent), var(--shadow-sm);
+}
+.od-biz-name {
+  font-family: var(--font-script);
+  font-size: 1.75rem;
+  line-height: 1.15;
+  color: var(--ink-strong);
+  overflow-wrap: anywhere;
+  margin-bottom: 4px;
+}
+.od-set-list .od-set-row { gap: 13px; padding: 12px 14px 12px 14px; min-height: 64px; }
+.od-set-list .od-set-row .title { overflow-wrap: anywhere; }
+.od-set-list .list > li + li { background-position: 67px 0 !important; background-size: calc(100% - 81px) 1px !important; }
+.od-set-row .od-ic { transition: transform 0.25s var(--ease-spring); }
+.od-set-row:active .od-ic { transform: scale(0.92); }
+.od-signed-in { margin: 22px 0 0; text-align: center; color: var(--muted); font-size: 0.86rem; font-weight: 600; overflow-wrap: anywhere; }
+
+/* ------------------------------------------------------------------ settings pages */
+.od-set-card { gap: 16px; }
+.od-set-title { font-size: 1.06rem; font-weight: 800; }
+.od-set-intro { margin: -6px 0 0; }
+.od-page-intro { margin: -4px 4px 0; }
+.od-page-intro > .sub { margin: 0; }
+/* a small pink link to the page that holds the rest (padded to a 44px tap target) */
+.od-text-link {
+  display: inline-block;
+  padding: 9px 0;
+  margin: -3px 0 -9px;
+  color: var(--accent-text);
+  font-size: 0.92rem;
+  font-weight: 750;
+  line-height: 1.4;
+  text-decoration: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.od-text-link svg { vertical-align: -3px; margin-left: 1px; }
+@media (hover: hover) { .od-text-link:hover { text-decoration: underline; text-underline-offset: 3px; } }
+.od-check-row { padding: 12px 14px; border-radius: 14px; background: var(--surface-2); border: 1px solid var(--line); }
+/* the label, then its explanation as a hint beneath (like the field hints on the same card) */
+.od-check-row > span { font-weight: 700; color: var(--ink-strong); line-height: 1.35; }
+.od-check-row .sub { display: block; margin-top: 4px; font-size: 0.82rem; font-weight: 500; line-height: 1.45; color: var(--muted); text-wrap: pretty; }
+.od-use-host { align-self: flex-start; }
+.od-set-cancel textarea { min-height: 168px !important; }
+.od-set-page .notice.warn { border-radius: 14px; }
+
+/* the words, previewed like her menu header */
+.od-words-preview {
+  padding: 16px 14px 14px;
+  border-radius: 16px;
+  text-align: center;
+  background:
+    radial-gradient(60% 90% at 0% 0%, color-mix(in srgb, var(--brush) 45%, transparent), transparent 70%),
+    radial-gradient(50% 90% at 100% 100%, var(--od-lemon-wash), transparent 70%),
+    var(--surface-2);
+  border: 1px dashed var(--line-strong);
+  overflow: hidden;
+}
+.od-words-preview .strapline { margin: 0 auto 4px; max-width: 100%; flex-wrap: wrap; }
+.od-tagline {
+  margin: 2px 0 0;
+  font-family: var(--font-hand);
+  font-weight: 600;
+  font-size: 1.45rem;
+  line-height: 1.25;
+  color: var(--pink);
+  overflow-wrap: anywhere;
+}
+.od-tagline .heart { margin-left: 4px; vertical-align: 0.1em; }
+.od-example { display: block; margin-top: 8px; padding: 10px 12px; border-radius: 12px; background: var(--surface-2); border: 1px dashed var(--line-strong); color: var(--ink); line-height: 1.55; font-size: 0.86em; }
+/* one menu line each: a line too long for the box carries on indented, so it can't pass for a new line */
+.od-ex-line { display: block; padding-left: 2ch; text-indent: -2ch; }
+.od-menu-text { font-family: var(--font-sans); font-size: 16px !important; line-height: 1.6; }
+/* the same in the box she types in, where the browser can (Safari): wrapped rows indent, real lines don't */
+@supports (text-indent: 1em hanging each-line) {
+  .od-menu-text { text-indent: 1.5em hanging each-line; }
+}
+.od-preview-label { display: flex; align-items: center; gap: 7px; color: var(--accent-text); font-size: 0.9rem; font-weight: 750; margin-bottom: -6px; }
+
+/* the add-ons preview uses the booking page's own markup and styles (public.css); the title size
+   there is scoped to the public pages, so set it here too */
+.od-set-page .addon-card .script-title { font-size: min(1.85rem, 7.4vw); }
+
+/* treatments & prices, as her price list */
+.od-pl { list-style: none; margin: 0; padding: 0; }
+.od-pricelist { padding: 16px 8px 10px; }
+.od-pricelist-title { margin: 0 0 4px 16px; font-size: 2rem; }
+.od-pl li + li { border-top: 1px dashed var(--line); margin: 0 12px; }
+.od-pl li + li .od-pl-row { margin: 0 -12px; width: calc(100% + 24px); }
+.od-pl-row {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  width: 100%;
+  min-height: 60px;
+  padding: 11px 12px 10px;
+  border: 0;
+  border-radius: 12px;
+  background: none;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 0.2s var(--ease);
+}
+.od-pl-row:active { background: var(--surface-2); }
+@media (hover: hover) { .od-pl-row:hover { background: color-mix(in srgb, var(--surface-2) 70%, transparent); } }
+.od-pl-line { display: flex; align-items: flex-end; align-items: last baseline; gap: 8px; width: 100%; min-width: 0; }
+.od-pl-name {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  overflow: clip; /* clips the leader without making the name a scroll box */
+  font-weight: 750;
+  color: var(--ink-strong);
+  overflow-wrap: anywhere;
+  text-wrap: pretty;
+}
+.od-pl-name::after {
+  content: '';
+  display: inline-block;
+  width: 100vw;
+  margin: 0 -100vw 0 8px;
+  vertical-align: 0.28em;
+  border-bottom: 2px dotted var(--od-leader);
+}
+.od-pl-price { flex: none; font-weight: 800; font-size: 1.08rem; color: var(--accent); font-variant-numeric: tabular-nums; }
+.od-pl-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 0.86rem; font-weight: 600; }
+.od-pl-chev { display: inline-flex; flex: none; color: var(--od-leader); }
+
+/* opening hours */
+.od-day-card { gap: 12px; padding: 14px 16px 16px; }
+.od-day-toggle { padding: 0; align-items: center; min-height: 32px; }
+.od-day-toggle strong { font-size: 1.04rem; }
+.od-closed-tag { margin-left: auto; padding: 2px 10px; border-radius: var(--radius-pill); background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--line); font-weight: 700; font-size: 0.8rem; }
+.od-day-closed { background: color-mix(in srgb, var(--surface) 70%, transparent); box-shadow: none; padding-bottom: 14px; }
+.od-break { padding-top: 12px; border-top: 1px dashed var(--line); }
+.od-break .field > span { color: var(--muted); }
+
+.od-off-row { gap: 12px; }
+
+/* WhatsApp wording */
+.od-placeholders .sub { margin: 0; }
+/* the tokens in the explanation look like the chips above them */
+.od-placeholders .sub .mono {
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: var(--surface-3);
+  color: var(--accent-text);
+  font-size: 0.85em;
+  font-weight: 600;
+  box-shadow: inset 0 0 0 1px var(--od-pink-ring);
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+.od-more { margin: 0; }
+.od-more summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  list-style: none;
+  color: var(--accent);
+  font-weight: 750;
+  font-size: 0.92rem;
+}
+.od-more summary::-webkit-details-marker { display: none; }
+.od-more summary::after {
+  content: '';
+  flex: none;
+  width: 14px;
+  height: 14px;
+  background: currentColor;
+  -webkit-mask: var(--select-chevron) center / contain no-repeat;
+  mask: var(--select-chevron) center / contain no-repeat;
+  transition: transform 0.25s var(--ease);
+}
+.od-more[open] summary::after { transform: rotate(180deg); }
+.od-placeholders .od-more > p { margin-top: 2px; }
+.od-placeholders .od-more > p + p { margin-top: 10px; }
+.od-ph-list { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; }
+.od-ph-list code {
+  padding: 3px 8px;
+  border-radius: 8px;
+  background: var(--surface-3);
+  color: var(--accent-text);
+  font-size: 0.78rem;
+  font-weight: 600;
+  box-shadow: inset 0 0 0 1px var(--od-pink-ring);
+}
+.od-template { padding: 14px 16px; }
+.od-template .field > span::before {
+  content: '';
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  margin-right: 7px;
+  vertical-align: -3px;
+  background: var(--od-wa);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20.5 11.6a8.5 8.5 0 0 1-12.6 7.4L3.5 20.5l1.6-4.3A8.5 8.5 0 1 1 20.5 11.6z'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20.5 11.6a8.5 8.5 0 0 1-12.6 7.4L3.5 20.5l1.6-4.3A8.5 8.5 0 1 1 20.5 11.6z'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+.od-template textarea { background: var(--surface-2); }
+
+/* email set-up */
+.od-status { display: flex; align-items: center; gap: 10px; font-weight: 700; border-radius: 14px; }
+.od-status::before { content: ''; flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--muted); box-shadow: 0 0 0 4px color-mix(in srgb, var(--muted) 18%, transparent); }
+.od-status-ok { background: var(--ok-soft); color: var(--ok); border-color: color-mix(in srgb, var(--ok) 22%, transparent); }
+.od-status-ok::before { background: var(--ok); box-shadow: 0 0 0 4px color-mix(in srgb, var(--ok) 20%, transparent); }
+.od-status.warn::before { background: var(--lemon-deep); }
+/* not set up: clients get no emails, so it reads as a warning, not a neutral note */
+.od-status-off { background: var(--warn-soft); color: var(--warn); border-color: color-mix(in srgb, var(--lemon-deep) 40%, transparent); }
+.od-status-off::before { background: var(--lemon-deep); box-shadow: 0 0 0 4px color-mix(in srgb, var(--lemon-deep) 22%, transparent); }
+.od-set-card > p { margin: 0; }
+.od-hearts { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.od-hearts li { position: relative; padding-left: 22px; }
+.od-hearts li::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 4px;
+  width: 13px;
+  height: 13px;
+  background: var(--pink);
+  -webkit-mask: var(--heart-mask) center / contain no-repeat;
+  mask: var(--heart-mask) center / contain no-repeat;
+}
+.od-setup .mono, .od-setup .od-well { padding: 8px 10px; border-radius: 10px; background: var(--surface-2); margin-top: 3px; }
+.od-setup .od-well { color: var(--muted); font-size: 0.92rem; }
+.od-key { color: var(--muted); font-size: 0.72rem; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase; overflow-wrap: anywhere; }
+.od-setup .btn.small { align-self: flex-start; }
+
+/* backup and account */
+.od-backup { align-items: flex-start; }
+.od-backup-ic { width: 52px; height: 52px; }
+.od-backup-ic svg { width: 26px; height: 26px; }
+.od-account { display: flex; align-items: center; gap: 14px; }
+.od-account-who { margin: 0; min-width: 0; }
+.od-account-who dt { color: var(--muted); font-size: 0.72rem; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase; }
+.od-account-who dd { margin: 0; color: var(--ink-strong); font-weight: 700; overflow-wrap: anywhere; }
+
+/* ------------------------------------------------------------------ line breaks and rhythm */
+.od-nowrap { white-space: nowrap; }
+/* stacked pages: the section title sits 26px below the card above and 10px above its own card,
+   as on Settings (the stack's 14px gap is part of that) */
+.od.stack > .section-title { margin: 12px 6px -4px; }
+/* the client record's appointments show a date under the time ("Tue 27 Oct") */
+.od-client .appt-li { --appt-time: 4.4rem; }
+.od-client .appt-time small { white-space: nowrap; }
+/* on their own record the name is the page title: the treatment and price lead each row instead
+   (the name stays for screen readers, so the link still says whose appointment it is) */
+.od-client .appt-row .appt-name {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+.od-client .list-row.appt-row .appt-meta {
+  grid-area: name;
+  font-size: 1rem;
+  line-height: 22px;
+  font-weight: 750;
+  color: var(--ink-strong);
+}
+.od-client .list-row.appt-row.is-cancelled .appt-meta { color: var(--muted); }
+/* the treatment gets the whole width; the status sits under it (as with two chips) */
+.od-client .list-row.appt-row,
+.od-client .list-row.appt-row.two-chips {
+  grid-template-areas:
+    'time dot name name chev'
+    'time dot chips chips chev';
+  grid-template-rows: auto 1fr;
+}
+.od-client .appt-row .appt-chips { flex-direction: row; justify-content: flex-start; max-width: none; margin-top: 6px; }
+.od-allergy-text { text-wrap: balance; }
+.od-health .od-none { text-wrap: pretty; }
+.od-form-row .meta { text-wrap: balance; }
+.od-form-row .od-signed { display: inline-block; }
+.od-pay .meta { text-wrap: balance; }
+.od-pay .od-meta-part { display: inline-block; }
+.od .sub, .od .field .hint, .od .list-row .meta, .od-set-card p, .od-hearts li, .od-panel > p { text-wrap: pretty; }
+/* the add-ons preview keeps the booking page's own balanced captions */
+.od-addons-preview .addons-intro, .od-addons-preview .addon-note--hand { text-wrap: balance; }
+/* new appointment, step 2: the step's heading already says "Treatment" (the label stays for screen readers) */
+.od-step-treatment > .od-step-head + .field > span:first-child {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+/* change-time sheet: Date and Minutes side by side, the same height */
+.od-move-row input { height: 52px; }
+.od-move-note { margin: 0; }
+/* change-time sheet: Save stays in view at the bottom while the free times scroll behind a soft fade.
+   Chromium sticks at the sheet's padding edge, so the negative offset (and margin) cancel the sheet's
+   bottom padding; the negative top margin cancels the stack gap, so at rest nothing moves. */
+.od-sheet-foot {
+  position: sticky;
+  bottom: calc(-22px - env(safe-area-inset-bottom));
+  z-index: 2;
+  margin: -14px -20px calc(-22px - env(safe-area-inset-bottom));
+  padding: 14px 20px calc(22px + env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: linear-gradient(to bottom, transparent, var(--bg) 14px);
+}
+
+/* settings text boxes grow to fit their words, so nothing scrolls inside them */
+@supports (field-sizing: content) {
+  .od-set-page textarea { field-sizing: content; min-height: 96px; max-height: 60vh; resize: none; }
+  /* the public Area line: one line of words, so it opens small */
+  .od-set-page textarea.od-area { min-height: 56px; }
+}
+@supports not (field-sizing: content) {
+  .od-template textarea { min-height: 230px; }
+  .od-template-long textarea { min-height: 340px; }
+  .od-menu-text { min-height: 440px; }
+}
+
+/* ------------------------------------------------------------------ small phones (SE, 320–359px) */
+@media (max-width: 359px) {
+  .od-contact { gap: 8px; }
+  .od-contact > .btn { padding-left: 2px; padding-right: 2px; font-size: 0.8rem; }
+  .od-actions-row > .btn { font-size: 0.86rem; padding: 0 4px; }
+  .od-stats .stat .label { white-space: normal; letter-spacing: 0.1em; }
+  .od-stat-ic { display: none; }
+  .od-stat-row { min-height: 32px; }
+  .od-photos-head .section-title { white-space: nowrap; letter-spacing: 0.14em; margin: 0 2px; }
+  .od-photos-head .btn { padding-left: 12px; padding-right: 12px; }
+  .od-export { padding-left: 12px; padding-right: 12px; }
+  .od-datetile { width: 56px; }
+  .od-hero-main { gap: 12px; }
+  .od-mini-stats dd { font-size: 0.94rem; }
+}
+
+/* ------------------------------------------------------------------ the title bar's add button
+   Clients and Money: the same filled pink circle as Today and Diary, so it never looks like Back */
+.topbar .icon-btn.od-top-add {
+  color: var(--accent-ink);
+  background: var(--grad-accent);
+  border: 0;
+  box-shadow: var(--glow), inset 0 1px 0 rgba(255, 255, 255, 0.22);
+}
+.topbar .icon-btn.od-top-add svg { stroke-width: 2.2; }
+.topbar .icon-btn.od-top-add:active { background: var(--grad-accent); }
+@media (hover: hover) { .topbar .icon-btn.od-top-add:hover { background: var(--grad-accent); box-shadow: var(--glow-strong); } }
