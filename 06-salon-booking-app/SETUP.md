@@ -22,6 +22,11 @@ everything belongs to the business owner rather than to whoever sets it up. Turn
 > at all would be an App Store app, which costs about £79 a year for Apple's developer account and still
 > needs a web page for client bookings.)
 
+> **No computer?** It can all be done from an iPhone in Safari. Step 6 is the fiddly one: Google's
+> script editor is built for computers, so switch Safari to the desktop site (the page menu button in
+> the address bar, then **···**, then **Request Desktop Website**) and turn the phone sideways. If
+> pasting into an editor shows no **Paste** option, type a space first and tap and hold again.
+
 > **Before you start:** a business that keeps client records, especially health information
 > like allergies, has to pay the **ICO data protection fee**. That's £52 a year for a small
 > business, or £47 by direct debit. It's a legal requirement whatever app is used, so she may
@@ -34,51 +39,65 @@ everything belongs to the business owner rather than to whoever sets it up. Turn
 ## 1. Create the database (Supabase): 15 minutes
 
 1. Go to [supabase.com](https://supabase.com) → **Start your project** → sign up with the business email.
+   It asks for an organisation first: name it after the business, choose **Free**, then **Create organization**.
 2. Create a **New project**:
    - Name: `bookings`
    - Database password: press **Generate a password** and save it in a password manager. You'll rarely need it.
-   - **Region: West EU (London)**. This matters because it keeps client data in the UK, and it can't be changed later.
-   - Plan: **Free**.
-3. Wait a minute or two while it sets up.
-4. Left menu → **SQL Editor** → **New query**. Open [`supabase/schema.sql`](supabase/schema.sql),
-   copy **all** of it, paste it in and press **Run**. It should say *Success. No rows returned*.
+   - **Region: West Europe (London)**. This matters because it keeps client data in the UK, and it can't be
+     changed later. If the free plan only offers broad areas, choose **Europe**.
+   - Leave **Enable Data API** ticked.
+3. Wait a few minutes while it sets up.
+4. Menu → **SQL Editor** → **New query**. Open [`supabase/schema.sql`](supabase/schema.sql),
+   copy **all** of it, paste it in and press **Run**. A box called **Potential issues detected** may warn about
+   destructive operations and Row Level Security: that's expected, because the script sets up its own privacy
+   rules. Choose **Run and enable RLS** (or **Run query**). It should say *Success. No rows returned*.
 5. **New query** again. Paste all of [`supabase/storage.sql`](supabase/storage.sql) and press **Run**.
 6. **New query** once more. Run this line with **her** email address in it. Only an account
    with this email can ever become the owner of the diary:
    ```sql
    update public.settings set owner_email = 'her.email@example.com' where id = 1;
    ```
-7. Left menu → **Project Settings** → **API** (sometimes called **Data API** or **API Keys**). Copy these two into a note:
+7. Press **Connect** (the plug icon at the top). It shows both values with copy buttons. Copy them into a note:
    - the **Project URL**, e.g. `https://abcdefghijkl.supabase.co`
-   - the **anon / public** key, a long string. A **publishable** key (`sb_publishable_…`) works too.
+   - the **publishable** key (`sb_publishable_…`). An older **anon / public** key works too.
 
-   ⚠️ Never use the **service_role** or **secret** key anywhere in this app. It bypasses every privacy rule.
-8. **Organization → Legal Documents**: sign Supabase's **Data Processing Agreement**. It's free and
-   signed online.
+   They're also under **Project Settings**: **Data API** for the URL, **API Keys** for the key.
+
+   ⚠️ Never use the **secret** or **service_role** key anywhere in this app. It bypasses every privacy rule.
+8. There's no separate **Data Processing Agreement** to sign any more: Supabase includes it in its terms.
+   To keep a copy, **Organization settings → Legal Documents → View DPA**.
 
 ---
 
-## 2. Put the app online (Netlify): 10 minutes
+## 2. Put the app online (Netlify): 15 minutes
 
 1. Go to [netlify.com](https://www.netlify.com) and sign up. The free plan allows business use.
-2. **Add new site → Import an existing project → GitHub**, and pick this repository.
-3. Settings:
+2. **Add new project → Import an existing project → GitHub → Authorize Netlify**, and pick this repository.
+   If it isn't listed, choose **Configure the Netlify app on GitHub** and give Netlify access to it.
+3. On **Review configuration**:
+   - **Project name:** something tidy, e.g. `yourstudio` → `https://yourstudio.netlify.app`
+   - **Branch to deploy:** `main`
    - **Base directory:** `06-salon-booking-app/web`
    - **Build command:** `npm run build` (filled in automatically from `netlify.toml`)
-   - **Publish directory:** `dist`
-4. **Environment variables → Add**:
+   - **Publish directory:** `dist` (it may show as `06-salon-booking-app/web/dist`, which is the same)
+4. **Add environment variables → Add key/value pairs** (leave **Contains secret values** unticked):
    - `VITE_SUPABASE_URL` = the Project URL from step 1.7
-   - `VITE_SUPABASE_ANON_KEY` = the anon key from step 1.7
-5. **Deploy**. After a minute you get an address like `random-name-123.netlify.app`.
-6. **Site configuration → Change site name** to something tidy, e.g. `yourstudio` → `https://yourstudio.netlify.app`.
+   - `VITE_SUPABASE_ANON_KEY` = the publishable (or anon) key from step 1.7
+5. **Deploy**. After a minute or two the site is live at your project's address.
+6. **Make it public.** New Netlify projects are private by default, which would put a Netlify login in
+   front of the booking page. **Project configuration → General → Visitor access → Project visibility →
+   Edit visibility → Public**. Check by opening `…/book` in a private browser window: you should see the
+   treatments, not a Netlify sign-in.
 7. Back in **Supabase → Authentication → URL Configuration**:
-   - **Site URL:** your Netlify address, e.g. `https://yourstudio.netlify.app`
-   - **Redirect URLs → Add:** `https://yourstudio.netlify.app/**`
+   - **Site URL:** your Netlify address, e.g. `https://yourstudio.netlify.app`, then **Save changes**
+   - **Redirect URLs → Add URL:** `https://yourstudio.netlify.app/**`, then **Save URLs**
 
    This makes the "reset password" link open the app.
+   If you rename the project later, its address changes: update both of these, and **Business details → This
+   app's web address** in the app.
 
 > If the two environment variables are missing, the site shows *Not set up yet* rather than
-> quietly running without a database. To look around first, add `VITE_DEMO=1` instead to get
+> quietly running without a database. After adding or fixing them, redeploy: **Deploys → Trigger deploy**. To look around first, add `VITE_DEMO=1` instead to get
 > the **demo**, with invented data kept only in your browser. Then remove it when you add the real values.
 
 ---
@@ -87,10 +106,11 @@ everything belongs to the business owner rather than to whoever sets it up. Turn
 
 Lock the door first, then make her key:
 
-1. **Supabase → Authentication → Sign In / Providers**: turn **off** **"Allow new users to sign up"**,
-   leave **Anonymous sign-ins** off, then **Save**. Now nobody can create an account from the website.
+1. **Supabase → Authentication → Sign In / Providers**: under **User Signups**, turn **off** **"Allow new users
+   to sign up"**, leave **Anonymous sign-ins** off, then **Save changes**. Now nobody can create an account from
+   the website.
 2. **Supabase → Authentication → Users → Add user → Create new user**: use her email (the same one
-   as in step 1.6) and a strong password of 10+ characters, and tick **Auto confirm user**.
+   as in step 1.6) and a strong password of 10+ characters, and make sure **Auto confirm user?** is ticked.
 3. On her iPhone, open **Safari**, go to the Netlify address and **sign in** with that email and
    password. The first time she signs in, the diary becomes hers. Any other account sees nothing.
 
@@ -165,8 +185,9 @@ It uses Google's MailApp, which can *send* email but **can't read her inbox**.
 
 1. In the app, go to **Settings → Email confirmations & reminders → Create the secret**.
    Copy the secret now, because it's only shown once. Leave this page open: it also shows the URL and key to copy.
-2. On a computer signed in to **her** Google account, go to [script.google.com](https://script.google.com) → **New project**.
-   Name it `Booking emails`.
+2. Signed in to **her** Google account (and only hers: a private browser window avoids Google mixing up
+   accounts), go to [script.google.com](https://script.google.com) → **New project**. Name it `Booking emails`.
+   The script and its timer run as whoever does this, so it must be her account.
 3. Delete what's in `Code.gs` and paste in **all** of [`apps-script/Code.gs`](apps-script/Code.gs). Press **Save** 💾.
 4. Go to **Project Settings** (the cog on the left) → **Script Properties → Add script property**, three times:
 
@@ -182,11 +203,13 @@ It uses Google's MailApp, which can *send* email but **can't read her inbox**.
 5. Go back to the **Editor** (`< >`). In the function dropdown at the top, choose **`setup`** and press **Run**.
    Google asks for permission:
    - **Review permissions** → choose her account.
-   - You'll see "Google hasn't verified this app", because it's her own script. Tap **Advanced → Go to Booking emails** → **Allow**.
+   - You'll see "Google hasn't verified this app", because it's her own script. Tap **Advanced → Go to Booking emails (unsafe)**.
+   - Tick **Select all**, then **Continue**. If the boxes are left unticked, nothing is allowed and the run fails: run it again.
+   - If the permission window never opens, the browser is blocking pop-ups: allow them for this step.
 6. The log should end with *All set…*.
 7. Choose **`sendTestEmail`** → **Run** to see a sample deposit email in her inbox.
-8. **Triggers** (the clock icon on the left) → the `processEmails` trigger → set **failure notifications**
-   to **Notify me immediately**. If the script ever stops, she'll get an email.
+8. **Triggers** (the clock icon on the left) → the `processEmails` trigger → the pencil (**Edit trigger**) →
+   **Failure notification settings** → **Notify me immediately** → **Save**. If the script ever stops, she'll get an email.
 9. In the app, **Settings → Email** should now say *Email sender last checked in … — working.*
 
 From now on it runs every 10 minutes by itself, even with the computer off. It never takes on more
