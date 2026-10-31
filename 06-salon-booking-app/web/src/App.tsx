@@ -1,5 +1,5 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
-import { configMissing } from './api';
+import { configBadUrl, configMissing } from './api';
 import { AdminLayout, OwnerGate } from './components/owner';
 import { ToastProvider } from './components/ui';
 import { AppointmentNew } from './pages/admin/AppointmentNew';
@@ -27,6 +27,17 @@ export function App() {
         <p>This booking app isn’t connected to its database. If you run it, add <code>VITE_SUPABASE_URL</code> and{' '}
           <code>VITE_SUPABASE_ANON_KEY</code> in Netlify’s environment variables and deploy again (SETUP.md step 2), or set{' '}
           <code>VITE_DEMO=1</code> to show the demo.</p>
+      </div>
+    );
+  }
+  if (configBadUrl) {
+    return (
+      <div className="page stack">
+        <h1>Not connected yet</h1>
+        <p>This booking app can’t reach its database: the database address saved in Netlify isn’t right. If you run it, change{' '}
+          <code>VITE_SUPABASE_URL</code> so it looks exactly like <code>https://abcdefghijklmnop.supabase.co</code>, copied from
+          Supabase → Project Settings → Data API, with nothing before it and no quote marks. Save it and deploy again
+          (Deploys → Trigger deploy).</p>
       </div>
     );
   }
