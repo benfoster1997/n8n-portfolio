@@ -58,10 +58,11 @@ everything belongs to the business owner rather than to whoever sets it up. Turn
    update public.settings set owner_email = 'her.email@example.com' where id = 1;
    ```
 7. Press **Connect** (the plug icon at the top). It shows both values with copy buttons. Copy them into a note:
-   - the **Project URL**, e.g. `https://abcdefghijkl.supabase.co`
+   - the **Project URL**, e.g. `https://abcdefghijkl.supabase.co`, with nothing after `.co`
    - the **publishable** key (`sb_publishable_…`). An older **anon / public** key works too.
 
-   They're also under **Project Settings**: **Data API** for the URL, **API Keys** for the key.
+   They're also under **Project Settings**: **Data API** for the URL, **API Keys** for the key. If the
+   URL you copy ends in `/rest/v1/` (the Data API page shows it that way), delete that part.
 
    ⚠️ Never use the **secret** or **service_role** key anywhere in this app. It bypasses every privacy rule.
 8. There's no separate **Data Processing Agreement** to sign any more: Supabase includes it in its terms.
