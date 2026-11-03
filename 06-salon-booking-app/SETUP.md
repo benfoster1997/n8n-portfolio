@@ -218,7 +218,8 @@ emails than Gmail will still send that day (about 100 for a personal account). T
 once and check the new-booking alert **notifies her phone**.
 
 > The email script checks in every 10 minutes, which also keeps the free Supabase project
-> awake. Free projects pause after a week with no activity.
+> awake. Free projects can pause after a week of low activity. Supabase emails a warning about a
+> week before, and says only a paid plan guarantees a project is never paused for inactivity.
 
 ---
 
@@ -331,7 +332,7 @@ So nobody is surprised later:
 |---|---|
 | A client says the change/cancel link doesn't work | Links stop working a day after the appointment, and changes aren't possible once it has started. Check **Settings → Deposits & cancellations → Clients can change or cancel online** is on. |
 | Clients say they got no email | App → Settings → Email shows when the script last checked in. At [script.google.com](https://script.google.com) → the project → **Executions**, you can see any errors. Ask the client to check their junk folder. |
-| "Can't reach the server" | The free Supabase project may have paused. Go to the Supabase dashboard → the project → **Restore**. |
+| "Can't reach the server" | The free Supabase project may have paused. Go to the Supabase dashboard → the project → **Resume project**. It's back in a few minutes with all its data (possible for up to a year after a pause). |
 | The email script says the secret was refused | App → Settings → Email → **Make a new secret**, then paste it into Script Properties → `EMAIL_SECRET`. |
 | "This diary already has an owner" | Someone signed in with a different email. Sign out and use the email from step 1.6. |
 | Forgot the password | On the sign-in screen, tap **Forgotten password?** |
