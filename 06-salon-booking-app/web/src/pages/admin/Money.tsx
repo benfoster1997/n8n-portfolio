@@ -4,6 +4,7 @@ import { useOwner } from '../../components/owner';
 import { ErrorBox, Field, Icon, Seg, Sheet, Spinner, TopBar, useAction, useLoad, useToast } from '../../components/ui';
 import { fmt, todayInZone } from '../../lib/time';
 import { downloadText, friendlyError, money, moneyPlain, parsePounds, taxYearOf, toCsv } from '../../lib/text';
+import { estimateTax, makingTaxDigital, PAYMENTS_ON_ACCOUNT_FROM, taxDates } from '../../lib/tax';
 import type { PayKind, PayMethod, Payment } from '../../lib/types';
 import { Heart, LemonSlice } from '../../components/brand';
 import { Glyph } from './Clients';
@@ -100,11 +101,17 @@ export function Money() {
             <div className="stat od-stat-tips"><div className="label">Tips</div><div className="od-stat-row"><div className="value">{money(tips)}</div><span className="od-stat-ic" aria-hidden="true"><Heart size={16} /></span></div></div>
             <div className="stat od-stat-refunds"><div className="label">Refunds</div><div className="od-stat-row"><div className="value">{money(refunds)}</div><span className="od-stat-ic" aria-hidden="true"><Glyph name="refund" size={18} /></span></div></div>
           </div>
+          {view === 'year' && <TaxCard startYear={Number(ty.from.slice(0, 4))} yearLabel={ty.label} takingsPence={total} />}
           <button className="btn block od-export" disabled={!rows.length || loading} onClick={exportCsv}><Glyph name="download" size={20} /> Download spreadsheet (CSV)</button>
           <p className="od-tax-note">
             <span className="od-tax-note-ic" aria-hidden="true"><Glyph name="receipt" size={17} /></span>
             This is your record of money received, for your Self Assessment. Keep receipts for your expenses (products, training, insurance) separately — they reduce your tax bill.
           </p>
+          {view === 'month' && (
+            <button className="btn ghost small od-tax-link" onClick={() => { setYearOf(`${month}-15`); setView('year'); }}>
+              See roughly how much tax to put aside
+            </button>
+          )}
           {[...byDay.entries()].map(([day, list]) => (
             <div key={day} className="od-day">
               <div className="day-head"><h2>{fmt(`${day}T12:00:00Z`, 'EEE d MMM', tz)}</h2><span className="od-day-total">{money(list.reduce((n, p) => n + p.amount_pence, 0))}</span></div>
@@ -143,6 +150,72 @@ export function Money() {
       )}
       {adding && <AddPaymentSheet tz={tz} onClose={() => setAdding(false)} onSaved={() => { setAdding(false); reload(); toast('Added to takings'); }} />}
     </div>
+  );
+}
+
+/** Whole pounds, for an estimate: "£1,412". */
+const roughPounds = (pence: number) => money(Math.round(pence / 100) * 100);
+
+/**
+ * Tax year view: roughly how much of this tax year's takings to put aside for
+ * Self Assessment, assuming the business is her only income (see lib/tax.ts).
+ */
+function TaxCard({ startYear, yearLabel, takingsPence }: { startYear: number; yearLabel: string; takingsPence: number }) {
+  const e = estimateTax({ taxYearStart: startYear, takingsPence });
+  const dates = taxDates(startYear);
+  const mtd = makingTaxDigital(startYear, e.takings);
+  const allowance = roughPounds(e.rates.personalAllowance);
+  const pence = Math.round(e.marginalRate * 100);
+  // What each new £1 costs once the profit is past the tax-free allowance.
+  const abovePence = Math.round(estimateTax({ taxYearStart: startYear, takingsPence: e.rates.personalAllowance + 10_000 }).marginalRate * 100);
+  return (
+    <section className="card stack od-taxcard" aria-labelledby="od-taxcard-h">
+      <div>
+        <h2 id="od-taxcard-h" className="od-taxcard-h">Tax to put aside</h2>
+        <div className="od-taxcard-value">{roughPounds(e.total)}</div>
+        <p className="sub od-taxcard-sub">
+          {e.total > 0
+            ? <>So far this tax year: about {Math.max(1, Math.round(e.shareOfTakings * 100))}% of your takings.</>
+            : <>Nothing yet: the first {allowance} of profit each tax year is tax-free.</>}
+        </p>
+      </div>
+      {e.total > 0 && (
+        <dl className="od-taxcard-rows">
+          <div><dt>Income Tax</dt><dd>{roughPounds(e.incomeTax)}</dd></div>
+          <div><dt>National Insurance</dt><dd>{roughPounds(e.class4)}</dd></div>
+        </dl>
+      )}
+      <p className="od-taxcard-tip">
+        {pence > 0
+          ? <>From here, put aside about <b>{pence}p of each £1</b> you take.</>
+          : <>Once your takings for the tax year pass {allowance}, put aside about <b>{abovePence}p of each £1</b> you take.</>}
+      </p>
+      <p className="sub od-taxcard-note">
+        This is before expenses. Your business expenses, such as products, tools, PPE, training and insurance, lower your bill, so keep the receipts.
+        Money you took this tax year before you used this app isn’t counted: add it with the + button at the top.
+      </p>
+      {mtd && (
+        <div className="notice warn">
+          Your takings for {yearLabel} are over {money(mtd.threshold)}, so from 6 April {mtd.fromYear} HMRC’s Making Tax Digital rules apply to you:
+          you’ll keep digital records and send HMRC an update every quarter, using software that works with Making Tax Digital.
+        </div>
+      )}
+      <details className="od-more">
+        <summary>When it’s due</summary>
+        <div className="stack od-taxcard-due">
+          <p className="sub">Send your Self Assessment for {yearLabel} and pay the bill by <b>{dates.balancing}</b>.</p>
+          <p className="sub">
+            If the bill is over {money(PAYMENTS_ON_ACCOUNT_FROM)}, HMRC also asks you to pay towards next year’s bill in advance (“payments on account”):
+            half of this amount by {dates.nextYearFirst}, on top of this bill, and half by {dates.nextYearSecond}.
+          </p>
+          <p className="sub">If you already make payments on account, part of this bill is paid in advance, on {dates.thisYearFirst} and {dates.thisYearSecond}.</p>
+        </div>
+      </details>
+      <p className="od-taxcard-small">
+        A rough guide to help you put money aside, not tax advice. It assumes your nail business is your only income and uses
+        the {e.rates.label} rates for England{e.exactRates ? '' : ', as this tax year’s aren’t in the app yet'}. Student loan repayments aren’t included.
+      </p>
+    </section>
   );
 }
 

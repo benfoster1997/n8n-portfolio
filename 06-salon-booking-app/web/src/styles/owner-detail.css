@@ -705,6 +705,36 @@
   line-height: 1.5;
 }
 .od-tax-note-ic { position: absolute; left: 14px; top: 14px; display: flex; color: var(--accent); }
+/* Tax year view: the "tax to put aside" estimate, with a lemon edge like the deposit panel */
+.od-taxcard { margin-top: 12px; gap: 12px; box-shadow: inset 0 3px 0 var(--lemon); }
+.od-taxcard-h {
+  margin: 0;
+  font-size: 0.8rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent-text);
+}
+.od-taxcard-value {
+  margin-top: 4px;
+  font-size: 2.3rem;
+  font-weight: 800;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  color: var(--ink-strong);
+  font-variant-numeric: tabular-nums;
+}
+.od-taxcard-sub { margin: 4px 0 0; }
+.od-taxcard-rows { margin: 0; display: grid; gap: 8px; }
+.od-taxcard-rows div { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding-bottom: 8px; border-bottom: 1px dashed var(--line); }
+.od-taxcard-rows dt { color: var(--muted); }
+.od-taxcard-rows dd { margin: 0; font-weight: 800; color: var(--ink-strong); font-variant-numeric: tabular-nums; }
+.od-taxcard-tip { margin: 0; padding: 10px 12px; border-radius: 12px; background: var(--accent-soft); color: var(--ink-strong); line-height: 1.45; }
+.od-taxcard-note { margin: 0; line-height: 1.5; }
+.od-taxcard-due { gap: 8px; padding-top: 8px; }
+.od-taxcard-due p { margin: 0; line-height: 1.5; }
+.od-taxcard-small { margin: 0; font-size: 0.78rem; line-height: 1.45; color: var(--muted); }
+.od-tax-link { display: flex; margin: 10px auto 0; }
 .od-day .day-head h2 { font-size: 0.98rem; }
 .od-day-total { font-weight: 800; color: var(--accent); font-variant-numeric: tabular-nums; }
 /* the detail line runs on under the amount and the bin, so it rarely needs a second line */

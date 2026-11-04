@@ -171,6 +171,19 @@ test('client record: allergy flag, patch test and consultation form', async ({ p
   await expect(page.getByText('Nails are quite thin at the moment.')).toBeVisible();
 });
 
+test('tax estimate: the month view links to the tax year, which shows what to put aside', async ({ page }) => {
+  await signIn(page);
+  await page.getByRole('link', { name: 'Money' }).click();
+  await page.getByRole('button', { name: 'See roughly how much tax to put aside' }).click();
+  await expect(page.getByText(/Tax year 20\d\d–\d\d/)).toBeVisible();
+  const card = page.getByRole('region', { name: 'Tax to put aside' });
+  await expect(card).toBeVisible();
+  await expect(card.getByText(/of each £1/)).toBeVisible();
+  await expect(card.getByText(/not tax advice/)).toBeVisible();
+  await card.getByText('When it’s due').click();
+  await expect(card.getByText(/and pay the bill by 31 January 20\d\d/)).toBeVisible();
+});
+
 test('takings: totals, tax year and a spreadsheet download', async ({ page }) => {
   await signIn(page);
   await page.getByRole('link', { name: 'Money' }).click();
