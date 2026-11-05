@@ -1,12 +1,12 @@
-import { Fragment, useState, type ReactNode } from 'react';
+import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react';
 import { api } from '../../api';
 import { useOwner } from '../../components/owner';
 import { ErrorBox, Field, Icon, Seg, Sheet, Spinner, TopBar, useAction, useLoad, useToast } from '../../components/ui';
 import { fmt, todayInZone } from '../../lib/time';
 import { downloadText, friendlyError, money, moneyPlain, parsePounds, taxYearOf, toCsv } from '../../lib/text';
 import {
-  estimateTax, longDate, makingTaxDigital, marginalRateAt, mtdStage, PAYMENTS_ON_ACCOUNT_FROM, ratesFor, TAX_YEAR_MAX_PENCE, taxDates,
-  taxYearDays, yearLabel, type MtdStage, type TaxDate,
+  dueFromEarlierYear, estimateTax, longDate, makingTaxDigital, marginalRatesAt, mtdStage, PAYMENTS_ON_ACCOUNT_FROM, ratesFor,
+  TAX_YEAR_MAX_PENCE, taxDates, taxYearDays, weekendDue, yearLabel, type MtdStage, type TaxDate, type TaxRates,
 } from '../../lib/tax';
 import type { PayKind, PayMethod, Payment, TaxYear } from '../../lib/types';
 import { Heart, LemonSlice } from '../../components/brand';
@@ -181,9 +181,9 @@ export function taxCardState(data: { year: number; row: TaxYear } | undefined, e
 /**
  * Tax year view: roughly how much to put aside for this tax year's Self Assessment,
  * assuming the business is her only income (see lib/tax.ts). Her own figures for
- * the year (takings not in the app, expenses) come from Edit.
+ * the year (takings not in the app, expenses) come from Edit. Exported for the tests.
  */
-function TaxCard({ startYear, rangeLabel, today, takingsPence, hasTakings }: {
+export function TaxCard({ startYear, rangeLabel, today, takingsPence, hasTakings }: {
   startYear: number; rangeLabel: string; today: string; takingsPence: number; hasTakings: boolean;
 }) {
   const { data, error, loading, setData, reload } = useLoad(async () => ({ year: startYear, row: await api.getTaxYear(startYear) }), [startYear]);
@@ -192,8 +192,10 @@ function TaxCard({ startYear, rangeLabel, today, takingsPence, hasTakings }: {
   const { row, failed } = taxCardState(data, error, loading, startYear);
   const label = yearLabel(startYear);
   return (
-    <TaxCardView startYear={startYear} today={today} takingsPence={takingsPence} hasTakings={hasTakings}
-      row={row} failed={failed} onEdit={() => setEditing(true)} onRetry={reload}>
+    <>
+      <TaxCardView startYear={startYear} today={today} takingsPence={takingsPence} hasTakings={hasTakings}
+        row={row} failed={failed} onEdit={() => setEditing(true)} onRetry={reload} />
+      {/* Outside the card: while the card slides in, a sheet inside it would be placed against the card, not the screen. */}
       {editing && row && (
         <TaxYearSheet startYear={startYear} rangeLabel={rangeLabel} ended={today > taxYearDays(startYear).last} row={row}
           onClose={() => setEditing(false)}
@@ -205,12 +207,12 @@ function TaxCard({ startYear, rangeLabel, today, takingsPence, hasTakings }: {
             toast(`Saved your figures for ${label}`);
           }} />
       )}
-    </TaxCardView>
+    </>
   );
 }
 
 /** The card for what has loaded so far (exported for the tests). */
-export function TaxCardView({ startYear, today, takingsPence, hasTakings, row, failed, onEdit, onRetry, children }: {
+export function TaxCardView({ startYear, today, takingsPence, hasTakings, row, failed, onEdit, onRetry }: {
   startYear: number;
   /** yyyy-mm-dd in the business's time zone. */
   today: string;
@@ -224,7 +226,6 @@ export function TaxCardView({ startYear, today, takingsPence, hasTakings, row, f
   failed: boolean;
   onEdit: () => void;
   onRetry: () => void;
-  children?: ReactNode;
 }) {
   return (
     <section className="card stack od-taxcard" aria-labelledby="od-taxcard-h">
@@ -247,7 +248,6 @@ export function TaxCardView({ startYear, today, takingsPence, hasTakings, row, f
           <button className="btn small od-taxcard-retry" onClick={onRetry}>Try again</button>
         </div>
       ) : <Spinner />}
-      {children}
     </section>
   );
 }
@@ -258,6 +258,83 @@ const Year = ({ start }: { start: number }) => <span className="od-nowrap">{year
 const When = ({ d }: { d: TaxDate | string }) => <span className="od-nowrap">{typeof d === 'string' ? d : d.label}</span>;
 /** "6 April 2028": the day a Making Tax Digital stage starts. */
 const mtdStart = (s: MtdStage) => `6 April ${s.fromYear}`;
+
+/**
+ * On this tax year's card, above its own due date: what an earlier tax year still has due
+ * before then (see dueFromEarlierYear), and where to see how much.
+ */
+function EarlierDue({ startYear, today }: { startYear: number; today: string }) {
+  const due = dueFromEarlierYear(startYear, today);
+  if (!due) return null;
+  const year = <Year start={due.billYear} />;
+  const back = <>Tap <b>‹</b>{startYear - due.billYear > 1 ? ' twice' : ''} at the top to see {year}.</>;
+  return (
+    <p className="od-taxcard-due-line od-taxcard-first">
+      <span className="od-taxcard-due-ic" aria-hidden="true"><Glyph name="calendar" size={17} /></span>
+      <span>
+        {due.kind === 'july' ? (
+          <>
+            Due next, if HMRC asked for payments on account: half your {year} bill again, by <b><When d={due.date} /></b>, towards{' '}
+            {due.billYear + 1 === startYear ? 'this year’s bill' : <Year start={due.billYear + 1} />}. {back}
+          </>
+        ) : (
+          <>
+            Due first, if you worked in {year}: its tax return and bill, by <b><When d={due.date} /></b>.
+            {due.onAccount && (
+              <> If that bill is {money(PAYMENTS_ON_ACCOUNT_FROM)} or more, HMRC usually also asks for half of it again then, and another
+                half by <When d={due.onAccount.second} />, both towards this year’s bill.</>
+            )}{' '}
+            {back}
+          </>
+        )}
+      </span>
+    </p>
+  );
+}
+
+/** What the year before's bill pays towards this one in advance (payments on account), and what that means for this bill. */
+function PaidAhead({ startYear, today }: { startYear: number; today: string }) {
+  const dates = taxDates(startYear);
+  if (!dates.thisYear) return <>If you already pay towards your tax in advance, part of this bill will have been paid during the year.</>;
+  const firstGone = today > dates.thisYear.first.iso;
+  const secondGone = today > dates.thisYear.second.iso;
+  return (
+    <>
+      Was your <Year start={startYear - 1} /> bill {money(PAYMENTS_ON_ACCOUNT_FROM)} or more? Then half of it
+      again {firstGone ? 'went' : 'goes'} towards this bill by <When d={dates.thisYear.first} />, and another
+      half {firstGone && !secondGone ? 'goes ' : ''}by <When d={dates.thisYear.second} />, so
+      there{today > dates.balancing.iso ? ' was' : '’s'} that much less to pay on <When d={dates.balancing} />.
+    </>
+  );
+}
+
+/** A dated payment in the plan, with a line under it for what it's for and, for a weekend date, when to pay to be safe. */
+function PlanRow({ d, pounds, why }: { d: TaxDate; pounds: number; why?: ReactNode }) {
+  const weekend = weekendDue(d.iso);
+  return (
+    <div>
+      <dt>By <When d={d} /></dt><dd>{showPounds(pounds)}</dd>
+      {(why || weekend) && (
+        <dd className="od-taxcard-why">
+          {why}{why && weekend ? ' ' : ''}{weekend && <>That’s a {weekend.day}: to be safe, pay by {weekend.friday}.</>}
+        </dd>
+      )}
+    </div>
+  );
+}
+
+/** "26p of each £1 you take: 20p Income Tax and 6p National Insurance.", for the next £1 of a profit. */
+function PutAside({ profit, r }: { profit: number; r: TaxRates }) {
+  const m = marginalRatesAt(profit, r);
+  const incomeTax = Math.round(m.incomeTax * 100);
+  const ni = Math.round(m.class4 * 100);
+  return (
+    <>
+      put aside about <b>{incomeTax + ni}p of each £1</b> you take
+      {incomeTax > 0 && ni > 0 ? `: ${incomeTax}p Income Tax and ${ni}p National Insurance` : ''}.
+    </>
+  );
+}
 
 /** A tax year with nothing in the app and nothing added: ask for its figures, rather than show £0 as if nothing were due. */
 function TaxEmpty({ startYear, today }: { startYear: number; today: string }) {
@@ -277,10 +354,13 @@ function TaxEmpty({ startYear, today }: { startYear: number; today: string }) {
         : [<>No takings for {year} in the app</>,
           <>To see roughly what that year’s bill came to, tap <b>Edit</b> and add its takings and expenses.</>];
   return (
-    <div className="od-taxcard-empty">
-      <p className="od-taxcard-empty-h">{title}</p>
-      <p className="sub">{text}</p>
-    </div>
+    <>
+      <div className="od-taxcard-empty">
+        <p className="od-taxcard-empty-h">{title}</p>
+        <p className="sub">{text}</p>
+      </div>
+      <EarlierDue startYear={startYear} today={today} />
+    </>
   );
 }
 
@@ -289,7 +369,8 @@ function TaxFigures({ startYear, today, takingsPence, row }: { startYear: number
     taxYearStart: startYear, takingsPence, extraTakingsPence: row.extra_takings_pence, expensesPence: row.expenses_pence,
   });
   const r = e.rates;
-  const ended = today > taxYearDays(startYear).last;
+  const days = taxYearDays(startYear);
+  const ended = today > days.last;
   const dates = taxDates(startYear);
   const duePassed = today > dates.balancing.iso;
   // Whole pounds, worked out so the rows add up as shown.
@@ -304,14 +385,21 @@ function TaxFigures({ startYear, today, takingsPence, row }: { startYear: number
   const class4 = toPounds(e.class4);
   const total = incomeTax + class4;
   const share = Math.round(e.shareOfTakings * 100);
-  const pence = Math.round(e.marginalRate * 100);
-  // What each new £1 costs once the profit is past the tax-free allowance.
-  const abovePence = Math.round(marginalRateAt(r.personalAllowance, r) * 100);
   const allowance = showPounds(allowancePounds);
+  // The trading allowance is the one figure that changes for 2027–28, and that isn't law yet.
+  const notLaw = r.announced ? ' (announced, not law yet)' : '';
   const personal = showPounds(toPounds(r.personalAllowance));
   // A bill of £1,000 or more usually brings two payments on account towards the next
   // tax year, each half of it: by 31 January, on top of the bill, and by 31 July.
   const onAccount = total >= toPounds(PAYMENTS_ON_ACCOUNT_FROM) ? toPounds(e.total / 2) : 0;
+  // Both of them until the bill is due, then the July one on its own until that's due too.
+  const plan = onAccount > 0 && !duePassed ? dates.nextYear : null;
+  const julyOnly = onAccount > 0 && duePassed && dates.nextYear && today <= dates.nextYear.second.iso ? dates.nextYear.second : null;
+  // On this year's card, the line above the due date can already say what the year before's
+  // bill pays towards this one in advance; then the plan only says what that means for it.
+  const earlier = dueFromEarlierYear(startYear, today);
+  const paidAheadAbove = earlier?.kind === 'bill' && !!earlier.onAccount;
+  const payWeekend = total > 0 && !duePassed ? weekendDue(dates.balancing.iso) : null;
   const mtd = makingTaxDigital(startYear, e.totalTakings);
   const rates = r.announced
     ? <>the rates announced for <Year start={e.ratesYear} /> (not law yet)</>
@@ -322,13 +410,24 @@ function TaxFigures({ startYear, today, takingsPence, row }: { startYear: number
         <div className="od-taxcard-value">{showPounds(total)}</div>
         <p className="sub od-taxcard-sub">
           {total > 0
-            ? <>{ended ? 'For the whole tax year' : 'So far this tax year'}: {share > 0 ? `about ${share}%` : 'less than 1%'} of your takings.</>
+            ? <>{ended ? 'For the whole tax year' : 'So far this tax year'}: {share > 0 ? `about ${share}%` : 'less than 1%'} of your takings
+              {e.profit <= r.taperFrom ? <>, as the first {personal} of profit is tax-free</> : ''}.</>
             : <>{ended ? 'Nothing to pay' : 'Nothing yet'}: the first {personal} of profit each tax year is tax-free.</>}
         </p>
       </div>
+      {/* Until she uses Edit, takings from another app (most of the year she switched) are missing. */}
+      {nothingSaved(row) && today >= days.first && (
+        <p className="od-taxcard-tip od-taxcard-ask">
+          {ended
+            ? <>Took money another way in <Year start={startYear} />, such as through another app? Tap <b>Edit</b> to add it, with your
+              expenses.</>
+            : <>Took money another way this tax year, such as bookings through another app before you switched? Tap <b>Edit</b> to add
+              it, with your expenses.</>}
+        </p>
+      )}
       <dl className="od-taxcard-rows">
         <div><dt>Takings in the app</dt><dd>{showPounds(inApp)}</dd></div>
-        <div><dt>Other takings</dt><dd>{showPounds(other)}</dd></div>
+        <div><dt>Takings not in the app</dt><dd>{showPounds(other)}</dd></div>
         {e.deductionKind === 'expenses' ? (
           <div className="od-taxcard-off">
             <dt>Expenses</dt><dd>{showPounds(-off)}</dd>
@@ -341,10 +440,11 @@ function TaxFigures({ startYear, today, takingsPence, row }: { startYear: number
             <dt>Trading allowance</dt><dd>{showPounds(-off)}</dd>
             <dd className="od-taxcard-why">
               {takings <= allowancePounds
-                ? <>Takings of {allowance} or less in a tax year are tax-free: that’s the trading allowance.</>
+                ? <>Takings of {allowance} or less in a tax year are tax-free: that’s the trading allowance{notLaw}.</>
                 : e.expenses > 0
-                  ? <>Used instead of your {money(e.expenses)} of expenses, as it’s bigger: it’s one or the other, not both.</>
-                  : <>With no expenses added, the {allowance} tax-free allowance comes off instead.</>}
+                  ? <>Used instead of your {money(e.expenses)} of expenses, as {notLaw ? <>the {allowance} allowance{notLaw} is</> : 'it’s'} bigger:
+                    it’s one or the other, not both.</>
+                  : <>With no expenses added, the {allowance} trading allowance{notLaw} comes off instead.</>}
             </dd>
           </div>
         )}
@@ -354,51 +454,63 @@ function TaxFigures({ startYear, today, takingsPence, row }: { startYear: number
       </dl>
       {!ended && (
         <p className="od-taxcard-tip">
-          {pence > 0
-            ? <>From here, put aside about <b>{pence}p of each £1</b> you take.</>
-            : <>Once your profit for the year is over {personal}, put aside about <b>{abovePence}p of each £1</b> you take.</>}
+          {e.marginalRate > 0
+            ? <>From here, <PutAside profit={e.profit} r={r} /></>
+            : <>Once your profit for the year is over {personal}, <PutAside profit={r.personalAllowance} r={r} /></>}
         </p>
       )}
+      <EarlierDue startYear={startYear} today={today} />
       <p className="od-taxcard-due-line">
         <span className="od-taxcard-due-ic" aria-hidden="true"><Glyph name="calendar" size={17} /></span>
         <span>
           {duePassed
             ? <>Your <Year start={startYear} /> tax return{total > 0 ? ' and bill were' : ' was'} due by <b><When d={dates.balancing} /></b>.</>
-            : <>Send your <Year start={startYear} /> tax return online{total > 0 ? ' and pay the bill' : ''} by <b><When d={dates.balancing} /></b>.</>}
+            : plan
+              ? <>Send your <Year start={startYear} /> tax return online by <b><When d={dates.balancing} /></b>
+                {ended ? ', and pay HMRC:' : '. On the figures so far, you’ll pay HMRC:'}</>
+              : <>Send your <Year start={startYear} /> tax return online{total > 0 ? ' and pay the bill' : ''} by{' '}
+                <b><When d={dates.balancing} /></b>{payWeekend ? ` (a ${payWeekend.day}: to be safe, pay by ${payWeekend.friday})` : ''}.</>}
         </span>
       </p>
-      {!duePassed && onAccount > 0 && (dates.nextYear ? (
+      {plan && (
+        <div className="od-taxcard-plan">
+          <dl className="od-taxcard-rows">
+            <PlanRow d={plan.first} pounds={total + onAccount}
+              why={<>This bill, plus {showPounds(onAccount)} towards <Year start={startYear + 1} />.</>} />
+            <PlanRow d={plan.second} pounds={onAccount} />
+          </dl>
+          <p>
+            The two {showPounds(onAccount)} payments go towards <Year start={startYear + 1} /> (“payments on account”): when a bill
+            is {money(PAYMENTS_ON_ACCOUNT_FROM)} or more, HMRC usually asks for half of it again, twice.
+          </p>
+          <p className="od-taxcard-small">
+            {paidAheadAbove
+              ? <>Paying part of this bill early, as above? Then there’s that much less to pay on <When d={dates.balancing} />.</>
+              : <PaidAhead startYear={startYear} today={today} />}
+          </p>
+        </div>
+      )}
+      {julyOnly && (
         <div className="od-taxcard-plan">
           <p>
-            With a bill of {money(PAYMENTS_ON_ACCOUNT_FROM)} or more, HMRC usually also asks for two payments towards{' '}
-            <Year start={startYear + 1} />, each half of this bill (“payments on account”).{' '}
-            {ended ? 'That means:' : 'On the figures so far, that means:'}
+            HMRC usually also asks for a second payment towards <Year start={startYear + 1} />, half of this bill (a “payment on
+            account”):
           </p>
-          <dl className="od-taxcard-rows">
-            <div>
-              <dt>By <When d={dates.nextYear.first} /></dt><dd>{showPounds(total + onAccount)}</dd>
-              <dd className="od-taxcard-why">This bill, plus {showPounds(onAccount)} towards <Year start={startYear + 1} /></dd>
-            </div>
-            <div><dt>By <When d={dates.nextYear.second} /></dt><dd>{showPounds(onAccount)}</dd></div>
-          </dl>
-          {dates.thisYear && (
-            <p className="od-taxcard-small">
-              Already make payments on account? Then part of this bill {today > dates.thisYear.second.iso ? 'was' : 'is'} paid in
-              advance, so there’s less to pay in January.
-            </p>
-          )}
+          <dl className="od-taxcard-rows"><PlanRow d={julyOnly} pounds={onAccount} /></dl>
         </div>
-      ) : (
+      )}
+      {onAccount > 0 && !duePassed && !dates.nextYear && (
         <p className="od-taxcard-plan">
           A bill of {money(PAYMENTS_ON_ACCOUNT_FROM)} or more usually also means paying towards the next tax year in advance. From April
           2029, HMRC plans to collect that in smaller automatic payments during the year: the details are still to come.
         </p>
-      ))}
+      )}
       {mtd && <MtdNotice mtd={mtd} today={today} ended={ended} />}
       <details className="od-more od-taxcard-more">
         <summary>How it’s paid</summary>
         <div className="stack od-taxcard-due">
-          {dates.nextYear ? (
+          {/* The plan above already says these two. */}
+          {!plan && (dates.nextYear ? (
             <p className="sub">
               When a bill is {money(PAYMENTS_ON_ACCOUNT_FROM)} or more, HMRC usually also asks for two payments towards the next tax year
               (“payments on account”), each half of this bill: one by <When d={dates.nextYear.first} />, on top of this bill, and the
@@ -411,15 +523,8 @@ function TaxFigures({ startYear, today, takingsPence, row }: { startYear: number
               year (“payments on account”), each half of the bill. From April 2029, it plans to replace them with smaller automatic
               payments during the year: the details are still to come.
             </p>
-          )}
-          {dates.thisYear ? (
-            <p className="sub">
-              If you already make payments on account, part of this bill will have been paid in advance,
-              by <When d={dates.thisYear.first} /> and <When d={dates.thisYear.second} />.
-            </p>
-          ) : (
-            <p className="sub">If you already pay towards your tax in advance, part of this bill will have been paid during the year.</p>
-          )}
+          ))}
+          {!plan && <p className="sub"><PaidAhead startYear={startYear} today={today} /></p>}
           {dates.nextYear && today <= dates.nextYear.second.iso && (
             <p className="sub">
               Expect a smaller bill next year? You can ask HMRC to reduce your payments on account (online, or with form SA303), but if
@@ -441,7 +546,8 @@ function TaxFigures({ startYear, today, takingsPence, row }: { startYear: number
         would mean more tax. It uses {rates}
         {e.exactRates ? '' : <>, as <Year start={startYear} />’s aren’t in the app{e.ratesYear < startYear ? ' yet' : ''},</>} for England,
         Wales and Northern Ireland, and doesn’t include student loan repayments or Scotland’s rates.
-        {e.ratesYear > startYear && <> National Insurance was higher before April 2024, so the real bill for <Year start={startYear} /> was higher.</>}
+        {/* Class 4 was 9% before April 2024, but only on profit over £12,570: below that the bill was £0 then too. */}
+        {e.ratesYear > startYear && e.class4 > 0 && <> National Insurance was higher before April 2024, so the real bill for <Year start={startYear} /> was higher.</>}
       </p>
     </>
   );
@@ -456,27 +562,34 @@ function StageItem({ s, today }: { s: MtdStage; today: string }) {
   );
 }
 
-/** This tax year's takings bring in Making Tax Digital: from when (at the latest), and what it means. */
+/** This tax year's takings bring in Making Tax Digital: from when (at the latest), what it means, and that this app can't do it. */
 function MtdNotice({ mtd, today, ended }: { mtd: MtdStage & { earlier: MtdStage[] }; today: string; ended: boolean }) {
   const started = today >= `${mtd.fromYear}-04-06`;
-  const sooner = mtd.earlier.length > 0;
-  // The £20,000 years before this one go on one line, so a far-off year's list stays short.
+  // One earlier stage fits in a sentence; more go in a list, with the £20,000 years on one line so a far-off year's list stays short.
+  const one = mtd.earlier.length === 1 ? mtd.earlier[0] : null;
   const twenty = mtd.earlier.filter((s) => s.threshold === mtdStage(2026)!.threshold);
   const higher = mtd.earlier.filter((s) => s.threshold !== mtdStage(2026)!.threshold);
   return (
     <div className="notice warn od-taxcard-mtd">
       <p>
-        Your takings for <Year start={mtd.testYear} /> {ended ? 'were' : 'are'} over {money(mtd.threshold)}, so under current rules
-        HMRC’s Making Tax Digital {started ? 'has applied to you since' : 'applies to you from'} <When d={mtdStart(mtd)} />
-        {sooner ? (started ? ' or earlier' : ' at the latest') : ''} (the start of the <Year start={mtd.fromYear} /> tax year):{' '}
+        Your <Year start={mtd.testYear} /> takings {ended ? 'were' : 'are'} over {money(mtd.threshold)}, so under current rules{' '}
         {started
-          ? <>you need to keep digital records and send HMRC an update every quarter (by 7 August, 7 November, 7 February and 7 May),
-            using software that works with Making Tax Digital.</>
-          : <>you’ll keep digital records and send HMRC an update every quarter, using software that works with Making Tax Digital.</>}
+          ? <>Making Tax Digital has applied to you since <When d={mtdStart(mtd)} />{mtd.earlier.length ? ' or earlier' : ''}. You need
+            software that works with it, to keep digital records and send HMRC an update every quarter (by 7 August, 7 November,
+            7 February and 7 May).</>
+          : <>Making Tax Digital starts for you by <When d={mtdStart(mtd)} />. From then you’ll need software that works with it, to
+            keep digital records and send HMRC an update every quarter, the first by <When d={`7 August ${mtd.fromYear}`} />.</>}
+        {' '}This app doesn’t send them.
       </p>
-      {sooner && (
+      {one && (
+        <p>
+          It {today >= `${one.fromYear}-04-06` ? 'started' : 'starts'} sooner, on <When d={mtdStart(one)} />, if
+          your <Year start={one.testYear} /> takings were over {money(one.threshold)}.
+        </p>
+      )}
+      {mtd.earlier.length > 1 && (
         <>
-          <p>Sooner if an earlier tax year’s takings were over its limit:</p>
+          <p>It can start sooner, if an earlier tax year’s takings were over that year’s limit:</p>
           <ul className="od-taxcard-list">
             {twenty.length === 1 && <StageItem s={twenty[0]} today={today} />}
             {twenty.length > 1 && (
@@ -509,7 +622,7 @@ function MtdTimetable({ today }: { today: string }) {
         </ul>
         <p className="sub">
           It means keeping digital records and sending HMRC an update every quarter (by 7 August, 7 November, 7 February and 7 May),
-          using software that works with Making Tax Digital.
+          using software that works with Making Tax Digital. This app doesn’t send them.
         </p>
       </div>
     </details>
@@ -525,6 +638,10 @@ function TaxYearSheet({ startYear, rangeLabel, ended, row, onClose, onSaved }: {
 }) {
   const [f, setF] = useState({ extra: poundsInput(row.extra_takings_pence), expenses: poundsInput(row.expenses_pence) });
   const { busy, error, run, setError } = useAction();
+  const toast = useToast();
+  // Closed while saving? Then a failure can't show in the sheet, so it's a toast instead.
+  const open = useRef(true);
+  useEffect(() => { open.current = true; return () => { open.current = false; }; }, []);
   const { rates } = ratesFor(startYear);
   const allowance = money(rates.tradingAllowance);
   async function save() {
@@ -537,6 +654,8 @@ function TaxYearSheet({ startYear, rangeLabel, ended, row, onClose, onSaved }: {
     let saved: TaxYear | undefined;
     if (await run(async () => { saved = await api.saveTaxYear({ start_year: startYear, extra_takings_pence: extra, expenses_pence: expenses }); })) {
       onSaved(saved!);
+    } else if (!open.current) {
+      toast(`Your figures for ${yearLabel(startYear)} weren’t saved. Tap Edit to try again.`);
     }
   }
   return (
@@ -547,15 +666,16 @@ function TaxYearSheet({ startYear, rangeLabel, ended, row, onClose, onSaved }: {
         </p>
         <div className="od-amount od-amount-tip">
           <Field label="Takings not recorded in this app (£)"
-            hint={`Money from your nail work in ${yearLabel(startYear)} that isn’t in Money, such as bookings paid through another app before you switched.`}>
+            hint={`Money from your nail work in ${yearLabel(startYear)} that isn’t recorded in this app, such as bookings paid through another app `
+              + 'before you switched. Use what clients paid, before that app’s fees.'}>
             <input type="text" inputMode="decimal" autoComplete="off" placeholder="0" value={f.extra}
               onChange={(ev) => setF({ ...f, extra: ev.target.value })} />
           </Field>
         </div>
         <div className="od-amount od-amount-tip">
           <Field label="Business expenses (£)"
-            hint={<>What the business {ended ? 'cost' : 'has cost'} you in {yearLabel(startYear)}: products, tools, PPE, training, insurance, and a share of your phone
-              and home costs. Keep the receipts. Under {allowance}? The estimate uses the {allowance} trading
+            hint={<>What the business {ended ? 'cost' : 'has cost'} you in {yearLabel(startYear)}: products, tools, PPE, training, insurance, booking-app
+              fees, and a share of your phone and home costs. Keep the receipts. Under {allowance}? The estimate uses the {allowance} trading
               allowance{rates.announced ? ' (announced, not law yet)' : ''} instead.</>}>
             <input type="text" inputMode="decimal" autoComplete="off" placeholder="0" value={f.expenses}
               onChange={(ev) => setF({ ...f, expenses: ev.target.value })} />

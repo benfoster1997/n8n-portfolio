@@ -100,8 +100,9 @@ export function Privacy() {
       <Section n={2}>
         <p>A few providers handle your information only to provide their service to {business}:</p>
         <ul className="privacy-list">
-          <li><b>Supabase</b>&nbsp;— the database and photo storage. Records are stored in Supabase’s European data centres (in the UK
-            or the EU); Supabase (a US company) may access them for support and security under UK-approved safeguards.</li>
+          <li><b>Supabase</b>&nbsp;— the database and photo storage. Records are stored in Supabase’s European data centres (in the UK,
+            or in the EU or Switzerland, which UK law recognises as protecting personal data adequately); Supabase (a US company) may
+            access them for support and security under UK-approved safeguards.</li>
           <li><b>Netlify</b>&nbsp;— hosts this booking website. It doesn’t store your booking, but its servers log technical data such as
             IP addresses.</li>
           <li><b>Google</b>&nbsp;— booking emails (your name, email, appointment and any deposit details) are sent from, and kept in,{' '}

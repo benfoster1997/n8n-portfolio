@@ -73,9 +73,28 @@ describe('the tax estimate’s figures in the live app', () => {
     });
   }
 
-  it('other errors aren’t hidden', async () => {
-    serve({ get: { status: 500, body: { code: 'XX000', details: null, hint: null, message: 'something broke' } } });
-    await expect(live.getTaxYear(2026)).rejects.toThrow('something broke');
+  describe('other errors aren’t hidden', () => {
+    it('reading', async () => {
+      serve({ get: { status: 500, body: { code: 'XX000', details: null, hint: null, message: 'something broke' } } });
+      await expect(live.getTaxYear(2026)).rejects.toThrow('something broke');
+    });
+
+    it('a signed-in session that has run out isn’t taken for the missing table', async () => {
+      serve({ get: { status: 401, body: { code: 'PGRST301', details: null, hint: null, message: 'JWT expired' } } });
+      await expect(live.getTaxYear(2026)).rejects.toThrow('JWT expired');
+    });
+
+    it('saving a value the table refuses says so, not that the update is needed', async () => {
+      serve({ post: { status: 400, body: { code: '23514', details: null, hint: null,
+        message: 'new row for relation "tax_years" violates check constraint "tax_years_expenses_pence_check"' } } });
+      const e = await live.saveTaxYear({ start_year: 2026, extra_takings_pence: 100, expenses_pence: 0 }).catch((x: unknown) => x);
+      expect(friendlyError(e)).toBe('That value is out of range — please check it.');
+    });
+
+    it('a backup fails rather than quietly leaving her tax figures out', async () => {
+      serve({ get: { status: 500, body: { code: 'XX000', details: null, hint: null, message: 'something broke' } } });
+      await expect(live.exportAll()).rejects.toThrow('something broke');
+    });
   });
 
   it('a backup includes the saved tax figures', async () => {

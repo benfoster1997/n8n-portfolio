@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  estimateTax, incomeTaxOn, longDate, makingTaxDigital, marginalRateAt, mtdStage, PAYMENTS_ON_ACCOUNT_FROM, ratesFor, TAX_RATES, taxDates,
-  taxYearDays, yearLabel,
+  dueFromEarlierYear, estimateTax, incomeTaxOn, longDate, makingTaxDigital, marginalRateAt, marginalRatesAt, mtdStage,
+  PAYMENTS_ON_ACCOUNT_FROM, ratesFor, TAX_RATES, taxDates, taxYearDays, weekendDue, yearLabel,
 } from '../../src/lib/tax';
 
 // Every figure below is worked out by hand from the published rates: personal
@@ -216,6 +216,15 @@ describe('tax estimate (the business is the only income, England 2026–27)', ()
     expect(marginalRateAt(gbp(100_000), r)).toBeCloseTo(0.62, 10);
     expect(marginalRateAt(gbp(125_140), r)).toBeCloseTo(0.47, 10);
   });
+
+  it('the next £1’s rate, split into Income Tax and Class 4', () => {
+    const r = TAX_RATES[2026];
+    expect(marginalRatesAt(gbp(10_000), r)).toEqual({ incomeTax: 0, class4: 0 });
+    expect(marginalRatesAt(gbp(12_570), r)).toEqual({ incomeTax: 0.2, class4: 0.06 });
+    expect(marginalRatesAt(gbp(60_000), r)).toEqual({ incomeTax: 0.4, class4: 0.02 });
+    expect(marginalRatesAt(gbp(110_000), r)).toEqual({ incomeTax: 0.6, class4: 0.02 });
+    expect(marginalRatesAt(gbp(130_000), r)).toEqual({ incomeTax: 0.45, class4: 0.02 });
+  });
 });
 
 describe('when it’s paid', () => {
@@ -239,6 +248,37 @@ describe('when it’s paid', () => {
     expect(taxDates(2028).nextYear).toBeNull();
     expect(taxDates(2028).thisYear?.second.label).toBe('31 July 2029');
     expect(taxDates(2029).thisYear).toBeNull();
+  });
+
+  it('a due date at a weekend: the safe day to pay is the Friday before', () => {
+    expect(weekendDue('2027-01-31')).toEqual({ day: 'Sunday', friday: 'Friday 29 January' });
+    expect(weekendDue('2027-07-31')).toEqual({ day: 'Saturday', friday: 'Friday 30 July' });
+    expect(weekendDue('2026-01-31')).toEqual({ day: 'Saturday', friday: 'Friday 30 January' });
+    expect(weekendDue('2028-01-31')).toBeNull(); // a Monday
+    expect(weekendDue('2028-07-31')).toBeNull(); // a Monday
+  });
+
+  it('this tax year’s card: what an earlier year still has due before this year’s own bill', () => {
+    const d = (label: string) => expect.objectContaining({ label });
+    // Until 31 January 2027: 2025–26's return and bill, and the payments on account towards 2026–27 that come with it.
+    expect(dueFromEarlierYear(2026, '2026-11-05')).toEqual({
+      kind: 'bill', billYear: 2025, date: d('31 January 2027'), onAccount: { first: d('31 January 2027'), second: d('31 July 2027') },
+    });
+    expect(dueFromEarlierYear(2026, '2027-01-31')).toMatchObject({ kind: 'bill', billYear: 2025 });
+    // 1 February to 31 July: the second payment towards 2026–27, from the 2025–26 bill, on 2026–27's card and then 2027–28's.
+    for (const [year, today] of [[2026, '2027-02-01'], [2026, '2027-04-05'], [2027, '2027-04-06'], [2027, '2027-07-31']] as const) {
+      expect(dueFromEarlierYear(year, today)).toEqual({ kind: 'july', billYear: 2025, date: d('31 July 2027') });
+    }
+    // From 1 August: 2026–27's return and bill, due 31 January 2028.
+    expect(dueFromEarlierYear(2027, '2027-08-01')).toMatchObject({ kind: 'bill', billYear: 2026, date: d('31 January 2028') });
+    // Only on the card for the tax year that today is in.
+    expect(dueFromEarlierYear(2025, '2026-11-05')).toBeNull();
+    expect(dueFromEarlierYear(2027, '2026-11-05')).toBeNull();
+    // The last July payment on account is towards 2028–29; after that, the return and bill only.
+    expect(dueFromEarlierYear(2029, '2029-05-01')).toMatchObject({ kind: 'july', billYear: 2027, date: d('31 July 2029') });
+    expect(dueFromEarlierYear(2029, '2029-11-05')).toMatchObject({ kind: 'bill', billYear: 2028, onAccount: null });
+    expect(dueFromEarlierYear(2029, '2030-03-01')).toBeNull();
+    expect(dueFromEarlierYear(2030, '2030-05-01')).toMatchObject({ kind: 'bill', billYear: 2029, date: d('31 January 2031'), onAccount: null });
   });
 });
 

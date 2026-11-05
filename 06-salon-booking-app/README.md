@@ -110,4 +110,5 @@ Chromium; set `CHROME_PATH` if it isn't at the default path in `playwright.confi
 
 No card payments (so no automatic late-cancellation charges), no automatic WhatsApp or SMS, no
 marketplace listing, no push notifications (new bookings and changes arrive by email), no expenses
-tracking (the tax estimate takes one yearly total), and one staff member only. The full list, and the reasons, are in [SETUP.md](SETUP.md#what-this-app-does-not-do).
+tracking (the tax estimate takes one yearly total), nothing sent to HMRC (Making Tax Digital needs
+software that works with it), and one staff member only. The full list, and the reasons, are in [SETUP.md](SETUP.md#what-this-app-does-not-do).

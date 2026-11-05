@@ -117,15 +117,21 @@ export function class4On(profit: number, r: TaxRates): number {
 }
 
 /**
- * Income Tax plus Class 4 on the next pound of profit, 0–1. Measured on the next
+ * Income Tax and Class 4 on the next pound of profit, each 0–1. Measured on the next
  * penny (profit is always whole pence), so just below a threshold it's the rate
  * that applies there, not a blend of the two.
  */
-export function marginalRateAt(profit: number, r: TaxRates): number {
+export function marginalRatesAt(profit: number, r: TaxRates): { incomeTax: number; class4: number } {
   const p = Math.max(0, profit);
-  const now = incomeTaxOn(p, r) + class4On(p, r);
   // Rounded so floating-point noise on figures this big never shows as 61.9999…%.
-  return Math.round((incomeTaxOn(p + 1, r) + class4On(p + 1, r) - now) * 1e6) / 1e6;
+  const next = (on: (n: number, r: TaxRates) => number) => Math.round((on(p + 1, r) - on(p, r)) * 1e6) / 1e6;
+  return { incomeTax: next(incomeTaxOn), class4: next(class4On) };
+}
+
+/** Income Tax plus Class 4 on the next pound of profit, 0–1 (see marginalRatesAt). */
+export function marginalRateAt(profit: number, r: TaxRates): number {
+  const { incomeTax, class4 } = marginalRatesAt(profit, r);
+  return Math.round((incomeTax + class4) * 1e6) / 1e6;
 }
 
 export interface TaxEstimate {
@@ -223,6 +229,45 @@ export function taxDates(taxYearStart: number): {
     nextYear: taxYearStart + 1 < PAYMENTS_DURING_YEAR_FROM ? { first: on(`${due}-01-31`), second: on(`${due}-07-31`) } : null,
     thisYear: taxYearStart < PAYMENTS_DURING_YEAR_FROM ? { first: on(`${due - 1}-01-31`), second: on(`${due - 1}-07-31`) } : null,
   };
+}
+
+/**
+ * A due date at a weekend: the day it falls on, and the Friday before ("Friday 29 January").
+ * HMRC says a payment due at a weekend has to reach it by the last working day before,
+ * unless it's by Faster Payments or card (not checked independently), so paying by that
+ * Friday is safe either way. 31 January and 31 July are never bank holidays.
+ */
+export function weekendDue(iso: string): { day: 'Saturday' | 'Sunday'; friday: string } | null {
+  const [y, m, d] = iso.split('-').map(Number);
+  const weekday = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+  if (weekday !== 0 && weekday !== 6) return null;
+  const friday = new Date(Date.UTC(y, m - 1, d - (weekday === 0 ? 2 : 1)));
+  return { day: weekday === 0 ? 'Sunday' : 'Saturday', friday: `Friday ${friday.getUTCDate()} ${MONTHS[friday.getUTCMonth()]}` };
+}
+
+/**
+ * On the card for the tax year that today is in (null on any other): the next date
+ * an earlier tax year still has money due, which that card doesn't otherwise show.
+ * - 1 February to 31 July, while payments on account are still made: the second
+ *   one, by 31 July, towards the year before, from the bill of the year before that.
+ * - Otherwise, until the next 31 January: the tax return and bill for the year
+ *   before this one, with the payments on account towards this year that can come
+ *   with it (none once those are paid during the year instead, from 2029–30).
+ */
+export function dueFromEarlierYear(taxYearStart: number, today: string):
+  | { kind: 'july'; billYear: number; date: TaxDate }
+  | { kind: 'bill'; billYear: number; date: TaxDate; onAccount: { first: TaxDate; second: TaxDate } | null }
+  | null {
+  const days = taxYearDays(taxYearStart);
+  if (today < days.first || today > days.last) return null;
+  const year = Number(today.slice(0, 4));
+  const monthDay = today.slice(5);
+  const july = monthDay >= '02-01' && monthDay <= '07-31' ? taxDates(year - 2).nextYear : null;
+  if (july) return { kind: 'july', billYear: year - 2, date: july.second };
+  const before = taxDates(taxYearStart - 1);
+  return today <= before.balancing.iso
+    ? { kind: 'bill', billYear: taxYearStart - 1, date: before.balancing, onAccount: before.nextYear }
+    : null;
 }
 
 /**

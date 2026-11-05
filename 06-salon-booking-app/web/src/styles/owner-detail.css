@@ -767,9 +767,9 @@
   line-height: 1.45;
   color: var(--ink);
 }
-.od-taxcard-plan > p { margin: 0; }
-.od-taxcard-plan .od-taxcard-rows { margin: 8px 0; }
-.od-taxcard-plan .od-taxcard-rows div:last-child { padding-bottom: 0; border-bottom: 0; }
+.od-taxcard-plan > p, .od-taxcard-plan .od-taxcard-rows { margin: 8px 0 0; }
+.od-taxcard-plan > p:first-child, .od-taxcard-plan .od-taxcard-rows:first-child { margin-top: 0; }
+.od-taxcard-plan .od-taxcard-rows:last-child div:last-child { padding-bottom: 0; border-bottom: 0; }
 .od-taxcard-plan .od-taxcard-rows dt { color: var(--ink); }
 .od-taxcard-mtd p { margin: 0; line-height: 1.45; }
 .od-taxcard-mtd p + p { margin-top: 8px; }

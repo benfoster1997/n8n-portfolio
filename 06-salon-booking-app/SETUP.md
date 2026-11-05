@@ -44,8 +44,9 @@ everything belongs to the business owner rather than to whoever sets it up. Turn
    - Name: `bookings`
    - Database password: press **Generate a password** and save it in a password manager. You'll rarely need it.
    - **Region: West Europe (London)** if it's offered. It keeps client data in the UK, and the region can't be
-     changed later. If London isn't offered (the free plan may only show broad areas), choose **Europe**:
-     UK data protection law accepts storing the data in the EU, and the privacy notice covers both.
+     changed later. If London isn't offered (the free plan may only show broad areas), choose **Europe**.
+     Supabase then picks one of its European data centres, which can be in the EU, London or Zurich (Switzerland).
+     UK data protection law accepts all of these, and the privacy notice covers them all.
    - Leave **Enable Data API** ticked.
 3. Wait a few minutes while it sets up.
 4. Menu → **SQL Editor** → **New query**. Open [`supabase/schema.sql`](supabase/schema.sql),
@@ -265,15 +266,19 @@ Class 4 National Insurance on her profit, at that year's rates for England, Wale
   bigger (£1,000 a year, with £3,000 announced from 6 April 2027). It's one or the other, never both,
   and the card says which it used.
 - **Edit** on the card takes two totals for the tax year: **takings not recorded in this app** (for
-  example Fresha bookings from before she switched) and **business expenses** (products, tools, PPE,
-  training, insurance, and a share of phone and home costs). Rough figures are fine, and she can
-  change them any time. She should still keep the receipts.
+  example Fresha bookings from before she switched: what clients paid, before Fresha's fees) and
+  **business expenses** (products, tools, PPE, training, insurance, booking-app fees, and a share of
+  phone and home costs). Rough figures are fine, and she can change them any time. She should still
+  keep the receipts.
 - The card also says what to put aside from each new £1 and when the bill is due. Once the bill is
   £1,000 or more it shows what that means in January and July with payments on account (half the
-  bill again towards the next year, twice). It warns her once her takings pass the Making Tax Digital
-  limit for that year, and lists the earlier limits that could bring it in sooner.
+  bill again towards the next year, twice). This tax year's card also says what the year before
+  still has due first (its return and bill by 31 January, or a payment on account by 31 July). It
+  warns her once her takings pass the Making Tax Digital limit for that year, and lists the earlier
+  limits that could bring it in sooner.
 - A tax year with nothing in the app and nothing added (such as the year before she switched) asks
-  for that year's figures instead of showing £0.
+  for that year's figures instead of showing £0. Until she uses **Edit** for a year, the card asks
+  about money taken another way.
 
 It's a rough guide for putting money aside, not tax advice. Wages or other income, student loan
 repayments and Scotland's rates aren't included.
@@ -367,6 +372,9 @@ So nobody is surprised later:
   so the links can't be used to use up her Gmail allowance.
 - **No expenses tracking.** It only records money received. The tax estimate takes one yearly total of her
   expenses (**Money → Tax year → Edit**), so she should still keep the receipts for products, training and insurance.
+- **Nothing is sent to HMRC.** Once her takings pass the Making Tax Digital limit, she'll need software
+  that works with Making Tax Digital for the quarterly updates and the tax return. The tax estimate
+  warns her when that's coming, but the app can't send them.
 - **One person only.** It's built for one diary, not a salon with staff.
 - **A brake on online bookings.** At most 6 an hour, 25 a day and 15 waiting for a deposit, and 3 an hour from any
   one internet connection. This stops someone flooding the diary or using her Gmail to send spam. Real clients
