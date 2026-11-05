@@ -143,7 +143,7 @@ const appt = async (reference) =>
 
 test('the public key cannot read or write any table', async () => {
   for (const t of ['clients', 'appointments', 'settings', 'payments', 'consultation_forms',
-                   'patch_tests', 'email_outbox', 'client_photos', 'services', 'owner']) {
+                   'patch_tests', 'email_outbox', 'client_photos', 'services', 'owner', 'tax_years']) {
     await rejects(asAnon(`select * from public.${t}`), 'permission denied');
   }
   await rejects(asAnon(`insert into public.clients (full_name) values ('x')`), 'permission denied');

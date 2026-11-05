@@ -43,8 +43,9 @@ everything belongs to the business owner rather than to whoever sets it up. Turn
 2. Create a **New project**:
    - Name: `bookings`
    - Database password: press **Generate a password** and save it in a password manager. You'll rarely need it.
-   - **Region: West Europe (London)**. This matters because it keeps client data in the UK, and it can't be
-     changed later. If the free plan only offers broad areas, choose **Europe**.
+   - **Region: West Europe (London)** if it's offered. It keeps client data in the UK, and the region can't be
+     changed later. If London isn't offered (the free plan may only show broad areas), choose **Europe**:
+     UK data protection law accepts storing the data in the EU, and the privacy notice covers both.
    - Leave **Enable Data API** ticked.
 3. Wait a few minutes while it sets up.
 4. Menu → **SQL Editor** → **New query**. Open [`supabase/schema.sql`](supabase/schema.sql),
@@ -243,9 +244,54 @@ Her booking page is `https://yourstudio.netlify.app/book`, and the **Today** scr
 5. Swap the booking link on Instagram and WhatsApp to the new one.
 6. Keep Fresha running until every Fresha booking has happened, then cancel the subscription
    and ask Fresha to delete the data it holds for her business.
+7. So the tax estimate counts the money taken through Fresha, add it in **Money → Tax year → Edit**
+   (**Takings not recorded in this app**, plus her expenses) for this tax year. Do the same for the tax
+   year before (the **‹** arrow goes back a year) if its tax return and bill are still to come: that
+   bill is due on the next 31 January, and the app has no takings for it otherwise. See
+   [Tax to put aside](#tax-to-put-aside).
 
 Clients found through Fresha's marketplace won't find her there any more. New clients now come
 from her own Instagram, WhatsApp, Google profile and word of mouth.
+
+---
+
+## Tax to put aside
+
+**Money → Tax year** shows roughly how much of the tax year's money to keep back for her Self
+Assessment bill. It treats the nail business as her only income and works out Income Tax and
+Class 4 National Insurance on her profit, at that year's rates for England, Wales and Northern Ireland.
+
+- **Profit** is her takings minus her business expenses, or minus the trading allowance if that's
+  bigger (£1,000 a year, with £3,000 announced from 6 April 2027). It's one or the other, never both,
+  and the card says which it used.
+- **Edit** on the card takes two totals for the tax year: **takings not recorded in this app** (for
+  example Fresha bookings from before she switched) and **business expenses** (products, tools, PPE,
+  training, insurance, and a share of phone and home costs). Rough figures are fine, and she can
+  change them any time. She should still keep the receipts.
+- The card also says what to put aside from each new £1 and when the bill is due. Once the bill is
+  £1,000 or more it shows what that means in January and July with payments on account (half the
+  bill again towards the next year, twice). It warns her once her takings pass the Making Tax Digital
+  limit for that year, and lists the earlier limits that could bring it in sooner.
+- A tax year with nothing in the app and nothing added (such as the year before she switched) asks
+  for that year's figures instead of showing £0.
+
+It's a rough guide for putting money aside, not tax advice. Wages or other income, student loan
+repayments and Scotland's rates aren't included.
+
+### Set up before the tax estimate was added? Run the update once
+
+Her two figures are kept in a new private table. A new install gets it from `schema.sql`. An install
+made with an older `schema.sql` (anything set up before this version, including in early November
+2026) needs it added once, **before the new version of the app goes live** (before it's merged into
+`main`, which Netlify publishes). If you're not sure, run it: it's safe on any install.
+
+1. **Supabase → SQL Editor → New query**.
+2. Open [`supabase/updates/2026-11-tax-estimate.sql`](supabase/updates/2026-11-tax-estimate.sql), copy
+   **all** of it, paste it in and press **Run**. It should say *Success. No rows returned*.
+
+It adds that one table, with the same owner-only privacy rule as the others, and changes nothing
+else. Running it twice does no harm. Until it has been run, the estimate still shows (from the
+takings in the app), but saving her figures says the database update hasn't been run yet.
 
 ---
 
@@ -266,6 +312,7 @@ from her own Instagram, WhatsApp, Google profile and word of mouth.
 | Block a holiday or a dentist appointment | **Diary → Block time** |
 | See a client's allergies, patch tests, form and photos | **Clients** → the client |
 | Get her figures for Self Assessment | **Money → Tax year → Download spreadsheet** |
+| See roughly how much tax to put aside | **Money → Tax year**. **Edit** adds takings from before the app and her expenses for the year. |
 | Back up | **Settings → Back up your data**, monthly. Keep only the last three, somewhere encrypted. |
 
 ---
@@ -318,7 +365,8 @@ So nobody is surprised later:
   herself (then records it in the app). A booking can be changed online up to 6 times; after that the
   client has to get in touch. Across all bookings, online changes are capped at 10 an hour and 40 a day,
   so the links can't be used to use up her Gmail allowance.
-- **No expenses tracking.** It only records money received, so she should keep receipts for products, training and insurance separately.
+- **No expenses tracking.** It only records money received. The tax estimate takes one yearly total of her
+  expenses (**Money → Tax year → Edit**), so she should still keep the receipts for products, training and insurance.
 - **One person only.** It's built for one diary, not a salon with staff.
 - **A brake on online bookings.** At most 6 an hour, 25 a day and 15 waiting for a deposit, and 3 an hour from any
   one internet connection. This stops someone flooding the diary or using her Gmail to send spam. Real clients
@@ -337,5 +385,6 @@ So nobody is surprised later:
 | "This diary already has an owner" | Someone signed in with a different email. Sign out and use the email from step 1.6. |
 | Forgot the password | On the sign-in screen, tap **Forgotten password?** |
 | **Settings → Booking page** won't save ("Could not find the … column") | The app is newer than the database. Run [`supabase/schema.sql`](supabase/schema.sql) again in the SQL Editor (it keeps all her data and settings), then save again. |
+| Saving the tax estimate's figures says the database update hasn't been run | Run the update once: see [Tax to put aside](#set-up-before-the-tax-estimate-was-added-run-the-update-once). |
 | Changed the web address | Update **Settings → Business details → This app's web address**, and Supabase → Authentication → URL Configuration. |
 | Wants it to look different, or a new feature | Everything is in this folder. See [README.md](README.md). |

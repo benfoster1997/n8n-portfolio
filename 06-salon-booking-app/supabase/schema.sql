@@ -293,6 +293,20 @@ create table if not exists public.payments (
 );
 create index if not exists payments_paid_on_idx on public.payments (paid_on);
 
+-- The owner's own figures for the "tax to put aside" estimate (Money → Tax year),
+-- one row per tax year (start_year 2026 is 6 April 2026 to 5 April 2027):
+-- takings she didn't record in the app, such as bookings taken through another
+-- app before she switched, and her business expenses. Yearly totals for a rough
+-- estimate, not accounts. An install made with an older schema.sql (before the tax
+-- estimate was added) adds this table with supabase/updates/2026-11-tax-estimate.sql,
+-- which is safe to run on any install.
+create table if not exists public.tax_years (
+  start_year          int primary key check (start_year between 2000 and 2100),
+  extra_takings_pence int not null default 0 check (extra_takings_pence between 0 and 100000000),
+  expenses_pence      int not null default 0 check (expenses_pence between 0 and 100000000),
+  updated_at          timestamptz not null default now()
+);
+
 create table if not exists public.client_photos (
   id             uuid primary key default gen_random_uuid(),
   client_id      uuid not null references public.clients(id) on delete cascade,
@@ -466,6 +480,10 @@ create trigger appointments_before_write before insert or update on public.appoi
 
 drop trigger if exists settings_updated_at on public.settings;
 create trigger settings_updated_at before update on public.settings
+  for each row execute function public.set_updated_at();
+
+drop trigger if exists tax_years_updated_at on public.tax_years;
+create trigger tax_years_updated_at before update on public.tax_years
   for each row execute function public.set_updated_at();
 
 -- ---------------------------------------------------------------------------
@@ -1470,7 +1488,7 @@ declare t text;
 begin
   foreach t in array array['owner', 'settings', 'opening_hours', 'services', 'clients', 'patch_tests',
                            'appointments', 'consultation_forms', 'time_off', 'payments',
-                           'client_photos', 'email_outbox', 'booking_attempts', 'client_changes']
+                           'client_photos', 'email_outbox', 'booking_attempts', 'client_changes', 'tax_years']
   loop
     execute format('alter table public.%I enable row level security', t);
     execute format('drop policy if exists owner_all on public.%I', t);

@@ -707,6 +707,7 @@
 .od-tax-note-ic { position: absolute; left: 14px; top: 14px; display: flex; color: var(--accent); }
 /* Tax year view: the "tax to put aside" estimate, with a lemon edge like the deposit panel */
 .od-taxcard { margin-top: 12px; gap: 12px; box-shadow: inset 0 3px 0 var(--lemon); }
+.od-taxcard-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: -10px; }
 .od-taxcard-h {
   margin: 0;
   font-size: 0.8rem;
@@ -715,8 +716,9 @@
   text-transform: uppercase;
   color: var(--accent-text);
 }
+.od-taxcard-edit { flex: none; }
 .od-taxcard-value {
-  margin-top: 4px;
+  margin-top: 0;
   font-size: 2.3rem;
   font-weight: 800;
   line-height: 1.1;
@@ -725,15 +727,61 @@
   font-variant-numeric: tabular-nums;
 }
 .od-taxcard-sub { margin: 4px 0 0; }
+/* the breakdown: takings, what comes off, the profit, then the tax on it */
 .od-taxcard-rows { margin: 0; display: grid; gap: 8px; }
-.od-taxcard-rows div { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding-bottom: 8px; border-bottom: 1px dashed var(--line); }
+.od-taxcard-rows div {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 4px 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px dashed var(--line);
+}
 .od-taxcard-rows dt { color: var(--muted); }
 .od-taxcard-rows dd { margin: 0; font-weight: 800; color: var(--ink-strong); font-variant-numeric: tabular-nums; }
+.od-taxcard-rows .od-taxcard-off { border-bottom: 1px solid var(--line-strong); }
+.od-taxcard-rows .od-taxcard-why {
+  flex-basis: 100%;
+  font-size: 0.8rem;
+  font-weight: 500;
+  line-height: 1.45;
+  color: var(--muted);
+  font-variant-numeric: normal;
+}
+.od-taxcard-rows .od-taxcard-profit dt { color: var(--ink-strong); font-weight: 750; }
 .od-taxcard-tip { margin: 0; padding: 10px 12px; border-radius: 12px; background: var(--accent-soft); color: var(--ink-strong); line-height: 1.45; }
-.od-taxcard-note { margin: 0; line-height: 1.5; }
-.od-taxcard-due { gap: 8px; padding-top: 8px; }
+/* a tax year with nothing in the app or added yet: ask for its figures instead of showing £0 */
+.od-taxcard-empty p { margin: 0; line-height: 1.5; }
+.od-taxcard-empty-h { font-size: 1.05rem; font-weight: 800; color: var(--ink-strong); }
+.od-taxcard-empty .sub { margin-top: 4px; }
+/* her figures couldn't be loaded: no estimate, and a way to try again */
+.od-taxcard-failed { gap: 10px; }
+.od-taxcard-retry { align-self: flex-start; }
+/* what's paid when, once payments on account come in */
+.od-taxcard-plan {
+  margin: -4px 0 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  line-height: 1.45;
+  color: var(--ink);
+}
+.od-taxcard-plan > p { margin: 0; }
+.od-taxcard-plan .od-taxcard-rows { margin: 8px 0; }
+.od-taxcard-plan .od-taxcard-rows div:last-child { padding-bottom: 0; border-bottom: 0; }
+.od-taxcard-plan .od-taxcard-rows dt { color: var(--ink); }
+.od-taxcard-mtd p { margin: 0; line-height: 1.45; }
+.od-taxcard-mtd p + p { margin-top: 8px; }
+.od-taxcard-list { margin: 4px 0 0; padding-left: 20px; line-height: 1.45; }
+.od-taxcard-list li + li { margin-top: 2px; }
+.od-taxcard-due-line { margin: 0; display: flex; align-items: flex-start; gap: 8px; line-height: 1.45; color: var(--ink); }
+.od-taxcard-due-ic { flex: none; display: flex; margin-top: 2px; color: var(--accent); }
+.od-taxcard-more { margin-top: -8px; }
+.od-taxcard-due { gap: 8px; padding-bottom: 4px; }
 .od-taxcard-due p { margin: 0; line-height: 1.5; }
 .od-taxcard-small { margin: 0; font-size: 0.78rem; line-height: 1.45; color: var(--muted); }
+.od-taxsheet-intro { margin: -4px 0 0; line-height: 1.45; }
 .od-tax-link { display: flex; margin: 10px auto 0; }
 .od-day .day-head h2 { font-size: 0.98rem; }
 .od-day-total { font-weight: 800; color: var(--accent); font-variant-numeric: tabular-nums; }

@@ -629,8 +629,8 @@ export function BackupSettings() {
     <Page title="Back up your data">
       <section className="card stack od-set-card od-backup">
         <span className="od-ic od-backup-ic" aria-hidden="true"><Glyph name="download" size={24} /></span>
-        <p>Download everything — clients, appointments, forms, patch tests, takings and settings — as one file. Keep it somewhere private (it contains health information). Photos aren’t included in the file.</p>
-        <p className="sub">The free database plan keeps its own backups only for a short time, so download one now and then, e.g. at the start of each month.</p>
+        <p>Download everything — clients, appointments, forms, patch tests, takings, your tax estimate figures and settings — as one file. Keep it somewhere private (it contains health information). Photos aren’t included in the file.</p>
+        <p className="sub">The free database plan doesn’t back up your data for you, so download a backup now and then, e.g. at the start of each month.</p>
       </section>
       <ErrorBox error={error} />
       <button className="btn primary block" disabled={busy} onClick={() => run(async () => {

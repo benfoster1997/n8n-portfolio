@@ -1,57 +1,98 @@
 // A rough Self Assessment estimate for a sole trader whose only income is the
-// business: Income Tax on the profit above the tax-free personal allowance,
-// plus Class 4 National Insurance, at the rates for England, Wales and
-// Northern Ireland. Class 2 isn't added: since 6 April 2024 it isn't payable on
-// profits above the small profits threshold (it's treated as paid), and below
-// that it's voluntary. All money is in pence.
+// business, at the rates for England, Wales and Northern Ireland:
+//
+//   takings (recorded in the app, plus any taken before or outside it)
+//   − her business expenses or the trading allowance, whichever is bigger (never both)
+//   = profit (never below 0)
+//   → Income Tax on the profit above the personal allowance (which shrinks above
+//     £100,000), at the basic, higher and additional rates
+//   + Class 4 National Insurance on the profit between the lower and upper profits
+//     limits, and at the lower rate above that.
+//
+// Class 2 National Insurance isn't added. Since 6 April 2024 nobody has to pay it:
+// on a profit at or above the small profits threshold it's treated as paid (the
+// year still counts for the State Pension), and below that paying it is voluntary.
+//
+// All money is in pence. The maths is exact; round only for display.
+import type { TaxYear } from './types';
+
+/** A tax year's own figures before anything is saved for it. */
+export const emptyTaxYear = (startYear: number): TaxYear =>
+  ({ start_year: startYear, extra_takings_pence: 0, expenses_pence: 0, updated_at: null });
+
+/** The most either of her figures can be, as the table's checks allow: £1,000,000. */
+export const TAX_YEAR_MAX_PENCE = 100_000_000;
 
 export interface TaxRates {
   /** "2026–27" */
   label: string;
+  /** Announced but not law yet: the screen says so. */
+  announced?: boolean;
+  /** Taken off the takings instead of the expenses when it's bigger (never both). */
+  tradingAllowance: number;
   personalAllowance: number;
-  /** The allowance shrinks by £1 for every £2 of income above this. */
+  /** The personal allowance shrinks by £1 for every £2 of income above this, to nothing. */
   taperFrom: number;
-  /** Size of the 20% band, above the allowance. */
+  /** Size of the 20% band, above the personal allowance. */
   basicBand: number;
   /** Taxable income above this pays the additional rate. */
   additionalFrom: number;
   basicRate: number;
   higherRate: number;
   additionalRate: number;
+  /** Class 4: the main rate between the lower and upper profits limits, the lower rate above. */
   class4Lower: number;
   class4Upper: number;
   class4Main: number;
   class4Above: number;
+  /** Class 2 counts as paid on a profit at or above this; below it, paying is voluntary. */
+  smallProfitsThreshold: number;
+  /** The voluntary Class 2 rate, per week. Never added to the estimate. */
+  class2Weekly: number;
 }
 
-const ENGLAND_2024_ON = {
+/** "2026–27" for the tax year starting 6 April 2026. */
+export const yearLabel = (startYear: number) => `${startYear}–${String((startYear + 1) % 100).padStart(2, '0')}`;
+
+// Income Tax and Class 4 for trading income. The thresholds are frozen until
+// 5 April 2031 (Budget 2025) and Budget 2026 left these rates unchanged.
+const FROZEN = {
   personalAllowance: 1_257_000,
   taperFrom: 10_000_000,
-  basicBand: 3_770_000,
+  basicBand: 3_770_000, // so 40% starts above £50,270 with the full allowance
   additionalFrom: 12_514_000,
   basicRate: 0.2,
   higherRate: 0.4,
   additionalRate: 0.45,
   class4Lower: 1_257_000,
   class4Upper: 5_027_000,
-  class4Main: 0.06,
+  class4Main: 0.06, // 6% for the whole of 2024–25 onwards
   class4Above: 0.02,
 };
 
-/** Rates by the year the tax year starts (6 April). The thresholds are frozen, so these three match. */
+/** Rates by the year the tax year starts (6 April). */
 export const TAX_RATES: Record<number, TaxRates> = {
-  2024: { label: '2024–25', ...ENGLAND_2024_ON },
-  2025: { label: '2025–26', ...ENGLAND_2024_ON },
-  2026: { label: '2026–27', ...ENGLAND_2024_ON },
+  2024: { label: yearLabel(2024), ...FROZEN, tradingAllowance: 100_000, smallProfitsThreshold: 672_500, class2Weekly: 345 },
+  2025: { label: yearLabel(2025), ...FROZEN, tradingAllowance: 100_000, smallProfitsThreshold: 684_500, class2Weekly: 350 },
+  2026: { label: yearLabel(2026), ...FROZEN, tradingAllowance: 100_000, smallProfitsThreshold: 710_500, class2Weekly: 365 },
+  // Announced in the Budget of 28 October 2026, not law yet: the trading allowance
+  // rises to £3,000 (Finance Bill 2026–27); the Class 2 figures need regulations in early 2027.
+  2027: {
+    label: yearLabel(2027), ...FROZEN, tradingAllowance: 300_000, smallProfitsThreshold: 735_500, class2Weekly: 380,
+    announced: true,
+  },
 };
 
 const KNOWN_YEARS = Object.keys(TAX_RATES).map(Number).sort((a, b) => a - b);
 
-/** The rates for a tax year, or the nearest year we have (flagged, so the screen can say so). */
-export function ratesFor(startYear: number): { rates: TaxRates; exact: boolean } {
-  if (TAX_RATES[startYear]) return { rates: TAX_RATES[startYear], exact: true };
-  const nearest = startYear > KNOWN_YEARS[KNOWN_YEARS.length - 1] ? KNOWN_YEARS[KNOWN_YEARS.length - 1] : KNOWN_YEARS[0];
-  return { rates: TAX_RATES[nearest], exact: false };
+/**
+ * The rates for a tax year, or the nearest year the app has (the latest for a
+ * later year, the earliest for an earlier one), flagged so the screen can say so.
+ */
+export function ratesFor(startYear: number): { rates: TaxRates; year: number; exact: boolean } {
+  if (TAX_RATES[startYear]) return { rates: TAX_RATES[startYear], year: startYear, exact: true };
+  const year = startYear > KNOWN_YEARS[KNOWN_YEARS.length - 1] ? KNOWN_YEARS[KNOWN_YEARS.length - 1] : KNOWN_YEARS[0];
+  return { rates: TAX_RATES[year], year, exact: false };
 }
 
 const clamp = (n: number, lo: number, hi: number) => Math.min(Math.max(n, lo), hi);
@@ -59,7 +100,8 @@ const clamp = (n: number, lo: number, hi: number) => Math.min(Math.max(n, lo), h
 /** Income Tax on a year's income, when it is the person's only income. */
 export function incomeTaxOn(income: number, r: TaxRates): number {
   if (income <= 0) return 0;
-  const allowance = Math.max(0, r.personalAllowance - Math.floor(Math.max(0, income - r.taperFrom) / 2));
+  // £1 of allowance goes for every £2 of income over £100,000: none is left at £125,140.
+  const allowance = Math.max(0, r.personalAllowance - Math.max(0, income - r.taperFrom) / 2);
   const taxable = Math.max(0, income - allowance);
   const basic = Math.min(taxable, r.basicBand);
   const higher = clamp(taxable - r.basicBand, 0, r.additionalFrom - r.basicBand);
@@ -74,70 +116,146 @@ export function class4On(profit: number, r: TaxRates): number {
   return main * r.class4Main + above * r.class4Above;
 }
 
+/**
+ * Income Tax plus Class 4 on the next pound of profit, 0–1. Measured on the next
+ * penny (profit is always whole pence), so just below a threshold it's the rate
+ * that applies there, not a blend of the two.
+ */
+export function marginalRateAt(profit: number, r: TaxRates): number {
+  const p = Math.max(0, profit);
+  const now = incomeTaxOn(p, r) + class4On(p, r);
+  // Rounded so floating-point noise on figures this big never shows as 61.9999…%.
+  return Math.round((incomeTaxOn(p + 1, r) + class4On(p + 1, r) - now) * 1e6) / 1e6;
+}
+
 export interface TaxEstimate {
+  /** Takings recorded in the app: money received, net of refunds (can be below 0). */
   takings: number;
+  /** Takings not recorded in the app, e.g. bookings taken through another app before switching. */
+  extraTakings: number;
+  /** The two together, never below 0. Making Tax Digital goes on this, before expenses. */
+  totalTakings: number;
+  /** Her business expenses, as entered. */
+  expenses: number;
+  /** What comes off the takings: her expenses or the trading allowance, whichever is bigger. */
+  deduction: number;
+  /** 'allowance' when the trading allowance was bigger than her expenses, so it was used instead. */
+  deductionKind: 'expenses' | 'allowance';
+  /** totalTakings − deduction, never below 0. */
   profit: number;
   incomeTax: number;
   class4: number;
   total: number;
-  /** total ÷ takings, 0–1 (0 when there are no takings). */
+  /** total ÷ totalTakings, 0–1 (0 when there are no takings). */
   shareOfTakings: number;
-  /** Tax on the next £1 of profit, 0–1: what to put aside from each new payment. */
+  /** Tax on the next £1 of profit, 0–1: what to put aside from each new £1 she takes. */
   marginalRate: number;
   rates: TaxRates;
-  /** false when this tax year's rates aren't known and the nearest year's were used. */
+  /** The tax year whose rates were used (the year it starts). */
+  ratesYear: number;
+  /** false when the app has no rates for this tax year and used the nearest year's. */
   exactRates: boolean;
 }
 
 /**
- * The estimate for a tax year so far. Takings are the money received (net of
- * refunds); expenses are taken off to give the profit, which never goes below 0.
- * Pence in, pence out (not rounded; round for display).
+ * The estimate for a tax year so far. Pence in, pence out (not rounded; round
+ * for display). Negative extra takings or expenses count as 0.
  */
-export function estimateTax({ taxYearStart, takingsPence, expensesPence = 0 }: {
-  taxYearStart: number; takingsPence: number; expensesPence?: number;
+export function estimateTax({ taxYearStart, takingsPence, extraTakingsPence = 0, expensesPence = 0 }: {
+  taxYearStart: number; takingsPence: number; extraTakingsPence?: number; expensesPence?: number;
 }): TaxEstimate {
-  const { rates, exact } = ratesFor(taxYearStart);
-  const takings = Math.max(0, takingsPence);
-  const profit = Math.max(0, takings - Math.max(0, expensesPence));
+  const { rates, year, exact } = ratesFor(taxYearStart);
+  const extraTakings = Math.max(0, extraTakingsPence);
+  const expenses = Math.max(0, expensesPence);
+  const totalTakings = Math.max(0, takingsPence + extraTakings);
+  // Either the expenses or the trading allowance, never both: whichever leaves the smaller profit.
+  const deductionKind = rates.tradingAllowance > expenses ? 'allowance' : 'expenses';
+  const deduction = deductionKind === 'allowance' ? rates.tradingAllowance : expenses;
+  const profit = Math.max(0, totalTakings - deduction);
   const incomeTax = incomeTaxOn(profit, rates);
   const class4 = class4On(profit, rates);
   const total = incomeTax + class4;
-  const step = 10_000; // the next £100, so pence rounding doesn't show
-  const marginalRate = (incomeTaxOn(profit + step, rates) + class4On(profit + step, rates) - total) / step;
   return {
-    takings, profit, incomeTax, class4, total,
-    shareOfTakings: takings > 0 ? total / takings : 0,
-    marginalRate, rates, exactRates: exact,
+    takings: takingsPence, extraTakings, totalTakings, expenses, deduction, deductionKind, profit,
+    incomeTax, class4, total,
+    shareOfTakings: totalTakings > 0 ? total / totalTakings : 0,
+    marginalRate: marginalRateAt(profit, rates),
+    rates, ratesYear: year, exactRates: exact,
   };
 }
 
-/** When a tax year's Self Assessment bill is due, and the payments on account that can come with it. */
-export function taxDates(taxYearStart: number) {
-  const due = taxYearStart + 2;
-  return {
-    /** Return filed online and the bill paid by this date. */
-    balancing: `31 January ${due}`,
-    /** Payments on account towards the next tax year, when the bill is over £1,000. */
-    nextYearFirst: `31 January ${due}`,
-    nextYearSecond: `31 July ${due}`,
-    /** If she already makes payments on account, these went towards this tax year. */
-    thisYearFirst: `31 January ${due - 1}`,
-    thisYearSecond: `31 July ${due - 1}`,
-  };
-}
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+/** "2028-01-31" → "31 January 2028". */
+export const longDate = (iso: string) => {
+  const [y, m, d] = iso.split('-').map(Number);
+  return `${d} ${MONTHS[m - 1]} ${y}`;
+};
 
-/** HMRC asks for payments on account when the bill is over this. */
-export const PAYMENTS_ON_ACCOUNT_FROM = 100_000;
+/** A date to show, and the same date as yyyy-mm-dd to compare with today. */
+export interface TaxDate { iso: string; label: string }
+const on = (iso: string): TaxDate => ({ iso, label: longDate(iso) });
+
+/** A tax year's first and last days, as yyyy-mm-dd. */
+export const taxYearDays = (taxYearStart: number) => ({ first: `${taxYearStart}-04-06`, last: `${taxYearStart + 1}-04-05` });
 
 /**
- * Making Tax Digital for Income Tax: qualifying income (turnover) in a tax year
- * over the threshold for that year means quarterly digital updates from the
- * April a year after it ends. 2024–25 over £50,000 → April 2026; 2025–26 over
- * £30,000 → April 2027; 2026–27 (and later) over £20,000 → April 2028 (and later).
+ * From April 2029 (the 2029–30 tax year) HMRC plans to replace payments on account
+ * with smaller automatic payments during the year (how often isn't decided yet).
  */
-export function makingTaxDigital(taxYearStart: number, takingsPence: number): { threshold: number; fromYear: number } | null {
-  if (taxYearStart < 2024) return null;
-  const threshold = taxYearStart === 2024 ? 5_000_000 : taxYearStart === 2025 ? 3_000_000 : 2_000_000;
-  return takingsPence > threshold ? { threshold, fromYear: taxYearStart + 2 } : null;
+export const PAYMENTS_DURING_YEAR_FROM = 2029;
+
+/**
+ * When a tax year's Self Assessment bill is due, and the payments on account that
+ * can come with it: two towards the next tax year, each half of this bill, and the
+ * two that went towards this one if she already makes them.
+ */
+export function taxDates(taxYearStart: number): {
+  /** The online return is due, and the bill is paid, by this date. */
+  balancing: TaxDate;
+  /** Payments on account towards the next tax year. Null once the next year is 2029–30 or later. */
+  nextYear: { first: TaxDate; second: TaxDate } | null;
+  /** Payments on account that went towards this tax year. Null from 2029–30, when they're paid during the year. */
+  thisYear: { first: TaxDate; second: TaxDate } | null;
+} {
+  const due = taxYearStart + 2;
+  return {
+    balancing: on(`${due}-01-31`),
+    nextYear: taxYearStart + 1 < PAYMENTS_DURING_YEAR_FROM ? { first: on(`${due}-01-31`), second: on(`${due}-07-31`) } : null,
+    thisYear: taxYearStart < PAYMENTS_DURING_YEAR_FROM ? { first: on(`${due - 1}-01-31`), second: on(`${due - 1}-07-31`) } : null,
+  };
+}
+
+/**
+ * HMRC asks for payments on account when a bill is £1,000 or more: none are due
+ * only when it's under £1,000, or when more than 80% of the tax was already taken
+ * at source (e.g. through PAYE), which can't happen when the business is the only income.
+ */
+export const PAYMENTS_ON_ACCOUNT_FROM = 100_000;
+
+/** Making Tax Digital for Income Tax: takings (before expenses) in testYear over threshold → from 6 April fromYear. */
+export interface MtdStage { testYear: number; threshold: number; fromYear: number }
+
+/**
+ * The Making Tax Digital limit a tax year's takings are tested against, under
+ * current rules: 2024–25 over £50,000 → from April 2026; 2025–26 over £30,000 →
+ * April 2027; 2026–27 and later years over £20,000 → the April a year after the
+ * tax year ends. None before 2024–25.
+ */
+export function mtdStage(testYear: number): MtdStage | null {
+  if (testYear < 2024) return null;
+  const threshold = testYear === 2024 ? 5_000_000 : testYear === 2025 ? 3_000_000 : 2_000_000;
+  return { testYear, threshold, fromYear: testYear + 2 };
+}
+
+/**
+ * Whether a tax year's takings bring in Making Tax Digital. `earlier` lists the
+ * stages for the years before it (latest first): any of those over its own limit
+ * would have brought it in sooner, so this year's date is only the latest it can start.
+ */
+export function makingTaxDigital(taxYearStart: number, takingsPence: number): (MtdStage & { earlier: MtdStage[] }) | null {
+  const stage = mtdStage(taxYearStart);
+  if (!stage || takingsPence <= stage.threshold) return null;
+  const earlier: MtdStage[] = [];
+  for (let y = taxYearStart - 1; mtdStage(y); y--) earlier.push(mtdStage(y)!);
+  return { ...stage, earlier };
 }
