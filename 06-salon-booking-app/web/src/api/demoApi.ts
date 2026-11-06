@@ -5,11 +5,12 @@
 import type { Api, FormInfo } from './api';
 import type {
   Appointment, BookingInfo, BusyRange, Client, ClientChange, ClientPhoto, ConsultationForm, EmailLogRow,
-  ManageInfo, OpeningHours, PatchTest, Payment, Service, Session, Settings, TimeOff,
+  ManageInfo, OpeningHours, PatchTest, Payment, Service, Session, Settings, TaxYear, TimeOff,
 } from '../lib/types';
 import { addDays, dateInZone, todayInZone, zonedToInstant } from '../lib/time';
 import { availableSlots } from '../lib/slots';
 import { normalizeUkPhone } from '../lib/text';
+import { emptyTaxYear, TAX_YEAR_MAX_PENCE } from '../lib/tax';
 
 const KEY = 'salon-demo-v4';
 const MAX_CLIENT_CHANGES = 6; // public.max_client_changes()
@@ -26,6 +27,8 @@ interface Store {
   forms: ConsultationForm[];
   time_off: TimeOff[];
   payments: Payment[];
+  /** The tax estimate's own figures, one per tax year (public.tax_years). */
+  tax_years: TaxYear[];
   photos: ClientPhoto[];
   outbox: (EmailLogRow & { appointment_id: string })[];
   client_changes: ClientChange[];
@@ -203,6 +206,7 @@ function seed(): Store {
     }],
     time_off: [{ id: uid(), starts_at: at(5, '00:00'), ends_at: at(6, '00:00'), note: 'Training day' }],
     payments,
+    tax_years: [],
     photos: [],
     outbox: [],
     client_changes,
@@ -219,11 +223,12 @@ function load(): Store {
   save(s);
   return s;
 }
-/** A demo saved before a setting existed gets its demo value; everything already saved is kept. */
+/** A demo saved before a setting (or a table) existed gets its demo value; everything already saved is kept. */
 function upgrade(s: Store): Store {
   const defaults = demoSettings();
   const settings = s.settings as unknown as Record<string, unknown>;
   for (const [k, v] of Object.entries(defaults)) if (!(k in settings)) settings[k] = v;
+  if (!Array.isArray(s.tax_years)) s.tax_years = [];
   return s;
 }
 function save(s: Store) {
@@ -701,6 +706,23 @@ export function demoApi(): Api {
     },
     async addPayment(p) { needOwner(); db.payments.push({ id: uid(), created_at: nowIso(), ...p }); commit(); await delay(null); },
     async deletePayment(id) { needOwner(); db.payments = db.payments.filter((p) => p.id !== id); commit(); await delay(null); },
+    async getTaxYear(startYear) {
+      needOwner();
+      const row = db.tax_years.find((t) => t.start_year === startYear);
+      return delay(row ? { ...row } : emptyTaxYear(startYear));
+    },
+    async saveTaxYear({ start_year, extra_takings_pence, expenses_pence }) {
+      needOwner();
+      // The same checks as the table's.
+      const pence = (n: number) => Number.isInteger(n) && n >= 0 && n <= TAX_YEAR_MAX_PENCE;
+      if (!Number.isInteger(start_year) || start_year < 2000 || start_year > 2100 || !pence(extra_takings_pence) || !pence(expenses_pence)) {
+        fail('violates check constraint');
+      }
+      const row: TaxYear = { start_year, extra_takings_pence, expenses_pence, updated_at: nowIso() };
+      db.tax_years = [...db.tax_years.filter((t) => t.start_year !== start_year), row].sort((a, b) => a.start_year - b.start_year);
+      commit();
+      return delay({ ...row });
+    },
 
     async exportAll() {
       needOwner();

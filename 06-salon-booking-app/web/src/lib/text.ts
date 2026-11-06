@@ -333,6 +333,8 @@ export function friendlyError(e: unknown): string {
     not_cancellable: 'Only upcoming bookings can be cancelled.',
     not_completable: 'That appointment is already finished or cancelled.',
     no_email: "This client doesn't have an email address saved.",
+    tax_update_needed: 'These figures can’t be saved yet: the database update for the tax estimate hasn’t been run. '
+      + 'Ask whoever set up the app to run it (SETUP.md, “Tax to put aside”). Until then, the estimate works from your takings in the app.',
     appointments_no_overlap: 'That clashes with another appointment (including the clean-up time).',
     clients_email_unique: 'A client with that email address already exists — search for them instead.',
     'Invalid login credentials': 'That email and password don’t match.',

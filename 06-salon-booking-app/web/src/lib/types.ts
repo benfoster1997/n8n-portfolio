@@ -194,6 +194,18 @@ export interface Payment {
   created_at: string;
 }
 
+/** The owner's own figures for one tax year's "Tax to put aside" estimate (Money → Tax year). */
+export interface TaxYear {
+  /** The year the tax year starts: 2026 for 6 April 2026 to 5 April 2027. */
+  start_year: number;
+  /** Takings not recorded in the app, e.g. bookings taken through another app before switching. 0 to £1,000,000. */
+  extra_takings_pence: number;
+  /** Business expenses for the tax year. 0 to £1,000,000. */
+  expenses_pence: number;
+  /** Null when nothing has been saved for the year yet. */
+  updated_at: string | null;
+}
+
 export interface ClientPhoto {
   id: string;
   client_id: string;

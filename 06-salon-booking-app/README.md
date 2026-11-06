@@ -13,7 +13,7 @@ no card processor, no SMS and no paid WhatsApp.
 | Health and allergy consultation form for first visits | **One-tap WhatsApp** reminders (3 days ahead) and deposit requests |
 | Confirmation, change and reminder emails (72 hours before) | **Late cancellations** flagged, with a one-tap follow-up and "record payment" |
 | Bank-transfer deposit instructions (new clients only) | **Clients**: notes, allergies, patch tests, forms, private nail photos |
-| Plain-English privacy notice | **Money**: cash and bank-transfer takings, by month or UK tax year, CSV export |
+| Plain-English privacy notice | **Money**: cash and bank-transfer takings, by month or UK tax year, CSV export, and roughly how much tax to put aside |
 
 ## How it fits together
 
@@ -21,7 +21,7 @@ no card processor, no SMS and no paid WhatsApp.
  iPhone home screen ──► web app (React, hosted free on Netlify)
                               │  public key + database rules
                               ▼
-                     Supabase (Postgres, London)  ◄── Google Apps Script in her Gmail
+                     Supabase (Postgres, Europe)  ◄── Google Apps Script in her Gmail
                      tables locked down by RLS        polls every 10 min, sends emails
                      public_* functions for booking   (email_jobs_claim / _report + secret)
 ```
@@ -70,6 +70,11 @@ no card processor, no SMS and no paid WhatsApp.
   person is her client.
 - **Health data needs explicit consent.** Consultation answers are only stored with a ticked
   consent box and a typed signature, which the database enforces.
+- **"Tax to put aside" is a rough estimate, not accounts.** It treats the nail business as her
+  only income and works out Income Tax and Class 4 National Insurance on the profit: takings minus
+  her expenses or the trading allowance, whichever is bigger. The rates live in `web/src/lib/tax.ts`,
+  one table per tax year. She types in two yearly totals (takings from before the app, and
+  expenses), kept in their own owner-only table.
 - **Tax records survive client deletion.** Deleting a client (the right to erasure) removes their
   details, forms, patch tests and photos, but keeps a name on payments already received, because
   HMRC requires five years of records.
@@ -94,9 +99,9 @@ To run against a real Supabase project, copy `.env.example` to `.env.local` and 
 
 | Command | What it proves |
 |---|---|
-| `npm run test:db` | The real schema on a local PostgreSQL, acting as the public, the owner and the email script. It covers privacy (the public key reads nothing), double booking and the buffer, deposits for new clients only, time rules, consent, the email queue, and the actual Apps Script code run against the database. |
-| `npm test` | Slot calculation, including the BST/GMT changeover, plus UK phone numbers, money, tax years, CSV injection protection and message templates. |
-| `npm run test:e2e` | The demo app in Chromium on an iPhone-sized screen. A new client books, fills in the form and gets their deposit confirmed. It also covers returning clients, WhatsApp links, checkout, double-booking refusal, client records, takings export, settings and time off. |
+| `npm run test:db` | The real schema on a local PostgreSQL, acting as the public, the owner and the email script. It covers privacy (the public key reads nothing), double booking and the buffer, deposits for new clients only, time rules, consent, the email queue, the tax estimate's figures and their update script, and the actual Apps Script code run against the database. |
+| `npm test` | Slot calculation, including the BST/GMT changeover, plus UK phone numbers, money, tax years, the tax estimate (hand-worked examples), CSV injection protection and message templates. |
+| `npm run test:e2e` | The demo app in Chromium on an iPhone-sized screen. A new client books, fills in the form and gets their deposit confirmed. It also covers returning clients, WhatsApp links, checkout, double-booking refusal, client records, takings export, the tax estimate, settings and time off. |
 
 `test:db` needs a local PostgreSQL 15+ that the current OS user can connect to. `test:e2e` needs
 Chromium; set `CHROME_PATH` if it isn't at the default path in `playwright.config.ts`.
@@ -105,4 +110,5 @@ Chromium; set `CHROME_PATH` if it isn't at the default path in `playwright.confi
 
 No card payments (so no automatic late-cancellation charges), no automatic WhatsApp or SMS, no
 marketplace listing, no push notifications (new bookings and changes arrive by email), no expenses
-tracking, and one staff member only. The full list, and the reasons, are in [SETUP.md](SETUP.md#what-this-app-does-not-do).
+tracking (the tax estimate takes one yearly total), nothing sent to HMRC (Making Tax Digital needs
+software that works with it), and one staff member only. The full list, and the reasons, are in [SETUP.md](SETUP.md#what-this-app-does-not-do).

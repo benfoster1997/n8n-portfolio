@@ -22,6 +22,11 @@ everything belongs to the business owner rather than to whoever sets it up. Turn
 > at all would be an App Store app, which costs about £79 a year for Apple's developer account and still
 > needs a web page for client bookings.)
 
+> **No computer?** It can all be done from an iPhone in Safari. Step 6 is the fiddly one: Google's
+> script editor is built for computers, so switch Safari to the desktop site (the page menu button in
+> the address bar, then **···**, then **Request Desktop Website**) and turn the phone sideways. If
+> pasting into an editor shows no **Paste** option, type a space first and tap and hold again.
+
 > **Before you start:** a business that keeps client records, especially health information
 > like allergies, has to pay the **ICO data protection fee**. That's £52 a year for a small
 > business, or £47 by direct debit. It's a legal requirement whatever app is used, so she may
@@ -34,51 +39,68 @@ everything belongs to the business owner rather than to whoever sets it up. Turn
 ## 1. Create the database (Supabase): 15 minutes
 
 1. Go to [supabase.com](https://supabase.com) → **Start your project** → sign up with the business email.
+   It asks for an organisation first: name it after the business, choose **Free**, then **Create organization**.
 2. Create a **New project**:
    - Name: `bookings`
    - Database password: press **Generate a password** and save it in a password manager. You'll rarely need it.
-   - **Region: West EU (London)**. This matters because it keeps client data in the UK, and it can't be changed later.
-   - Plan: **Free**.
-3. Wait a minute or two while it sets up.
-4. Left menu → **SQL Editor** → **New query**. Open [`supabase/schema.sql`](supabase/schema.sql),
-   copy **all** of it, paste it in and press **Run**. It should say *Success. No rows returned*.
+   - **Region: West Europe (London)** if it's offered. It keeps client data in the UK, and the region can't be
+     changed later. If London isn't offered (the free plan may only show broad areas), choose **Europe**.
+     Supabase then picks one of its European data centres, which can be in the EU, London or Zurich (Switzerland).
+     UK data protection law accepts all of these, and the privacy notice covers them all.
+   - Leave **Enable Data API** ticked.
+3. Wait a few minutes while it sets up.
+4. Menu → **SQL Editor** → **New query**. Open [`supabase/schema.sql`](supabase/schema.sql),
+   copy **all** of it, paste it in and press **Run**. A box called **Potential issues detected** may warn about
+   destructive operations and Row Level Security: that's expected, because the script sets up its own privacy
+   rules. Choose **Run and enable RLS** (or **Run query**). It should say *Success. No rows returned*.
 5. **New query** again. Paste all of [`supabase/storage.sql`](supabase/storage.sql) and press **Run**.
 6. **New query** once more. Run this line with **her** email address in it. Only an account
    with this email can ever become the owner of the diary:
    ```sql
    update public.settings set owner_email = 'her.email@example.com' where id = 1;
    ```
-7. Left menu → **Project Settings** → **API** (sometimes called **Data API** or **API Keys**). Copy these two into a note:
-   - the **Project URL**, e.g. `https://abcdefghijkl.supabase.co`
-   - the **anon / public** key, a long string. A **publishable** key (`sb_publishable_…`) works too.
+7. Press **Connect** (the plug icon at the top). It shows both values with copy buttons. Copy them into a note:
+   - the **Project URL**, e.g. `https://abcdefghijkl.supabase.co`, with nothing after `.co`
+   - the **publishable** key (`sb_publishable_…`). An older **anon / public** key works too.
 
-   ⚠️ Never use the **service_role** or **secret** key anywhere in this app. It bypasses every privacy rule.
-8. **Organization → Legal Documents**: sign Supabase's **Data Processing Agreement**. It's free and
-   signed online.
+   They're also under **Project Settings**: **Data API** for the URL, **API Keys** for the key. If the
+   URL you copy ends in `/rest/v1/` (the Data API page shows it that way), delete that part.
+
+   ⚠️ Never use the **secret** or **service_role** key anywhere in this app. It bypasses every privacy rule.
+8. There's no separate **Data Processing Agreement** to sign any more: Supabase includes it in its terms.
+   To keep a copy, **Organization settings → Legal Documents → View DPA**.
 
 ---
 
-## 2. Put the app online (Netlify): 10 minutes
+## 2. Put the app online (Netlify): 15 minutes
 
 1. Go to [netlify.com](https://www.netlify.com) and sign up. The free plan allows business use.
-2. **Add new site → Import an existing project → GitHub**, and pick this repository.
-3. Settings:
+2. **Add new project → Import an existing project → GitHub → Authorize Netlify**, and pick this repository.
+   If it isn't listed, choose **Configure the Netlify app on GitHub** and give Netlify access to it.
+3. On **Review configuration**:
+   - **Project name:** something tidy, e.g. `yourstudio` → `https://yourstudio.netlify.app`
+   - **Branch to deploy:** `main`
    - **Base directory:** `06-salon-booking-app/web`
    - **Build command:** `npm run build` (filled in automatically from `netlify.toml`)
-   - **Publish directory:** `dist`
-4. **Environment variables → Add**:
+   - **Publish directory:** `dist` (it may show as `06-salon-booking-app/web/dist`, which is the same)
+4. **Add environment variables → Add key/value pairs** (leave **Contains secret values** unticked):
    - `VITE_SUPABASE_URL` = the Project URL from step 1.7
-   - `VITE_SUPABASE_ANON_KEY` = the anon key from step 1.7
-5. **Deploy**. After a minute you get an address like `random-name-123.netlify.app`.
-6. **Site configuration → Change site name** to something tidy, e.g. `yourstudio` → `https://yourstudio.netlify.app`.
+   - `VITE_SUPABASE_ANON_KEY` = the publishable (or anon) key from step 1.7
+5. **Deploy**. After a minute or two the site is live at your project's address.
+6. **Make it public.** New Netlify projects are private by default, which would put a Netlify login in
+   front of the booking page. **Project configuration → General → Visitor access → Project visibility →
+   Edit visibility → Public**. Check by opening `…/book` in a private browser window: you should see the
+   treatments, not a Netlify sign-in.
 7. Back in **Supabase → Authentication → URL Configuration**:
-   - **Site URL:** your Netlify address, e.g. `https://yourstudio.netlify.app`
-   - **Redirect URLs → Add:** `https://yourstudio.netlify.app/**`
+   - **Site URL:** your Netlify address, e.g. `https://yourstudio.netlify.app`, then **Save changes**
+   - **Redirect URLs → Add URL:** `https://yourstudio.netlify.app/**`, then **Save URLs**
 
    This makes the "reset password" link open the app.
+   If you rename the project later, its address changes: update both of these, and **Business details → This
+   app's web address** in the app.
 
 > If the two environment variables are missing, the site shows *Not set up yet* rather than
-> quietly running without a database. To look around first, add `VITE_DEMO=1` instead to get
+> quietly running without a database. After adding or fixing them, redeploy: **Deploys → Trigger deploy**. To look around first, add `VITE_DEMO=1` instead to get
 > the **demo**, with invented data kept only in your browser. Then remove it when you add the real values.
 
 ---
@@ -87,10 +109,11 @@ everything belongs to the business owner rather than to whoever sets it up. Turn
 
 Lock the door first, then make her key:
 
-1. **Supabase → Authentication → Sign In / Providers**: turn **off** **"Allow new users to sign up"**,
-   leave **Anonymous sign-ins** off, then **Save**. Now nobody can create an account from the website.
+1. **Supabase → Authentication → Sign In / Providers**: under **User Signups**, turn **off** **"Allow new users
+   to sign up"**, leave **Anonymous sign-ins** off, then **Save changes**. Now nobody can create an account from
+   the website.
 2. **Supabase → Authentication → Users → Add user → Create new user**: use her email (the same one
-   as in step 1.6) and a strong password of 10+ characters, and tick **Auto confirm user**.
+   as in step 1.6) and a strong password of 10+ characters, and make sure **Auto confirm user?** is ticked.
 3. On her iPhone, open **Safari**, go to the Netlify address and **sign in** with that email and
    password. The first time she signs in, the diary becomes hers. Any other account sees nothing.
 
@@ -165,8 +188,9 @@ It uses Google's MailApp, which can *send* email but **can't read her inbox**.
 
 1. In the app, go to **Settings → Email confirmations & reminders → Create the secret**.
    Copy the secret now, because it's only shown once. Leave this page open: it also shows the URL and key to copy.
-2. On a computer signed in to **her** Google account, go to [script.google.com](https://script.google.com) → **New project**.
-   Name it `Booking emails`.
+2. Signed in to **her** Google account (and only hers: a private browser window avoids Google mixing up
+   accounts), go to [script.google.com](https://script.google.com) → **New project**. Name it `Booking emails`.
+   The script and its timer run as whoever does this, so it must be her account.
 3. Delete what's in `Code.gs` and paste in **all** of [`apps-script/Code.gs`](apps-script/Code.gs). Press **Save** 💾.
 4. Go to **Project Settings** (the cog on the left) → **Script Properties → Add script property**, three times:
 
@@ -182,11 +206,13 @@ It uses Google's MailApp, which can *send* email but **can't read her inbox**.
 5. Go back to the **Editor** (`< >`). In the function dropdown at the top, choose **`setup`** and press **Run**.
    Google asks for permission:
    - **Review permissions** → choose her account.
-   - You'll see "Google hasn't verified this app", because it's her own script. Tap **Advanced → Go to Booking emails** → **Allow**.
+   - You'll see "Google hasn't verified this app", because it's her own script. Tap **Advanced → Go to Booking emails (unsafe)**.
+   - Tick **Select all**, then **Continue**. If the boxes are left unticked, nothing is allowed and the run fails: run it again.
+   - If the permission window never opens, the browser is blocking pop-ups: allow them for this step.
 6. The log should end with *All set…*.
 7. Choose **`sendTestEmail`** → **Run** to see a sample deposit email in her inbox.
-8. **Triggers** (the clock icon on the left) → the `processEmails` trigger → set **failure notifications**
-   to **Notify me immediately**. If the script ever stops, she'll get an email.
+8. **Triggers** (the clock icon on the left) → the `processEmails` trigger → the pencil (**Edit trigger**) →
+   **Failure notification settings** → **Notify me immediately** → **Save**. If the script ever stops, she'll get an email.
 9. In the app, **Settings → Email** should now say *Email sender last checked in … — working.*
 
 From now on it runs every 10 minutes by itself, even with the computer off. It never takes on more
@@ -194,7 +220,8 @@ emails than Gmail will still send that day (about 100 for a personal account). T
 once and check the new-booking alert **notifies her phone**.
 
 > The email script checks in every 10 minutes, which also keeps the free Supabase project
-> awake. Free projects pause after a week with no activity.
+> awake. Free projects can pause after a week of low activity. Supabase emails a warning about a
+> week before, and says only a paid plan guarantees a project is never paused for inactivity.
 
 ---
 
@@ -218,9 +245,58 @@ Her booking page is `https://yourstudio.netlify.app/book`, and the **Today** scr
 5. Swap the booking link on Instagram and WhatsApp to the new one.
 6. Keep Fresha running until every Fresha booking has happened, then cancel the subscription
    and ask Fresha to delete the data it holds for her business.
+7. So the tax estimate counts the money taken through Fresha, add it in **Money → Tax year → Edit**
+   (**Takings not recorded in this app**, plus her expenses) for this tax year. Do the same for the tax
+   year before (the **‹** arrow goes back a year) if its tax return and bill are still to come: that
+   bill is due on the next 31 January, and the app has no takings for it otherwise. See
+   [Tax to put aside](#tax-to-put-aside).
 
 Clients found through Fresha's marketplace won't find her there any more. New clients now come
 from her own Instagram, WhatsApp, Google profile and word of mouth.
+
+---
+
+## Tax to put aside
+
+**Money → Tax year** shows roughly how much of the tax year's money to keep back for her Self
+Assessment bill. It treats the nail business as her only income and works out Income Tax and
+Class 4 National Insurance on her profit, at that year's rates for England, Wales and Northern Ireland.
+
+- **Profit** is her takings minus her business expenses, or minus the trading allowance if that's
+  bigger (£1,000 a year, with £3,000 announced from 6 April 2027). It's one or the other, never both,
+  and the card says which it used.
+- **Edit** on the card takes two totals for the tax year: **takings not recorded in this app** (for
+  example Fresha bookings from before she switched: what clients paid, before Fresha's fees) and
+  **business expenses** (products, tools, PPE, training, insurance, booking-app fees, and a share of
+  phone and home costs). Rough figures are fine, and she can change them any time. She should still
+  keep the receipts.
+- The card also says what to put aside from each new £1 and when the bill is due. Once the bill is
+  £1,000 or more it shows what that means in January and July with payments on account (half the
+  bill again towards the next year, twice). This tax year's card also says what the year before
+  still has due first (its return and bill by 31 January, or a payment on account by 31 July). It
+  warns her once her takings pass the Making Tax Digital limit for that year, and lists the earlier
+  limits that could bring it in sooner.
+- A tax year with nothing in the app and nothing added (such as the year before she switched) asks
+  for that year's figures instead of showing £0. Until she uses **Edit** for a year, the card asks
+  about money taken another way.
+
+It's a rough guide for putting money aside, not tax advice. Wages or other income, student loan
+repayments and Scotland's rates aren't included.
+
+### Set up before the tax estimate was added? Run the update once
+
+Her two figures are kept in a new private table. A new install gets it from `schema.sql`. An install
+made with an older `schema.sql` (anything set up before this version, including in early November
+2026) needs it added once, **before the new version of the app goes live** (before it's merged into
+`main`, which Netlify publishes). If you're not sure, run it: it's safe on any install.
+
+1. **Supabase → SQL Editor → New query**.
+2. Open [`supabase/updates/2026-11-tax-estimate.sql`](supabase/updates/2026-11-tax-estimate.sql), copy
+   **all** of it, paste it in and press **Run**. It should say *Success. No rows returned*.
+
+It adds that one table, with the same owner-only privacy rule as the others, and changes nothing
+else. Running it twice does no harm. Until it has been run, the estimate still shows (from the
+takings in the app), but saving her figures says the database update hasn't been run yet.
 
 ---
 
@@ -241,6 +317,7 @@ from her own Instagram, WhatsApp, Google profile and word of mouth.
 | Block a holiday or a dentist appointment | **Diary → Block time** |
 | See a client's allergies, patch tests, form and photos | **Clients** → the client |
 | Get her figures for Self Assessment | **Money → Tax year → Download spreadsheet** |
+| See roughly how much tax to put aside | **Money → Tax year**. **Edit** adds takings from before the app and her expenses for the year. |
 | Back up | **Settings → Back up your data**, monthly. Keep only the last three, somewhere encrypted. |
 
 ---
@@ -293,7 +370,11 @@ So nobody is surprised later:
   herself (then records it in the app). A booking can be changed online up to 6 times; after that the
   client has to get in touch. Across all bookings, online changes are capped at 10 an hour and 40 a day,
   so the links can't be used to use up her Gmail allowance.
-- **No expenses tracking.** It only records money received, so she should keep receipts for products, training and insurance separately.
+- **No expenses tracking.** It only records money received. The tax estimate takes one yearly total of her
+  expenses (**Money → Tax year → Edit**), so she should still keep the receipts for products, training and insurance.
+- **Nothing is sent to HMRC.** Once her takings pass the Making Tax Digital limit, she'll need software
+  that works with Making Tax Digital for the quarterly updates and the tax return. The tax estimate
+  warns her when that's coming, but the app can't send them.
 - **One person only.** It's built for one diary, not a salon with staff.
 - **A brake on online bookings.** At most 6 an hour, 25 a day and 15 waiting for a deposit, and 3 an hour from any
   one internet connection. This stops someone flooding the diary or using her Gmail to send spam. Real clients
@@ -307,10 +388,11 @@ So nobody is surprised later:
 |---|---|
 | A client says the change/cancel link doesn't work | Links stop working a day after the appointment, and changes aren't possible once it has started. Check **Settings → Deposits & cancellations → Clients can change or cancel online** is on. |
 | Clients say they got no email | App → Settings → Email shows when the script last checked in. At [script.google.com](https://script.google.com) → the project → **Executions**, you can see any errors. Ask the client to check their junk folder. |
-| "Can't reach the server" | The free Supabase project may have paused. Go to the Supabase dashboard → the project → **Restore**. |
+| "Can't reach the server" | The free Supabase project may have paused. Go to the Supabase dashboard → the project → **Resume project**. It's back in a few minutes with all its data (possible for up to a year after a pause). |
 | The email script says the secret was refused | App → Settings → Email → **Make a new secret**, then paste it into Script Properties → `EMAIL_SECRET`. |
 | "This diary already has an owner" | Someone signed in with a different email. Sign out and use the email from step 1.6. |
 | Forgot the password | On the sign-in screen, tap **Forgotten password?** |
 | **Settings → Booking page** won't save ("Could not find the … column") | The app is newer than the database. Run [`supabase/schema.sql`](supabase/schema.sql) again in the SQL Editor (it keeps all her data and settings), then save again. |
+| Saving the tax estimate's figures says the database update hasn't been run | Run the update once: see [Tax to put aside](#set-up-before-the-tax-estimate-was-added-run-the-update-once). |
 | Changed the web address | Update **Settings → Business details → This app's web address**, and Supabase → Authentication → URL Configuration. |
 | Wants it to look different, or a new feature | Everything is in this folder. See [README.md](README.md). |

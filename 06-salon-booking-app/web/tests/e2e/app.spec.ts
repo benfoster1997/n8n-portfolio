@@ -171,6 +171,129 @@ test('client record: allergy flag, patch test and consultation form', async ({ p
   await expect(page.getByText('Nails are quite thin at the moment.')).toBeVisible();
 });
 
+test('tax estimate: the month view links to the tax year, which shows what to put aside', async ({ page }) => {
+  await signIn(page);
+  await page.getByRole('link', { name: 'Money' }).click();
+  await page.getByRole('button', { name: 'See roughly how much tax to put aside' }).click();
+  await expect(page.getByText(/Tax year 20\d\d–\d\d/)).toBeVisible();
+  const card = page.getByRole('region', { name: 'Tax to put aside' });
+  await expect(card).toBeVisible();
+  await expect(card.getByText(/of each £1/)).toBeVisible();
+  await expect(card.getByText(/not tax advice/)).toBeVisible();
+  await expect(card.getByText(/England, Wales and Northern Ireland/)).toBeVisible();
+  // No bill yet, so just the return's date.
+  await expect(card.getByText(/Send your 20\d\d–\d\d tax return online by 31 January 20\d\d\./)).toBeVisible();
+  await card.getByText('How it’s paid').click();
+  await expect(card.getByText(/When a bill is £1,000 or more, HMRC usually also asks for two payments towards the next tax year/)).toBeVisible();
+  // Under this year's Making Tax Digital limit, the timetable is still there to check.
+  await card.getByText('Making Tax Digital', { exact: true }).click();
+  await expect(card.getByText(/^2025–26 over £30,000: (from|since) 6 April 2027$/)).toBeVisible();
+  await expect(card.getByText(/This app doesn’t send them\.$/)).toBeVisible();
+  // This year's card says first what an earlier tax year still has due, and how to get to that year.
+  const first = card.locator('.od-taxcard-first');
+  if (await first.count()) {
+    const said = (await first.textContent()) ?? '';
+    const [, year] = said.match(/^Due (?:first|next), .* Tap ‹(?: twice)? at the top to see (20\d\d–\d\d)\.$/) ?? [];
+    expect(year).toBeTruthy();
+    for (let i = said.includes('twice') ? 2 : 1; i > 0; i--) await page.getByRole('button', { name: 'Previous' }).click();
+    await expect(page.getByText(`Tax year ${year}`)).toBeVisible();
+  }
+});
+
+/** "£1,234" or "−£1,000" → 1234 or -1000 */
+const pounds = (text: string | null) => Number((text ?? '').replace(/[£,\s]/g, '').replace('−', '-'));
+
+test('tax estimate: her own takings and expenses change it, and are kept for that tax year', async ({ page }) => {
+  await signIn(page);
+  await page.getByRole('link', { name: 'Money' }).click();
+  await page.getByRole('radio', { name: 'Tax year' }).click();
+  const card = page.getByRole('region', { name: 'Tax to put aside' });
+  const total = card.locator('.od-taxcard-value');
+  const row = (name: string) => card.locator('.od-taxcard-rows > div', { has: page.getByText(name, { exact: true }) }).locator('dd').first();
+  // The demo's takings are well under the allowances: nothing to put aside yet, and no
+  // more of the trading allowance comes off than the takings.
+  await expect(total).toHaveText('£0');
+  // From 6 April 2027 the allowance is £3,000, announced but not law yet, and the card says so.
+  await expect(card.getByText(/^Takings of £[\d,]+ or less in a tax year are tax-free: that’s the trading allowance( \(announced, not law yet\))?\.$/)).toBeVisible();
+  expect(-pounds(await row('Trading allowance').textContent())).toBe(pounds(await row('Takings in the app').textContent()));
+  // Nothing added yet, so it asks about money taken another way (most of the year she switched).
+  await expect(card.getByText(/^Took money another way this tax year, .* Tap Edit to add it, with your expenses\.$/)).toBeVisible();
+
+  // Takings from before the app, and expenses smaller than the trading allowance: the allowance is used instead.
+  await card.getByRole('button', { name: 'Edit' }).click();
+  let sheet = page.getByRole('dialog', { name: /Your figures for 20\d\d–\d\d/ });
+  // What to type: what clients paid, before the other app's fees (which are expenses).
+  await expect(sheet.getByText(/Use what clients paid, before that app’s fees\.$/)).toBeVisible();
+  await sheet.getByLabel('Takings not recorded in this app').fill('20,500');
+  await sheet.getByLabel('Business expenses').fill('nonsense');
+  await sheet.getByRole('button', { name: 'Save' }).click();
+  await expect(sheet.getByRole('alert')).toContainText('Check the expenses');
+  await sheet.getByLabel('Business expenses').fill('200');
+  await shot(page, '10b-tax-edit');
+  await sheet.getByRole('button', { name: 'Save' }).click();
+  await expect(sheet).toBeHidden();
+  await expect(page.getByText(/Saved your figures for 20\d\d–\d\d/)).toBeVisible();
+  await expect(row('Takings not in the app')).toHaveText('£20,500');
+  await expect(card.getByText('Took money another way', { exact: false })).toHaveCount(0);
+  await expect(card.getByText(/^Used instead of your £200 of expenses, as (it’s|the £3,000 allowance \(announced, not law yet\) is) bigger: it’s one or the other, not both\.$/)).toBeVisible();
+  const allowance = -pounds(await row('Trading allowance').textContent());
+  expect([1_000, 3_000]).toContain(allowance);
+  const before = pounds(await total.textContent());
+  expect(before).toBeGreaterThan(1_000);
+  await expect(card.getByText(/about \d+% of your takings, as the first £12,570 of profit is tax-free\./)).toBeVisible();
+  await expect(card.getByText('From here, put aside about 26p of each £1 you take: 20p Income Tax and 6p National Insurance.')).toBeVisible();
+  // A bill of £1,000 or more: January is the bill plus half of it again, and July the other half, straight after the date.
+  // This runs on today's tax year. From 2028–29 (6 April 2028) there are no January/July rows, because payments on account
+  // are planned to move to payments during the year from April 2029: update this test when that year's rates are added.
+  await expect(card.getByText(/^Send your 20\d\d–\d\d tax return online by 31 January 20\d\d\. On the figures so far, you’ll pay HMRC:$/)).toBeVisible();
+  const plan = card.locator('.od-taxcard-plan');
+  await expect(plan).toContainText(/payments on account/);
+  await expect(plan.locator('dt').first()).toHaveText(/^By 31 January 20\d\d$/);
+  await expect(plan.locator('dt').nth(1)).toHaveText(/^By 31 July 20\d\d$/);
+  const january = pounds(await plan.locator('dd').first().textContent());
+  const july = pounds(await plan.locator('.od-taxcard-rows > div').nth(1).locator('dd').first().textContent());
+  expect(january).toBe(before + july);
+  expect(Math.abs(2 * july - before)).toBeLessThanOrEqual(1);
+  await expect(plan.getByText(`This bill, plus £${july.toLocaleString('en-GB')} towards`)).toBeVisible();
+  // Over £20,000 of takings: Making Tax Digital is coming, two years on at the latest, and this app doesn't do it.
+  await expect(card.getByText(/Making Tax Digital starts for you by 6 April 20\d\d\. .* the first by 7 August 20\d\d\. This app doesn’t send them\./)).toBeVisible();
+  await expect(card.getByText(/^It can start sooner, if an earlier tax year’s takings were over that year’s limit:$/)).toBeVisible();
+  await shot(page, '10c-tax-card');
+
+  // Bigger expenses replace the allowance, and the estimate drops by 26p for each £1 of profit they take off.
+  await card.getByRole('button', { name: 'Edit' }).click();
+  sheet = page.getByRole('dialog', { name: /Your figures for/ });
+  await expect(sheet.getByLabel('Takings not recorded in this app')).toHaveValue('20500');
+  await sheet.getByLabel('Business expenses').fill('4000');
+  await sheet.getByRole('button', { name: 'Save' }).click();
+  await expect(sheet).toBeHidden();
+  await expect(row('Expenses')).toHaveText('−£4,000');
+  await expect(card.getByText('Trading allowance')).toHaveCount(0);
+  await expect.poll(async () => pounds(await total.textContent())).toBeLessThan(before);
+  const after = pounds(await total.textContent());
+  expect(Math.abs(before - after - (4_000 - allowance) * 0.26)).toBeLessThanOrEqual(1);
+
+  // Kept after a reload, for that tax year only.
+  await page.reload();
+  await page.getByRole('radio', { name: 'Tax year' }).click();
+  await expect(row('Takings not in the app')).toHaveText('£20,500');
+  await expect(row('Expenses')).toHaveText('−£4,000');
+  await expect(total).toHaveText(`£${after.toLocaleString('en-GB')}`);
+  // The year before has nothing in the demo: it asks for that year's figures instead of showing £0.
+  await page.getByRole('button', { name: 'Previous' }).click();
+  await expect(card.getByText(/^No takings for 20\d\d–\d\d in the app$/)).toBeVisible();
+  await expect(total).toHaveCount(0);
+  await card.getByRole('button', { name: 'Edit' }).click();
+  sheet = page.getByRole('dialog', { name: /Your figures for/ });
+  await expect(sheet.getByLabel('Takings not recorded in this app')).toHaveValue('');
+  await sheet.getByLabel('Takings not recorded in this app').fill('9,000');
+  await sheet.getByRole('button', { name: 'Save' }).click();
+  await expect(sheet).toBeHidden();
+  await expect(total).toHaveText('£0');
+  // £9,000 of takings for a finished year: under the personal allowance, so nothing to pay.
+  await expect(card.getByText('Nothing to pay: the first £12,570 of profit each tax year is tax-free.')).toBeVisible();
+});
+
 test('takings: totals, tax year and a spreadsheet download', async ({ page }) => {
   await signIn(page);
   await page.getByRole('link', { name: 'Money' }).click();

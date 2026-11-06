@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { api } from '../../api';
+import { api, supabaseKey, supabaseUrl } from '../../api';
 import { resetDemo } from '../../api/demoApi';
 import { useOwner } from '../../components/owner';
 import { BlockTimeSheet } from './Diary';
@@ -569,8 +569,8 @@ export function EmailSettings() {
   const [secret, setSecret] = useState<string | null>(null);
   const { busy, error, run } = useAction();
   const toast = useToast();
-  const url = import.meta.env.VITE_SUPABASE_URL as string | undefined;
-  const key = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
+  const url = supabaseUrl;
+  const key = supabaseKey;
   const copy = async (t: string, what: string) => {
     try { await navigator.clipboard.writeText(t); toast(`${what} copied`); } catch { window.prompt(`Copy the ${what.toLowerCase()}:`, t); }
   };
@@ -629,8 +629,8 @@ export function BackupSettings() {
     <Page title="Back up your data">
       <section className="card stack od-set-card od-backup">
         <span className="od-ic od-backup-ic" aria-hidden="true"><Glyph name="download" size={24} /></span>
-        <p>Download everything — clients, appointments, forms, patch tests, takings and settings — as one file. Keep it somewhere private (it contains health information). Photos aren’t included in the file.</p>
-        <p className="sub">The free database plan keeps its own backups only for a short time, so download one now and then, e.g. at the start of each month.</p>
+        <p>Download everything — clients, appointments, forms, patch tests, takings, your tax estimate figures and settings — as one file. Keep it somewhere private (it contains health information). Photos aren’t included in the file.</p>
+        <p className="sub">The free database plan doesn’t back up your data for you, so download a backup now and then, e.g. at the start of each month.</p>
       </section>
       <ErrorBox error={error} />
       <button className="btn primary block" disabled={busy} onClick={() => run(async () => {

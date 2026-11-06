@@ -5,7 +5,7 @@
 import type {
   Appointment, BookingChangeResult, BookingInfo, BookingRequest, BusyRange, Client, ClientChange, ClientPhoto,
   ConsultationForm, EmailKind, EmailLogRow, ManageInfo, NewAppointment, OpeningHours, PatchTest, PayMethod,
-  Payment, Service, Session, Settings, TimeOff,
+  Payment, Service, Session, Settings, TaxYear, TimeOff,
 } from '../lib/types';
 
 export interface FormInfo {
@@ -100,6 +100,14 @@ export interface Api {
   listPayments(fromDate: string, toDate: string): Promise<Payment[]>;
   addPayment(p: Omit<Payment, 'id' | 'created_at'>): Promise<void>;
   deletePayment(id: string): Promise<void>;
+  /**
+   * Her own figures for one tax year's estimate (takings not in the app, expenses).
+   * Zeros when nothing is saved, and also when the database update that adds them
+   * hasn't been run yet, so the estimate still shows from the takings alone.
+   */
+  getTaxYear(startYear: number): Promise<TaxYear>;
+  /** Save (or replace) a tax year's figures. Fails with "tax_update_needed" until the database update has been run. */
+  saveTaxYear(row: Pick<TaxYear, 'start_year' | 'extra_takings_pence' | 'expenses_pence'>): Promise<TaxYear>;
 
   // --- owner: backup -------------------------------------------------------
   exportAll(): Promise<Record<string, unknown[]>>;

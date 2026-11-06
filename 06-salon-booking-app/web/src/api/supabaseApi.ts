@@ -2,8 +2,9 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type { Api, FormInfo } from './api';
 import type {
   Appointment, BookingChangeResult, BookingInfo, BusyRange, Client, ClientChange, ClientPhoto, ConsultationForm,
-  EmailLogRow, ManageInfo, OpeningHours, PatchTest, Payment, Service, Session, Settings, TimeOff,
+  EmailLogRow, ManageInfo, OpeningHours, PatchTest, Payment, Service, Session, Settings, TaxYear, TimeOff,
 } from '../lib/types';
+import { emptyTaxYear } from '../lib/tax';
 
 const PHOTO_BUCKET = 'client-photos';
 const APPT_SELECT = '*, client:clients(id, full_name, email, phone, phone_e164, consultation_forms(count))';
@@ -30,6 +31,19 @@ function check<T>(res: { data: T; error: { message: string } | null }): T {
   if (res.error) throw new Error(res.error.message);
   return res.data;
 }
+
+/**
+ * The tax estimate's table (public.tax_years) came with the estimate: an install
+ * made with an older schema.sql gets it by running supabase/updates/2026-11-tax-estimate.sql.
+ * Until that's done the API says the table isn't there: PGRST205 ("Could not find
+ * the table 'public.tax_years' in the schema cache") now, 42P01 on older versions.
+ */
+function taxTableMissing(e: { code?: string; message?: string } | null): boolean {
+  if (!e) return false;
+  return e.code === 'PGRST205' || e.code === '42P01'
+    || /could not find the table '?public\.tax_years|relation "?(public\.)?tax_years"? does not exist/i.test(e.message ?? '');
+}
+const shapeTaxYear = (r: TaxYear): TaxYear => ({ ...r, updated_at: iso(r.updated_at) });
 
 // The Supabase API returns at most 1,000 rows per request. Anything that can
 // grow past that (clients, a tax year of payments, a backup) is paged.
@@ -327,6 +341,21 @@ export function supabaseApi(url: string, anonKey: string): Api {
     async deletePayment(id) {
       check(await sb.from('payments').delete().eq('id', id));
     },
+    async getTaxYear(startYear) {
+      const res = await sb.from('tax_years').select('*').eq('start_year', startYear).maybeSingle();
+      // Not updated yet: no saved figures, so the estimate works from the takings alone.
+      if (taxTableMissing(res.error)) return emptyTaxYear(startYear);
+      const row = check(res) as TaxYear | null;
+      return row ? shapeTaxYear(row) : emptyTaxYear(startYear);
+    },
+    async saveTaxYear(row) {
+      const res = await sb.from('tax_years')
+        .upsert({ start_year: row.start_year, extra_takings_pence: row.extra_takings_pence, expenses_pence: row.expenses_pence },
+          { onConflict: 'start_year' })
+        .select('*').single();
+      if (taxTableMissing(res.error)) throw new Error('tax_update_needed');
+      return shapeTaxYear(check(res) as TaxYear);
+    },
 
     async exportAll() {
       const tables = ['settings', 'opening_hours', 'services', 'clients', 'patch_tests', 'consultation_forms',
@@ -337,6 +366,9 @@ export function supabaseApi(url: string, anonKey: string): Api {
         const rows = await fetchAll<unknown>(() => sb.from(t).select('*').order(key));
         out[t] = t === 'settings' ? rows.map((r) => ({ ...(r as object), email_secret_hash: undefined })) : rows;
       }
+      // One row per tax year, so never more than a page. Until the update has been run there's nothing to back up.
+      const tax = await sb.from('tax_years').select('*').order('start_year');
+      out.tax_years = taxTableMissing(tax.error) ? [] : (check(tax) as unknown[]);
       return out;
     },
   };
