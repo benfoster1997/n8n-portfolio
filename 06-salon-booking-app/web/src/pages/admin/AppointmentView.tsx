@@ -8,8 +8,10 @@ import { lateCharge, lateChargePayments } from '../../lib/reminders';
 import { availableSlots } from '../../lib/slots';
 import { addDays, dateInZone, fmt, fmtDay, fmtDayLong, fmtDayTime, fmtTime, minutesLabel, startOfDayInstant, todayInZone, zonedToInstant } from '../../lib/time';
 import { fillTemplate, firstName, freeChangeDeadline, lateFromEarlierChange, manageLink, money, noticeLabel, parsePounds, whatsappLink } from '../../lib/text';
+import { formLine, formOrConsent, patchTestLine } from '../../lib/health';
+import { isUnfinished, noShowQuestion } from '../../lib/unfinished';
 import { Glyph } from './Clients';
-import type { Appointment, CancelledBy, ClientChange, EmailKind, PayMethod, Settings } from '../../lib/types';
+import type { Appointment, ApptHealth, CancelledBy, ClientChange, EmailKind, PayMethod, Settings } from '../../lib/types';
 
 const EMAIL_LABEL: Record<EmailKind, string> = {
   booking_received: 'Booking confirmation',
@@ -57,6 +59,8 @@ export function AppointmentView() {
   if (!a) return <div className="page"><TopBar title="Appointment" back /><ErrorBox error={error ?? new Error('not_found')} /></div>;
 
   const live = a.status === 'confirmed' || a.status === 'pending_deposit';
+  // Over, but still Confirmed or Deposit due: Today lists it under "Not finished yet".
+  const unfinished = isUnfinished(a);
   const started = new Date(a.starts_at) <= new Date(Date.now() + 2 * 3600e3);
   const overdue = a.status === 'pending_deposit' && a.deposit_due_at && new Date(a.deposit_due_at) < new Date();
   const phone = a.client?.phone_e164;
@@ -87,7 +91,11 @@ export function AppointmentView() {
     }
   }
   async function noShow() {
-    if (!window.confirm('Mark as a no-show? They will still be treated as a new client next time (deposit required).')) return;
+    // Whether they'd be asked for a deposit next time follows the booking page's rule: a client with
+    // no visit marked as done who isn't ticked as a regular. If that can't be checked, the question says it generally.
+    const visits = await api.countCompletedVisits(a!.client_id).catch(() => null);
+    const question = noShowQuestion({ name: first, visits, regular: !!a!.health?.is_regular, depositPence: s.deposit_amount_pence });
+    if (!window.confirm(question)) return;
     if (await act.run(() => api.updateAppointment(a!.id, { status: 'no_show' }))) { toast('Marked as no-show'); reload(); }
   }
   async function adoptBookingPhone() {
@@ -146,7 +154,7 @@ export function AppointmentView() {
         <div className="od-hero-main">
           <DateTile iso={a.starts_at} tz={tz} />
           <div className="od-hero-info">
-            <div className="od-hero-chips"><StatusChip status={a.status} /></div>
+            <div className="od-hero-chips"><StatusChip status={a.status} unfinished={unfinished} /></div>
             <div className="od-hero-service">{a.service_name}</div>
             <div className="od-when">
               <span className="od-when-day">{fmtDayLong(a.starts_at, tz)}</span>
@@ -172,7 +180,7 @@ export function AppointmentView() {
           <div><dt>Price</dt><dd className="od-price">{money(a.price_pence)}</dd></div>
           <div><dt>Reference</dt><dd className="mono od-ref">{a.reference}</dd></div>
           <div><dt>Booked</dt><dd>{a.source === 'online' ? 'Online' : 'By you'}{DOT}<span className="od-nowrap">{fmtDayTime(a.created_at, tz)}</span></dd></div>
-          {a.is_new_client && <div><dt>Client</dt><dd>New client{a.has_form ? <>{DOT}<span className="od-nowrap">form on file</span></> : <span className="flag">{DOT}no consultation form</span>}</dd></div>}
+          {a.is_new_client && <div><dt>Client</dt><dd>New client{formOrConsent(a) ? <>{DOT}<span className="od-nowrap">form on file</span></> : <span className="flag">{DOT}no consultation form</span>}</dd></div>}
           {a.deposit_required_pence > 0 && (
             <div>
               <dt>Deposit</dt>
@@ -188,6 +196,10 @@ export function AppointmentView() {
           </details>
         )}
       </div>
+
+      {a.status !== 'cancelled' && a.health && (
+        <HealthStrip a={a} h={a.health} s={s} first={first} phone={phone} checkPhone={checkPhone} formUrl={formUrl} onCopy={copy} />
+      )}
 
       {live && changesCard}
 
@@ -271,26 +283,6 @@ export function AppointmentView() {
         </div>
       )}
 
-      {live && !a.has_form && (
-        <div className="card stack od-tool">
-          <div className="od-panel-head">
-            <span className="od-ic" aria-hidden="true"><Glyph name="doc" /></span>
-            <h3>Consultation form</h3>
-          </div>
-          <p className="sub">{a.is_new_client ? 'This new client hasn’t filled in the health and allergy form yet.' : 'No health and allergy form on file for this client. Send them the link to fill one in.'}</p>
-          {checkPhone && phone && <p className="sub" style={{ margin: 0 }}>Check their mobile above before you send this link.</p>}
-          <div className="btn-row">
-            {phone && !checkPhone && (
-              <a className="btn wa" target="_blank" rel="noreferrer" style={WIDE}
-                href={whatsappLink(phone, `Hi ${first}, before your appointment please fill in this quick consultation form (it takes 2 minutes): ${formUrl}\n${s.business_name}`)}>
-                <Icon name="whatsapp" size={20} /> Send form link
-              </a>
-            )}
-            <button className="btn" onClick={() => copy(formUrl, 'Form link')}><Icon name="link" size={20} /> Copy link</button>
-          </div>
-        </div>
-      )}
-
       {live && s.client_self_service && (
         <div className="card stack od-tool">
           <div className="od-panel-head">
@@ -354,7 +346,10 @@ export function AppointmentView() {
       {sheet === 'deposit' && <DepositSheet a={a} onClose={() => setSheet(null)} onDone={() => { toast('Deposit recorded — client confirmed'); done(); }} />}
       {sheet === 'checkout' && <CheckoutSheet a={a} onClose={() => setSheet(null)} onDone={() => { toast('Payment recorded'); done(); }} />}
       {sheet === 'move' && <MoveSheet a={a} tz={tz} onClose={() => setSheet(null)} onDone={(msg) => { toast(msg); done(); }} />}
-      {sheet === 'cancel' && <CancelSheet a={a} onClose={() => setSheet(null)} onDone={() => { toast('Appointment cancelled'); done(); }} />}
+      {sheet === 'cancel' && (
+        <CancelSheet a={a} onClose={() => setSheet(null)} onDone={() => { toast('Appointment cancelled'); done(); }}
+          onNoShow={() => { setSheet(null); void noShow(); }} />
+      )}
       {sheet === 'late' && (
         <LatePaymentSheet a={a} tz={tz} amount={charge.owed} onClose={() => setSheet(null)}
           onDone={() => { toast('Payment recorded'); setSheet(null); reloadLate(); }} />
@@ -371,6 +366,49 @@ function DateTile({ iso, tz }: { iso: string; tz: string }) {
       <span className="od-dt-day">{fmt(iso, 'd', tz)}</span>
       <span className="od-dt-mon">{fmt(iso, 'MMM', tz)}</span>
     </div>
+  );
+}
+
+/**
+ * The client's allergies, latest patch test and consultation form, near the top: what she needs
+ * before she starts. Consent she recorded (a paper form, WhatsApp or email) counts as a form on
+ * file. With none on file, or one over a year old, the form link to send: it works until a day
+ * after the appointment. The full answers are on the client's record.
+ */
+function HealthStrip({ a, h, s, first, phone, checkPhone, formUrl, onCopy }: {
+  a: Appointment; h: ApptHealth; s: Settings; first: string; phone: string | null | undefined; checkPhone: boolean;
+  formUrl: string; onCopy: (text: string, what: string) => void;
+}) {
+  const tz = s.timezone;
+  const test = patchTestLine(h.patch_tests, tz, a.starts_at);
+  const form = formLine(h, tz, a.starts_at);
+  const live = a.status === 'confirmed' || a.status === 'pending_deposit';
+  const linkWorks = live && new Date(a.starts_at).getTime() > Date.now() - 86400e3;
+  const ask = linkWorks && (!form.onFile || form.old);
+  const formTone = !form.onFile ? (live ? 'danger' : 'quiet') : form.old ? 'warn' : 'plain';
+  return (
+    <section className="card od-hstrip" aria-label="Health and allergies">
+      {h.allergies?.trim() && (
+        <p className="od-hstrip-allergy"><span className="od-hstrip-allergy-ic" aria-hidden="true" /><span><b>Allergies:</b> {h.allergies}</span></p>
+      )}
+      <dl className="od-receipt od-hstrip-rows">
+        <div><dt>Patch test</dt><dd className={`od-hs-${test.tone}`}>{test.text}</dd></div>
+        <div><dt>Consultation form</dt><dd className={`od-hs-${formTone}`}>{form.text}</dd></div>
+      </dl>
+      {ask && form.old && <p className="od-hstrip-note">Form over a year old: send a fresh one.</p>}
+      {ask && checkPhone && phone && <p className="sub od-hstrip-note">Check their mobile below before you send the form link.</p>}
+      {ask && (
+        <div className="btn-row od-hstrip-btns">
+          {phone && !checkPhone && (
+            <a className="btn wa small" target="_blank" rel="noreferrer"
+              href={whatsappLink(phone, `Hi ${first}, before your appointment please fill in this quick consultation form (it takes 2 minutes): ${formUrl}\n${s.business_name}`)}>
+              <Icon name="whatsapp" size={18} /> Send form link
+            </a>
+          )}
+          <button className="btn small" onClick={() => onCopy(formUrl, 'Form link')}><Icon name="link" size={18} /> Copy link</button>
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -599,21 +637,30 @@ function MoveSheet({ a, tz, onClose, onDone }: { a: Appointment; tz: string; onC
   );
 }
 
-function CancelSheet({ a, onClose, onDone }: { a: Appointment; onClose: () => void; onDone: () => void }) {
+function CancelSheet({ a, onClose, onDone, onNoShow }: { a: Appointment; onClose: () => void; onDone: () => void; onNoShow: () => void }) {
   const { settings: s } = useOwner();
+  // Already started (or over): a client who never came is a no-show, which sends no email, so the
+  // email starts unticked, and a cancellation now isn't a late one by the client.
+  const [begun] = useState(() => new Date(a.starts_at).getTime() <= Date.now());
   const [reason, setReason] = useState('');
-  const [notify, setNotify] = useState(!!a.client?.email);
+  const [notify, setNotify] = useState(!!a.client?.email && !begun);
   const [late, setLate] = useState(false);
   const { busy, error, run } = useAction();
   // Inside the notice period, or the client already changed it inside one: if the
   // client is the one cancelling, it's a late cancellation. No notice period means no policy.
   const changedLate = s.cancel_notice_hours > 0 && a.late_fee_pence != null;
-  const inNotice = changedLate
-    || (s.cancel_notice_hours > 0 && Date.now() > freeChangeDeadline(a.starts_at, s.cancel_notice_hours).getTime());
+  const inNotice = !begun && (changedLate
+    || (s.cancel_notice_hours > 0 && Date.now() > freeChangeDeadline(a.starts_at, s.cancel_notice_hours).getTime()));
   const who = firstName(a.client?.full_name) || 'The client';
   return (
     <Sheet title="Cancel appointment" onClose={onClose}>
       <div className="stack">
+        {begun && (
+          <div className="notice od-noshow-hint">
+            <p>If {firstName(a.client?.full_name ?? a.booking_name) || 'the client'} never came, mark a <span className="od-nowrap">no-show</span> instead: it doesn’t email them.</p>
+            <button type="button" className="btn small" onClick={onNoShow}>Mark as a no-show</button>
+          </div>
+        )}
         <Field label="Reason (optional)" hint={notify ? 'Included in the email to the client.' : undefined}>
           <input type="text" value={reason} maxLength={500} onChange={(e) => setReason(e.target.value)} />
         </Field>

@@ -2,6 +2,8 @@ import { Link } from 'react-router-dom';
 import type { Appointment, ClientChange, Settings } from '../lib/types';
 import { fmtDayTime, fmtTime, minutesLabel } from '../lib/time';
 import { fillTemplate, money, templateFor, whatsappLink } from '../lib/text';
+import { formOrConsent } from '../lib/health';
+import { isUnfinished } from '../lib/unfinished';
 import { Icon, LateChip, StatusChip, statusLabel } from './ui';
 
 /** Where an appointment sits against the clock, for the timeline dot: done, happening now, or still to come. */
@@ -14,13 +16,17 @@ export function apptPhase(a: Pick<Appointment, 'status' | 'starts_at' | 'ends_at
 /**
  * One appointment as a timeline row: the time in bold figures, a dot on a thin pink rail
  * (the rail joins up through a list), the client, treatment and price, and the status.
+ * Once its time has passed, a booking still saying Confirmed or Deposit due says "Not finished".
+ * A client with allergies recorded gets a small "Allergy" tag: never the details, as these
+ * lists are the screens she might show someone.
  */
 export function ApptRow({ a, tz, showDate, hideStatus }: {
   a: Appointment; tz: string; showDate?: (iso: string) => string;
   /** Under a heading that already says the status (the diary's "Cancelled"): no status chip, only the extra flags. */
   hideStatus?: boolean;
 }) {
-  const overdue = !!(a.status === 'pending_deposit' && a.deposit_due_at && new Date(a.deposit_due_at) < new Date());
+  const unfinished = isUnfinished(a);
+  const overdue = !unfinished && !!(a.status === 'pending_deposit' && a.deposit_due_at && new Date(a.deposit_due_at) < new Date());
   const phase = apptPhase(a);
   const lateCancel = a.status === 'cancelled' && a.cancelled_late;
   const chipCount = (hideStatus ? 0 : 1) + (overdue ? 1 : 0) + (lateCancel ? 1 : 0);
@@ -34,18 +40,21 @@ export function ApptRow({ a, tz, showDate, hideStatus }: {
           <small title={minutesLabel(a.duration_min)}>{showDate ? showDate(a.starts_at) : `to ${fmtTime(a.ends_at, tz)}`}</small>
         </div>
         <span className="appt-dot" aria-hidden="true" />
-        <div className="title appt-name">{a.client?.full_name ?? a.booking_name ?? 'Client'}</div>
+        <div className="title appt-name">
+          {a.client?.full_name ?? a.booking_name ?? 'Client'}
+          {a.has_allergies && <>{' '}<span className="od-tag od-tag-allergy appt-allergy" title="Allergies noted on their record">Allergy</span></>}
+        </div>
         <div className="meta appt-meta">
           {a.service_name}
           {/* each separator stays on the line before it, so a line never starts with one */}
           {a.price_pence > 0 && <>{'\u00a0· '}<span className="appt-price">{money(a.price_pence)}</span></>}
           {a.is_new_client && <span className="appt-new-flag">{'\u00a0· '}<span className="appt-new">New</span></span>}
-          {a.is_new_client && !a.has_form && a.status !== 'completed' && a.status !== 'cancelled' && <span className="flag">{'\u00a0· No\u00a0form'}</span>}
+          {a.is_new_client && !formOrConsent(a) && a.status !== 'completed' && a.status !== 'cancelled' && <span className="flag">{'\u00a0· No\u00a0form'}</span>}
         </div>
         {chipCount > 0 ? (
           <div className="appt-chips">
             {quietStatus}
-            {!hideStatus && <StatusChip status={a.status} />}
+            {!hideStatus && <StatusChip status={a.status} unfinished={unfinished} />}
             {overdue && <span className="chip danger">Overdue</span>}
             {lateCancel && <LateChip>Late cancel</LateChip>}
           </div>

@@ -609,6 +609,52 @@ test('flood brake: a handful of online bookings an hour, three per connection', 
   await rejects(book(svc, await londonAt(4, '10:00'), { p_full_name: 'Late Comer', p_email: 'late@example.com', p_phone: '07700900200' }), 'busy_try_later');
 });
 
+/**
+ * Online bookings waiting for a deposit, put in as if made more than a week ago (so the
+ * hourly and daily brakes don't come into it): one at 10:00 on each of the given days.
+ */
+async function unpaidOnline(days, email = 'unpaid@example.com') {
+  const c = (await db.query(`insert into public.clients (full_name, email, phone) values ('Una Paid', $1, '07700 900321') returning id`,
+    [email])).rows[0];
+  for (const day of days) {
+    await db.query(
+      `insert into public.appointments (client_id, service_name, price_pence, duration_min, starts_at, ends_at, busy_until,
+                                        reference, status, source, is_new_client, deposit_required_pence, deposit_due_at, created_at)
+       values ($1, 'Gel', 2500, 30, $2, $2, $2, '', 'pending_deposit', 'online', true, 1000, $2, now() - interval '20 days')`,
+      [c.id, await londonAt(day, '10:00')]);
+  }
+}
+const newClient = (n) => ({ p_full_name: `New Client ${'abcdefghij'[n]}`, p_email: `new${n}@example.com`, p_phone: `0770090060${n}` });
+
+test('15 online bookings still to come and waiting for a deposit stop new online bookings', async () => {
+  const svc = await addService('Gel', 30);
+  await unpaidOnline(Array.from({ length: 15 }, (_, i) => 4 + i));
+  await rejects(book(svc, await londonAt(3, '14:00'), newClient(0)), 'busy_try_later');
+  // Once one deposit is in, there's room again.
+  const one = (await db.query(`select id from public.appointments where status = 'pending_deposit' order by starts_at limit 1`)).rows[0];
+  await asOwner(`select public.owner_mark_deposit_paid($1, 'bank_transfer')`, [one.id]);
+  const r = await book(svc, await londonAt(3, '14:00'), newClient(0));
+  assert.equal((await appt(r.reference)).status, 'pending_deposit');
+});
+
+test('old unpaid online bookings never stop new ones: only those still to come count towards the 15', async () => {
+  const svc = await addService('Gel', 30);
+  // 15 whose time has passed (a new client who never paid and never came, or a visit nobody
+  // finished), and one that started ten minutes ago: none of them can be paid for in time now.
+  await unpaidOnline(Array.from({ length: 16 }, (_, i) => -1 - i));
+  await db.query(`update public.appointments set starts_at = date_trunc('minute', now()) - interval '10 minutes', duration_min = 60
+                   where starts_at = (select max(starts_at) from public.appointments)`);
+  const waiting = await db.query(`select count(*) filter (where ends_at <= now())::int as past, count(*) filter (where ends_at > now())::int as started
+                                    from public.appointments where source = 'online' and status = 'pending_deposit' and starts_at <= now()`);
+  assert.deepEqual(waiting.rows[0], { past: 15, started: 1 });
+  const first = await book(svc, await londonAt(3, '14:00'), newClient(1));
+  assert.equal((await appt(first.reference)).status, 'pending_deposit');
+
+  // Bookings still to come are counted as before: with the one just made, 14 more makes 15.
+  await unpaidOnline(Array.from({ length: 14 }, (_, i) => 4 + i), 'later@example.com');
+  await rejects(book(svc, await londonAt(3, '15:00'), newClient(2)), 'busy_try_later');
+});
+
 test('names must look like names: no links, emails or markup', async () => {
   const svc = await addService();
   const at = await londonAt(3, '10:00');

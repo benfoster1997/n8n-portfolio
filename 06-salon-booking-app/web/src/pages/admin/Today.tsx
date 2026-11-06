@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../../api';
 import { ApptRow, changeText, changedAgo } from '../../components/appts';
@@ -8,6 +8,8 @@ import { ErrorBox, Icon, LateChip, Spinner, useLoad, useToast } from '../../comp
 import { addDays, fmt, fmtDay, fmtDayLong, fmtDayTime, fmtTime, startOfDayInstant, todayInZone, dateInZone } from '../../lib/time';
 import { money } from '../../lib/text';
 import { dueWhatsAppReminders, lateCharge, reminderDates, reminderDays } from '../../lib/reminders';
+import { needingForms } from '../../lib/health';
+import { todayNote, UNFINISHED_SHOWN } from '../../lib/unfinished';
 import type { ClientChange } from '../../lib/types';
 
 /** Small line pictures for the "needs attention" headers and client changes (decorative). */
@@ -15,6 +17,7 @@ const GLYPHS: Record<string, ReactNode> = {
   late: <><rect x="3.5" y="5" width="17" height="15" rx="3" /><path d="M3.5 10h17M8.5 3v4M15.5 3v4M10 13.5l4 4M14 13.5l-4 4" /></>,
   deposit: <><circle cx="12" cy="12" r="8.5" /><path d="M14.6 8.6c-.5-.7-1.3-1.1-2.3-1.1-1.7 0-2.6 1.1-2.6 2.6 0 2.4.9 3.2-.4 5.7h5.9M8.6 12.6h4.6" /></>,
   form: <><rect x="5" y="4.5" width="14" height="16" rx="2.5" /><path d="M9 3.5h6v3H9zM8.5 11h7M8.5 14.5h7M8.5 18h4" /></>,
+  unfinished: <><path d="M6 3.6h12v16.8l-2-1.4-2 1.4-2-1.4-2 1.4-2-1.4-2 1.4Z" /><path d="M9 8.4h6M9 11.8h6M9 15.2h3.6" /></>,
   moved: <><path d="M4 8h13M13.5 4.5 17 8l-3.5 3.5M20 16H7M10.5 12.5 7 16l3.5 3.5" /></>,
   cancelled: <><circle cx="12" cy="12" r="8.5" /><path d="M9 9l6 6M15 9l-6 6" /></>,
   treatment: <><path d="M12 3.5l1.9 4.6 4.6 1.9-4.6 1.9L12 16.5l-1.9-4.6L5.5 10l4.6-1.9z" /><path d="M18.5 15.5l.8 1.9 1.9.8-1.9.8-.8 1.9-.8-1.9-1.9-.8 1.9-.8z" /></>,
@@ -26,6 +29,9 @@ function Glyph({ name, size = 20 }: { name: string; size?: number }) {
   );
 }
 const changeGlyph = (c: ClientChange) => (c.action === 'cancelled' ? 'cancelled' : c.action === 'treatment' ? 'treatment' : 'moved');
+
+/** How many clients without a form Today shows before "Show N more". */
+const FORMS_SHOWN = 5;
 
 /** A "needs attention" card's header: an icon, the heading and the count ("Late cancellations · 1" to a screen reader). */
 function AttentionHead({ icon, title, count }: { icon: string; title: string; count: number }) {
@@ -45,19 +51,22 @@ export function Today() {
   const toast = useToast();
   const { data, error, loading } = useLoad(async () => {
     const ahead = Math.max(s.max_days_ahead, reminderDays(s.reminder_hours_before));
-    const [appts, services, changes, late] = await Promise.all([
+    const [appts, services, changes, late, unfinished] = await Promise.all([
       api.listAppointments(startOfDayInstant(today, tz).toISOString(),
         startOfDayInstant(addDays(today, ahead + 1), tz).toISOString()),
       api.listServices(),
       api.listClientChanges({ sinceIso: new Date(Date.now() - 7 * 86400e3).toISOString() }),
       // Late cancellations from the last fortnight, by the client online or marked late by her.
       api.listLateCancellations(new Date(Date.now() - 14 * 86400e3).toISOString()),
+      // Appointments that are over but still say Confirmed or Deposit due, however old: the oldest few.
+      api.listUnfinished(new Date().toISOString(), UNFINISHED_SHOWN),
     ]);
     // Money already received for them, from the day of the earliest one.
     const from = late.map((a) => dateInZone(a.cancelled_at ?? a.starts_at, tz)).sort()[0];
     const payments = from ? await api.listPayments(from < today ? from : today, today) : [];
-    return { appts, services, changes, late, payments };
+    return { appts, services, changes, late, payments, unfinished };
   }, [today]);
+  const [allForms, setAllForms] = useState(false);
 
   const appts = data?.appts ?? [];
   const live = appts.filter((a) => a.status !== 'cancelled');
@@ -65,8 +74,9 @@ export function Today() {
   const tomorrow = live.filter((a) => dateInZone(a.starts_at, tz) === addDays(today, 1));
   const deposits = appts.filter((a) => a.status === 'pending_deposit' && new Date(a.starts_at) > new Date())
     .sort((a, b) => (a.deposit_due_at ?? '').localeCompare(b.deposit_due_at ?? ''));
-  const noForm = appts.filter((a) => a.is_new_client && !a.has_form && (a.status === 'confirmed' || a.status === 'pending_deposit')
-    && new Date(a.starts_at) < new Date(Date.now() + 14 * 86400e3));
+  // Anyone booked in the next fortnight with no form and no consent she has recorded, regulars included.
+  const noForm = needingForms(appts);
+  const unfinished = data?.unfinished ?? { appts: [], total: 0 };
   const remindersToSend = dueWhatsAppReminders(appts, s);
   // The reminder days run past tomorrow (72 hours = the next 3 days), so say which days the button covers.
   const remindOn = reminderDates(s);
@@ -100,10 +110,8 @@ export function Today() {
   const now = new Date();
   const hour = Number(fmt(now, 'H', tz));
   const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
-  const upNext = todays.find((a) => a.status !== 'completed' && a.status !== 'no_show' && new Date(a.ends_at) > now);
-  const nextNote = upNext
-    ? (new Date(upNext.starts_at) <= now ? 'On now' : `Next ${fmtTime(upNext.starts_at, tz)}`)
-    : todays.length ? 'All done' : 'Free day';
+  // Never "All done" while something that's over still needs finishing.
+  const nextNote = todayNote(todays, unfinished.total, tz, now);
   const firstDue = deposits[0]?.deposit_due_at;
   const depositNote = !deposits.length ? 'None due' : !firstDue ? 'By transfer'
     : new Date(firstDue) < now ? 'Overdue' : `Due ${dateInZone(firstDue, tz) === today ? fmtTime(firstDue, tz) : fmtDay(firstDue, tz)}`;
@@ -166,7 +174,27 @@ export function Today() {
             </div>
           )}
 
-          {(lateCancels.length > 0 || deposits.length > 0 || noForm.length > 0) && <div className="section-title no-heart">Needs attention</div>}
+          {(unfinished.total > 0 || lateCancels.length > 0 || deposits.length > 0 || noForm.length > 0) && <div className="section-title no-heart">Needs attention</div>}
+          {unfinished.total > 0 && (
+            <div className="card tight attention td-attn td-unf">
+              <AttentionHead icon="unfinished" title="Not finished yet" count={unfinished.total} />
+              <p className="td-attn-sub">These have passed but still say Confirmed or Deposit due. Finish each one, or mark a <span className="od-nowrap">no-show</span>.</p>
+              <ul className="list">{unfinished.appts.map((a) => (
+                <li key={a.id}><Link className="list-row td-unf-row" to={`/appointments/${a.id}`}>
+                  <span className="grow td-unf-text">
+                    {/* "Mon 2 Nov, 14:00 · Jess Collins · BIAB infill": each separator stays on the line before it */}
+                    <span className="td-unf-when">{fmtDayTime(a.starts_at, tz)}</span>{'\u00a0· '}
+                    <span className="td-unf-bit">{a.client?.full_name ?? a.booking_name ?? 'Client'}</span>{'\u00a0· '}
+                    <span className="td-unf-bit">{a.service_name}</span>
+                  </span>
+                  <span className="chev"><Icon name="chev" size={18} /></span>
+                </Link></li>
+              ))}</ul>
+              {unfinished.total > unfinished.appts.length && (
+                <p className="td-unf-more">and {unfinished.total - unfinished.appts.length} more: they’ll show here as you finish these</p>
+              )}
+            </div>
+          )}
           {lateCancels.length > 0 && (
             <div className="card tight attention td-attn">
               <AttentionHead icon="late" title="Late cancellations" count={lateCancels.length} />
@@ -191,8 +219,13 @@ export function Today() {
           )}
           {noForm.length > 0 && (
             <div className="card tight attention td-attn">
-              <AttentionHead icon="form" title="New clients without a consultation form" count={noForm.length} />
-              <ul className="list">{noForm.map((a) => <ApptRow key={a.id} a={a} tz={tz} showDate={(iso) => fmtDay(iso, tz)} />)}</ul>
+              <AttentionHead icon="form" title="No consultation form on file" count={noForm.length} />
+              <ul className="list">{noForm.slice(0, allForms ? undefined : FORMS_SHOWN).map((a) => (
+                <ApptRow key={a.id} a={a} tz={tz} showDate={(iso) => fmtDay(iso, tz)} />
+              ))}</ul>
+              {!allForms && noForm.length > FORMS_SHOWN && (
+                <button className="btn ghost small td-attn-more" onClick={() => setAllForms(true)}>Show {noForm.length - FORMS_SHOWN} more</button>
+              )}
             </div>
           )}
 

@@ -242,6 +242,7 @@ Her booking page is `https://yourstudio.netlify.app/book`, and the **Today** scr
    treats them as new until their first visit is marked done.
 4. Health information doesn't come across from Fresha automatically. For each regular, either send the form link
    from their next appointment, or record written consent you already hold before adding allergies or patch tests.
+   **Today → No consultation form on file** lists anyone booked in the next 14 days who has neither.
 5. Swap the booking link on Instagram and WhatsApp to the new one.
 6. Keep Fresha running until every Fresha booking has happened, then cancel the subscription
    and ask Fresha to delete the data it holds for her business.
@@ -300,11 +301,47 @@ takings in the app), but saving her figures says the database update hasn't been
 
 ---
 
+## Appointments that were never finished
+
+The booking page stops taking bookings while 15 online bookings are waiting for a deposit (the brake
+in [What this app does not do](#what-this-app-does-not-do)). Only bookings that haven't started yet
+count towards those 15, so a new client who never paid and never came can't switch online booking off.
+
+Anything that's over but still says Confirmed or Deposit due is listed on **Today → Not finished yet**,
+oldest first. Until it's dealt with, its money is missing from her takings, and a client whose visit
+was never marked as done is still treated as new. For each one, open it and:
+
+- **Finish & take payment** if the visit happened (the payment is dated today),
+- **No-show** if they never came (no email is sent), or
+- **Cancel** for anything else. For one that has already started, *Email the client* is unticked to begin with.
+
+### Set up before old unpaid bookings stopped counting? Run the update once
+
+A new install gets this from `schema.sql`. An install made with an older `schema.sql` (anything set
+up before this version, including in early November 2026) needs the database's booking function
+brought up to date once. It doesn't depend on the app, so before or after the new version goes live
+are both fine. If you're not sure, run it: it's safe on any install.
+
+1. **Supabase → SQL Editor → New query**.
+2. Open [`supabase/updates/2026-11-unpaid-limit.sql`](supabase/updates/2026-11-unpaid-limit.sql), copy
+   **all** of it, paste it in and press **Run**. It should say *Success. No rows returned*. If a box
+   called **Potential issues detected** appears, choose **Run query**: a line inside the function (it
+   clears out its own old records) can set it off, and the update deletes nothing.
+
+It replaces that one function with this version, keeps who can use it, and changes nothing else: no
+tables, settings or bookings. Running it twice does no harm. Until it has been run, old bookings left
+at Deposit due still count towards the 15.
+
+---
+
 ## Day to day
 
 | She wants to… | Where |
 |---|---|
 | See today and anything waiting on her | **Today** |
+| Finish appointments she forgot to mark as done | **Today → Not finished yet**: each one that's over but still says Confirmed or Deposit due, oldest first. Open it, then **Finish & take payment**, **No-show** (no email is sent) or **Cancel**. |
+| Send consultation forms | **Today → No consultation form on file** lists anyone booked in the next 14 days with no form and no consent recorded, regulars included. The appointment → **Send form link**. |
+| Check allergies before she starts | The appointment: allergies in red, the latest patch test and the consultation form are at the top. Today and the Diary show only an **Allergy** tag, never the details. |
 | Send WhatsApp reminders (appointments in the next 3 days) | **Today → Send N WhatsApp reminders**: tap each one, WhatsApp opens with the message written, press send |
 | See what clients have changed or cancelled themselves | **Today → Changed by clients** (she's also emailed each time). Late ones are marked **Late**. |
 | Follow up a late cancellation | The appointment → **Late cancellation** → WhatsApp the client, then **Record payment received** when the money arrives |
@@ -376,9 +413,9 @@ So nobody is surprised later:
   that works with Making Tax Digital for the quarterly updates and the tax return. The tax estimate
   warns her when that's coming, but the app can't send them.
 - **One person only.** It's built for one diary, not a salon with staff.
-- **A brake on online bookings.** At most 6 an hour, 25 a day and 15 waiting for a deposit, and 3 an hour from any
-  one internet connection. This stops someone flooding the diary or using her Gmail to send spam. Real clients
-  who hit it are asked to try later or get in touch.
+- **A brake on online bookings.** At most 6 an hour, 25 a day and 15 still to come and waiting for a deposit,
+  and 3 an hour from any one internet connection. This stops someone flooding the diary or using her Gmail
+  to send spam. Real clients who hit it are asked to try later or get in touch.
 
 ---
 
@@ -394,5 +431,6 @@ So nobody is surprised later:
 | Forgot the password | On the sign-in screen, tap **Forgotten password?** |
 | **Settings → Booking page** won't save ("Could not find the … column") | The app is newer than the database. Run [`supabase/schema.sql`](supabase/schema.sql) again in the SQL Editor (it keeps all her data and settings), then save again. |
 | Saving the tax estimate's figures says the database update hasn't been run | Run the update once: see [Tax to put aside](#set-up-before-the-tax-estimate-was-added-run-the-update-once). |
+| Clients are told "Lots of bookings are coming in right now" | One of the brakes on online bookings has been reached (see [What this app does not do](#what-this-app-does-not-do)). If it lasts more than a day, it's the 15 waiting for a deposit: on **Today**, mark the ones that have paid under **Deposits waiting**, and deal with **Not finished yet**. If old bookings that have passed still seem to count, run the update once: see [Appointments that were never finished](#set-up-before-old-unpaid-bookings-stopped-counting-run-the-update-once). |
 | Changed the web address | Update **Settings → Business details → This app's web address**, and Supabase → Authentication → URL Configuration. |
 | Wants it to look different, or a new feature | Everything is in this folder. See [README.md](README.md). |

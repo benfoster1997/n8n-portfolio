@@ -667,9 +667,12 @@ begin
   -- Flood brake. A one-person diary never sees more than a handful of online
   -- bookings an hour; anything beyond that is a script filling the diary or
   -- using the confirmation emails to spam strangers through the owner's Gmail.
+  -- Bookings waiting for a deposit count only until they start: an old one
+  -- nobody finished, marked as a no-show or cancelled mustn't turn clients away.
   if (select count(*) from public.appointments where source = 'online' and created_at > now() - interval '1 hour') >= 6
      or (select count(*) from public.appointments where source = 'online' and created_at > now() - interval '1 day') >= 25
-     or (select count(*) from public.appointments where source = 'online' and status = 'pending_deposit') >= 15
+     or (select count(*) from public.appointments where source = 'online' and status = 'pending_deposit'
+                                                   and starts_at > now()) >= 15
      or (v_ip is not null and (select count(*) from public.booking_attempts
                                 where ip = v_ip and at > now() - interval '1 hour') >= 3) then
     raise exception 'busy_try_later';

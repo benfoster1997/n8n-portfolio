@@ -325,6 +325,49 @@
 
 .od-check-phone { border-radius: var(--radius); }
 
+/* the client's health at a glance, under the hero: allergies in red, then the latest patch
+   test and the consultation form as receipt rows */
+.od-hstrip { display: flex; flex-direction: column; gap: 10px; padding: 14px 16px; }
+.od-hstrip-allergy {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin: 0;
+  padding: 10px 12px 10px 14px;
+  border-radius: 14px;
+  background:
+    linear-gradient(90deg, var(--danger), color-mix(in srgb, var(--danger) 70%, var(--pink))) left / 4px 100% no-repeat,
+    var(--danger-soft);
+  border: 1px solid color-mix(in srgb, var(--danger) 25%, transparent);
+  color: var(--danger);
+  font-weight: 700;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.od-hstrip-allergy b { color: inherit; font-weight: 850; }
+.od-hstrip-allergy-ic {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+  background: currentColor;
+  -webkit-mask: var(--alert-mask) center / contain no-repeat;
+  mask: var(--alert-mask) center / contain no-repeat;
+}
+.od-hstrip .od-hstrip-rows { gap: 8px; }
+.od-hstrip .od-receipt dd.od-hs-ok { color: var(--ok); }
+.od-hstrip .od-receipt dd.od-hs-warn { color: var(--warn); }
+.od-hstrip .od-receipt dd.od-hs-danger { color: var(--danger); }
+.od-hstrip .od-receipt dd.od-hs-quiet { color: var(--muted); font-weight: 600; }
+.od-hstrip-note { margin: 0; font-size: 0.9rem; font-weight: 750; color: var(--warn); }
+.od-hstrip .sub.od-hstrip-note { font-weight: 500; color: var(--muted); }
+.od-hstrip-btns { gap: 8px; }
+.od-hstrip-btns > .btn { flex: 1 1 130px; padding-left: 12px; padding-right: 12px; }
+
+/* cancelling one that has started: point her at No-show first */
+.od-noshow-hint { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+.od-noshow-hint p { margin: 0; }
+
 .od-panel > p, .od-panel > .sub { margin: 0; }
 .od-panel .btn, .od-tool .btn { padding-left: 16px; padding-right: 16px; }
 /* the money-owed cards lead with the pink action; WhatsApp steps back, as on Reminders */

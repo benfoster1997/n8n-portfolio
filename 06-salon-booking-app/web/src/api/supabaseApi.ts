@@ -1,30 +1,59 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type { Api, FormInfo } from './api';
 import type {
-  Appointment, BookingChangeResult, BookingInfo, BusyRange, Client, ClientChange, ClientPhoto, ConsultationForm,
+  Appointment, ApptHealth, BookingChangeResult, BookingInfo, BusyRange, Client, ClientChange, ClientLite, ClientPhoto, ConsultationForm,
   EmailLogRow, ManageInfo, OpeningHours, PatchTest, Payment, Service, Session, Settings, TaxYear, TimeOff,
 } from '../lib/types';
 import { emptyTaxYear } from '../lib/tax';
 
 const PHOTO_BUCKET = 'client-photos';
-const APPT_SELECT = '*, client:clients(id, full_name, email, phone, phone_e164, consultation_forms(count))';
+const CLIENT_COLS = 'id, full_name, email, phone, phone_e164';
+// Lists (Today, the diary, a client's bookings): whether the client has allergies, consent and a form
+// recorded. shapeAppt keeps only whether there are allergies, never what they are.
+const APPT_SELECT = `*, client:clients(${CLIENT_COLS}, allergies, health_consent_at, consultation_forms(count))`;
+// One appointment: the client's health information too, for the strip at the top of its screen.
+const APPT_DETAIL_SELECT = `*, client:clients(${CLIENT_COLS}, allergies, is_regular, health_consent_at, health_consent_note, `
+  + 'consultation_forms(submitted_at), patch_tests(tested_on, result))';
 
-type ApptRow = Appointment & { client: (Appointment['client'] & { consultation_forms?: { count: number }[] }) | null };
+interface ClientRow extends ClientLite {
+  allergies: string | null;
+  health_consent_at: string | null;
+  is_regular?: boolean;
+  health_consent_note?: string | null;
+  /** [{ count }] in lists; one { submitted_at } for each form with a single appointment. */
+  consultation_forms?: { count?: number; submitted_at?: string }[];
+  patch_tests?: Pick<PatchTest, 'tested_on' | 'result'>[];
+}
+type ApptRow = Omit<Appointment, 'client' | 'has_form' | 'has_consent' | 'has_allergies' | 'health'> & { client: ClientRow | null };
 
 // The database returns times as "2026-10-27T10:00:00+00:00"; the app compares
 // times as ISO strings ("…T10:00:00.000Z"), so convert once, here.
 const iso = (v: string | null) => (v ? new Date(v).toISOString() : v);
 
 function shapeAppt(r: ApptRow): Appointment {
-  const forms = r.client?.consultation_forms?.[0]?.count ?? 0;
-  const client = r.client ? { id: r.client.id, full_name: r.client.full_name, email: r.client.email, phone: r.client.phone, phone_e164: r.client.phone_e164 } : undefined;
+  const { client: c, ...a } = r;
+  const forms = c?.consultation_forms?.[0]?.count ?? 0;
   return {
-    ...r, client, has_form: forms > 0,
-    starts_at: iso(r.starts_at)!, ends_at: iso(r.ends_at)!, created_at: iso(r.created_at)!,
-    deposit_due_at: iso(r.deposit_due_at), deposit_paid_at: iso(r.deposit_paid_at),
-    cancelled_at: iso(r.cancelled_at), client_changed_at: iso(r.client_changed_at), details_sent_at: iso(r.details_sent_at),
-    moved_at: iso(r.moved_at),
+    ...a,
+    client: c ? { id: c.id, full_name: c.full_name, email: c.email, phone: c.phone, phone_e164: c.phone_e164 } : undefined,
+    has_form: forms > 0, has_consent: !!c?.health_consent_at, has_allergies: !!c?.allergies?.trim(),
+    starts_at: iso(a.starts_at)!, ends_at: iso(a.ends_at)!, created_at: iso(a.created_at)!,
+    deposit_due_at: iso(a.deposit_due_at), deposit_paid_at: iso(a.deposit_paid_at),
+    cancelled_at: iso(a.cancelled_at), client_changed_at: iso(a.client_changed_at), details_sent_at: iso(a.details_sent_at),
+    moved_at: iso(a.moved_at),
   };
+}
+
+/** One appointment, with the client's health information (APPT_DETAIL_SELECT). */
+function shapeApptDetail(r: ApptRow): Appointment {
+  const c = r.client;
+  const forms = (c?.consultation_forms ?? []).flatMap((f) => (f.submitted_at ? [iso(f.submitted_at)!] : [])).sort().reverse();
+  const health: ApptHealth | undefined = c ? {
+    allergies: c.allergies, consent_at: iso(c.health_consent_at), consent_note: c.health_consent_note ?? null, is_regular: !!c.is_regular,
+    patch_tests: (c.patch_tests ?? []).map(({ tested_on, result }) => ({ tested_on, result })).sort((x, y) => y.tested_on.localeCompare(x.tested_on)),
+    forms,
+  } : undefined;
+  return { ...shapeAppt({ ...r, client: c && { ...c, consultation_forms: [{ count: forms.length }] } }), health };
 }
 
 function check<T>(res: { data: T; error: { message: string } | null }): T {
@@ -193,17 +222,25 @@ export function supabaseApi(url: string, anonKey: string): Api {
         .lt('starts_at', toIso).gt('ends_at', fromIso).order('starts_at')) as ApptRow[];
       return rows.map(shapeAppt);
     },
+    async listUnfinished(beforeIso, limit) {
+      const { data, count, error } = await sb.from('appointments').select(APPT_SELECT, { count: 'exact' })
+        .in('status', ['confirmed', 'pending_deposit']).lte('ends_at', beforeIso)
+        .order('starts_at').order('id').limit(limit);
+      if (error) throw new Error(error.message);
+      const rows = (data ?? []) as unknown as ApptRow[];
+      return { appts: rows.map(shapeAppt), total: count ?? rows.length };
+    },
     async getAppointment(id) {
-      const r = check(await sb.from('appointments').select(APPT_SELECT).eq('id', id).maybeSingle()) as ApptRow | null;
-      return r ? shapeAppt(r) : null;
+      const r = check(await sb.from('appointments').select(APPT_DETAIL_SELECT).eq('id', id).maybeSingle()) as ApptRow | null;
+      return r ? shapeApptDetail(r) : null;
     },
     async createAppointment(a) {
       // ends_at / busy_until / reference are filled in by the database trigger.
       const row = { ...a, ends_at: a.starts_at, busy_until: a.starts_at, reference: '', source: 'owner' };
-      return shapeAppt(check(await sb.from('appointments').insert(row).select(APPT_SELECT).single()) as ApptRow);
+      return shapeApptDetail(check(await sb.from('appointments').insert(row).select(APPT_DETAIL_SELECT).single()) as ApptRow);
     },
     async updateAppointment(id, patch) {
-      return shapeAppt(check(await sb.from('appointments').update(patch).eq('id', id).select(APPT_SELECT).single()) as ApptRow);
+      return shapeApptDetail(check(await sb.from('appointments').update(patch).eq('id', id).select(APPT_DETAIL_SELECT).single()) as ApptRow);
     },
     async markDepositPaid(id, method) {
       check(await sb.rpc('owner_mark_deposit_paid', { p_appointment_id: id, p_method: method }));

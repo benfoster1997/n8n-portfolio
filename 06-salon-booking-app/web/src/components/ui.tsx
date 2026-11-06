@@ -49,7 +49,9 @@ const STATUS: Record<ApptStatus, { label: string; cls: string }> = {
   cancelled: { label: 'Cancelled', cls: 'danger' },
   no_show: { label: 'No-show', cls: 'danger' },
 };
-export function StatusChip({ status }: { status: ApptStatus }) {
+/** unfinished: its time has passed but it still says Confirmed or Deposit due (lib/unfinished). */
+export function StatusChip({ status, unfinished }: { status: ApptStatus; unfinished?: boolean }) {
+  if (unfinished) return <span className="chip warn">Not finished</span>;
   const s = STATUS[status];
   return <span className={`chip ${s.cls}`}>{s.label}</span>;
 }

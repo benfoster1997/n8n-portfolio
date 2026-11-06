@@ -8,11 +8,11 @@ no card processor, no SMS and no paid WhatsApp.
 
 | For clients | For the owner |
 |---|---|
-| Online booking page for her Instagram bio | **Today**: what's on, deposits waiting, missing forms, what clients changed |
+| Online booking page for her Instagram bio | **Today**: what's on, deposits waiting, missing forms, appointments not finished yet, what clients changed |
 | **Change or cancel online** from a private link, any time before the appointment | **Diary**: week view, add, move and cancel bookings, block time off |
 | Health and allergy consultation form for first visits | **One-tap WhatsApp** reminders (3 days ahead) and deposit requests |
 | Confirmation, change and reminder emails (72 hours before) | **Late cancellations** flagged, with a one-tap follow-up and "record payment" |
-| Bank-transfer deposit instructions (new clients only) | **Clients**: notes, allergies, patch tests, forms, private nail photos |
+| Bank-transfer deposit instructions (new clients only) | **Clients**: notes, allergies, patch tests, forms, private nail photos, with allergies and forms at the top of each appointment |
 | Plain-English privacy notice | **Money**: cash and bank-transfer takings, by month or UK tax year, CSV export, and roughly how much tax to put aside |
 
 ## How it fits together
@@ -99,11 +99,12 @@ To run against a real Supabase project, copy `.env.example` to `.env.local` and 
 
 | Command | What it proves |
 |---|---|
-| `npm run test:db` | The real schema on a local PostgreSQL, acting as the public, the owner and the email script. It covers privacy (the public key reads nothing), double booking and the buffer, deposits for new clients only, time rules, consent, the email queue, the tax estimate's figures and their update script, and the actual Apps Script code run against the database. |
-| `npm test` | Slot calculation, including the BST/GMT changeover, plus UK phone numbers, money, tax years, the tax estimate (hand-worked examples), CSV injection protection and message templates. |
-| `npm run test:e2e` | The demo app in Chromium on an iPhone-sized screen. A new client books, fills in the form and gets their deposit confirmed. It also covers returning clients, WhatsApp links, checkout, double-booking refusal, client records, takings export, the tax estimate, settings and time off. |
+| `npm run test:db` | The real schema on a local PostgreSQL, acting as the public, the owner and the email script. It covers privacy (the public key reads nothing), double booking and the buffer, deposits for new clients only, time rules, consent, the email queue, the limit on unpaid bookings and its update script, the tax estimate's figures and their update script, and the actual Apps Script code run against the database. |
+| `npm test` | Slot calculation, including the BST/GMT changeover, plus UK phone numbers, money, tax years, the tax estimate (hand-worked examples), CSV injection protection, message templates, which appointments are not finished, and the health strip on an appointment. |
+| `npm run test:e2e` | The demo app in Chromium on an iPhone-sized screen. A new client books, fills in the form and gets their deposit confirmed. It also covers returning clients, WhatsApp links, checkout, appointments not finished yet, allergies and forms on the appointment, double-booking refusal, client records, takings export, the tax estimate, settings and time off. |
 
-`test:db` needs a local PostgreSQL 15+ that the current OS user can connect to. `test:e2e` needs
+`test:db` needs a local PostgreSQL 15+ that the current OS user can connect to, and the git history (the
+test for the unpaid-booking update reads `schema.sql` as it was before it). `test:e2e` needs
 Chromium; set `CHROME_PATH` if it isn't at the default path in `playwright.config.ts`.
 
 ## What it does not do

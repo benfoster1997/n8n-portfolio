@@ -95,6 +95,9 @@
 .appt-new { color: var(--ink); font-weight: 750; }
 /* on the client's own record the flag says nothing new (Visits already does) */
 .od-client .appt-new-flag { display: none; }
+/* allergies recorded: a small tag after the name, never the details (her record shows them in full) */
+.appt-name .appt-allergy { margin-left: 2px; vertical-align: 1px; }
+.od-client .appt-allergy { display: none; }
 .appt-chips {
   grid-area: chips;
   display: flex;
@@ -338,6 +341,16 @@
 .td-attn .appt-li:first-child > .appt-row,
 .td-attn .list > li:first-child > .list-row { padding-top: 10px; }
 .td-attn .appt-li:first-child { --appt-doty: 21px; }
+/* a line under the heading that says what the card is for, lined up with the heading */
+.td-attn-sub { margin: 0; padding: 0 16px 6px 56px; font-size: 0.86rem; line-height: 1.4; color: var(--muted); }
+/* not finished yet: "Mon 2 Nov, 14:00 · Jess Collins · BIAB infill", oldest first */
+.list-row.td-unf-row { min-height: 52px; padding: 12px 12px 12px 16px; gap: 10px; }
+.td-unf-text { font-size: 0.95rem; line-height: 1.45; color: var(--ink); overflow-wrap: anywhere; }
+.td-unf-when { font-weight: 800; color: var(--ink-strong); white-space: nowrap; font-variant-numeric: tabular-nums; }
+/* the name and the treatment move to the next line whole, unless one is longer than a line */
+.td-unf-bit { display: inline-block; max-width: 100%; }
+.td-unf-more { margin: 0; padding: 2px 16px 14px; font-size: 0.86rem; font-weight: 700; line-height: 1.4; color: var(--muted); }
+.td-attn-more { display: flex; margin: 2px auto 12px; }
 /* to-do rows, not a timeline: no dot or rail, and room for the date on one line */
 .td-attn .appt-li { --appt-time: 4.2rem; --appt-dotcol: 0px; }
 .td-attn .appt-dot,
@@ -470,6 +483,7 @@
   .td-tile-label { font-size: 0.7rem; }
   .td-tile-note { font-size: 0.72rem; }
   .td-attn .appt-li { --appt-time: 4rem; }
+  .td-attn-sub { padding-left: 16px; }
   .list-row.td-late-row {
     padding-left: 16px;
     grid-template-areas:
