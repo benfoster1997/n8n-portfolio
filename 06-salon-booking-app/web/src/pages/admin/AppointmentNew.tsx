@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../../api';
 import { useOwner } from '../../components/owner';
@@ -6,6 +6,7 @@ import { ErrorBox, Field, Icon, Spinner, TopBar, useAction, useLoad } from '../.
 import { availableSlots } from '../../lib/slots';
 import { addDays, fmtTime, minutesLabel, startOfDayInstant, todayInZone, zonedToInstant } from '../../lib/time';
 import { isPlausibleEmail, isPlausiblePhone, money, parsePounds } from '../../lib/text';
+import { readNewAppointmentLink } from '../../lib/nextVisit';
 import type { Client } from '../../lib/types';
 import { Avatar } from './Clients';
 
@@ -14,23 +15,27 @@ export function AppointmentNew() {
   const tz = s.timezone;
   const nav = useNavigate();
   const [params] = useSearchParams();
+  // Filled in from the link: the client, the treatment, the day and the time (lib/nextVisit).
+  const [link] = useState(() => readNewAppointmentLink(params));
   const { data, error: loadError } = useLoad(async () => {
     const [clients, services, hours] = await Promise.all([api.listClients(), api.listServices(), api.listOpeningHours()]);
     return { clients, services: services.filter((x) => x.is_active), hours };
   }, []);
 
   // client
-  const [clientId, setClientId] = useState<string | null>(params.get('client'));
+  const [clientId, setClientId] = useState<string | null>(link.clientId);
   const [search, setSearch] = useState('');
   const [newClient, setNewClient] = useState(false);
   const [nc, setNc] = useState({ full_name: '', phone: '', email: '' });
   // treatment
-  const [serviceId, setServiceId] = useState<string>('');
-  const [custom, setCustom] = useState({ name: '', duration: '60', price: '' });
+  const [serviceId, setServiceId] = useState<string>(link.serviceId ?? '');
+  const [custom, setCustom] = useState(link.custom ?? { name: '', duration: '60', price: '' });
   // time
-  const [day, setDay] = useState(params.get('d') ?? todayInZone(tz));
-  const [time, setTime] = useState('');
+  const [day, setDay] = useState(link.day ?? todayInZone(tz));
+  const [time, setTime] = useState(link.time ?? '');
   const [anyTime, setAnyTime] = useState(false);
+  // A time from the link that has been taken since: she picks again instead of meeting a clash.
+  const [goneTime, setGoneTime] = useState<string | null>(null);
   // extras
   const [askDeposit, setAskDeposit] = useState<boolean | null>(null);
   const [emailConfirm, setEmailConfirm] = useState(true);
@@ -42,10 +47,10 @@ export function AppointmentNew() {
   const duration = service ? service.duration_min : Number(custom.duration) || 0;
   const client: Client | undefined = data?.clients.find((c) => c.id === clientId);
 
+  // Her first treatment, unless the link chose one she still offers (or "Something else…").
   useEffect(() => {
-    if (!data || serviceId) return;
-    if (data.services[0]) setServiceId(data.services[0].id);
-    else setServiceId('custom');
+    if (!data || serviceId === 'custom' || data.services.some((x) => x.id === serviceId)) return;
+    setServiceId(data.services[0]?.id ?? 'custom');
   }, [data, serviceId]);
 
   useEffect(() => {
@@ -65,6 +70,17 @@ export function AppointmentNew() {
     return availableSlots(day, duration, { ...s, hours: data.hours }, busy7, new Date(), { ignoreNotice: true })
       .filter((d) => d.getTime() > Date.now() - 12 * 3600e3);
   }, [data, busy7, day, duration, s]);
+
+  // Once the treatment and that day's free times are known, check the time the link gave is still free.
+  const checkLinkTime = useRef(link.time);
+  useEffect(() => {
+    const t = checkLinkTime.current;
+    if (!t || !data || !busy7 || (!service && serviceId !== 'custom')) return;
+    checkLinkTime.current = null;
+    if (!slots.some((d) => fmtTime(d, tz) === t)) { setTime(''); setGoneTime(t); }
+  }, [slots, data, busy7, service, serviceId, tz]);
+  /** Her own choice of day, treatment or time replaces the link's. */
+  const ownChoice = () => { checkLinkTime.current = null; setGoneTime(null); };
 
   const matches = (data?.clients ?? []).filter((c) => {
     const q = search.trim().toLowerCase();
@@ -107,7 +123,8 @@ export function AppointmentNew() {
         owner_notes: notes.trim() || null,
       });
       if (emailConfirm && c.email) await api.queueEmail(a.id, 'booking_received').catch(() => {});
-      nav(`/appointments/${a.id}`, { replace: true });
+      // The appointment screen offers WhatsApp for the confirmation when there's no email address.
+      nav(`/appointments/${a.id}`, { replace: true, state: { added: true } });
     });
   }
 
@@ -162,7 +179,7 @@ export function AppointmentNew() {
       <div className="card stack od-step od-step-treatment done">
         <div className="od-step-head"><StepNum n={2} /><h3>Treatment</h3></div>
         <Field label="Treatment">
-          <select value={serviceId} onChange={(e) => { setServiceId(e.target.value); setTime(''); }}>
+          <select value={serviceId} onChange={(e) => { ownChoice(); setServiceId(e.target.value); setTime(''); }}>
             {data.services.map((v) => <option key={v.id} value={v.id}>{v.name} · {minutesLabel(v.duration_min)} · {money(v.price_pence)}</option>)}
             <option value="custom">Something else…</option>
           </select>
@@ -180,10 +197,11 @@ export function AppointmentNew() {
 
       <div className={`card stack od-step${time ? ' done' : ''}`}>
         <div className="od-step-head"><StepNum n={3} /><h3>When</h3></div>
-        <Field label="Date"><input type="date" value={day} onChange={(e) => { setDay(e.target.value); setTime(''); }} /></Field>
+        <Field label="Date"><input type="date" value={day} onChange={(e) => { ownChoice(); setDay(e.target.value); setTime(''); }} /></Field>
+        {goneTime && <p className="notice warn od-gone-time">{goneTime} isn’t free any more. Pick another time.</p>}
         {anyTime ? (
           <Field label="Start time" hint="Any time you like — the diary still stops double-bookings.">
-            <input type="time" step={300} value={time} onChange={(e) => setTime(e.target.value)} />
+            <input type="time" step={300} value={time} onChange={(e) => { ownChoice(); setTime(e.target.value); }} />
           </Field>
         ) : (
           <>
@@ -192,7 +210,7 @@ export function AppointmentNew() {
               <div className="slot-grid">
                 {slots.map((d) => {
                   const t = fmtTime(d, tz);
-                  return <button key={t} className={`slot${time === t ? ' on' : ''}`} onClick={() => setTime(t)}>{t}</button>;
+                  return <button key={t} className={`slot${time === t ? ' on' : ''}`} onClick={() => { ownChoice(); setTime(t); }}>{t}</button>;
                 })}
               </div>
             ) : <div className="sub od-no-slots">No free times inside opening hours.</div>}

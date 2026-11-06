@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useLocation, useParams } from 'react-router-dom';
 import { api } from '../../api';
 import { WhatsAppButton } from '../../components/appts';
 import { useOwner } from '../../components/owner';
@@ -10,6 +10,9 @@ import { addDays, dateInZone, fmt, fmtDay, fmtDayLong, fmtDayTime, fmtTime, minu
 import { fillTemplate, firstName, freeChangeDeadline, lateFromEarlierChange, manageLink, money, noticeLabel, parsePounds, whatsappLink } from '../../lib/text';
 import { formLine, formOrConsent, patchTestLine } from '../../lib/health';
 import { isUnfinished, noShowQuestion } from '../../lib/unfinished';
+import {
+  doneLine, newAppointmentLink, nextVisitDays, nextVisitOptions, nextVisitQuestion, sameTreatment, type Treatment,
+} from '../../lib/nextVisit';
 import { Glyph } from './Clients';
 import type { Appointment, ApptHealth, CancelledBy, ClientChange, EmailKind, PayMethod, Settings } from '../../lib/types';
 
@@ -41,6 +44,8 @@ export function AppointmentView() {
   const { settings: s } = useOwner();
   const tz = s.timezone;
   const toast = useToast();
+  // Just added from New appointment: a client with no email address gets the confirmation by WhatsApp.
+  const justAdded = !!(useLocation().state as { added?: boolean } | null)?.added;
   const { data: a, error, loading, reload, setData } = useLoad(() => api.getAppointment(id), [id]);
   const { data: emails, reload: reloadEmails } = useLoad(() => api.listEmailLog(id), [id]);
   const { data: changes } = useLoad(() => api.listClientChanges({ appointmentId: id }), [id]);
@@ -197,6 +202,20 @@ export function AppointmentView() {
         )}
       </div>
 
+      {justAdded && a.status === 'confirmed' && a.client && !a.client.email && phone && (
+        <section className="card stack od-added" aria-label="Added to your diary">
+          <div className="od-panel-head">
+            <span className="od-ic ok" aria-hidden="true"><Icon name="tick" size={20} /></span>
+            <h3>Added to your diary</h3>
+          </div>
+          <p className="sub">
+            {firstName(a.client.full_name) || 'This client'} has no email address, so no confirmation email goes. Send your
+            “Booking confirmed” message on WhatsApp instead.
+          </p>
+          <WhatsAppButton a={a} s={s} kind="confirmed" label="Send on WhatsApp" />
+        </section>
+      )}
+
       {a.status !== 'cancelled' && a.health && (
         <HealthStrip a={a} h={a.health} s={s} first={first} phone={phone} checkPhone={checkPhone} formUrl={formUrl} onCopy={copy} />
       )}
@@ -344,7 +363,8 @@ export function AppointmentView() {
       {live && a.client?.email && <button className="btn ghost" disabled={act.busy} onClick={resend}>Re-send confirmation email</button>}
 
       {sheet === 'deposit' && <DepositSheet a={a} onClose={() => setSheet(null)} onDone={() => { toast('Deposit recorded — client confirmed'); done(); }} />}
-      {sheet === 'checkout' && <CheckoutSheet a={a} onClose={() => setSheet(null)} onDone={() => { toast('Payment recorded'); done(); }} />}
+      {/* The sheet stays open once it's done, to book the next visit; the screen behind it already says Done. */}
+      {sheet === 'checkout' && <CheckoutSheet a={a} onClose={() => setSheet(null)} onFinished={() => { reload(); reloadEmails(); }} />}
       {sheet === 'move' && <MoveSheet a={a} tz={tz} onClose={() => setSheet(null)} onDone={(msg) => { toast(msg); done(); }} />}
       {sheet === 'cancel' && (
         <CancelSheet a={a} onClose={() => setSheet(null)} onDone={() => { toast('Appointment cancelled'); done(); }}
@@ -496,18 +516,33 @@ function DepositSheet({ a, onClose, onDone }: { a: Appointment; onClose: () => v
   );
 }
 
-function CheckoutSheet({ a, onClose, onDone }: { a: Appointment; onClose: () => void; onDone: () => void }) {
+/**
+ * Finish & take payment. Once it's marked as done the sheet stays open on the next visit
+ * (NextVisit), while the screen behind it updates; Not now, Close or Escape closes it.
+ */
+function CheckoutSheet({ a, onClose, onFinished }: { a: Appointment; onClose: () => void; onFinished: () => void }) {
   const depositPaid = a.deposit_paid_at ? a.deposit_required_pence : 0;
   const [amount, setAmount] = useState(((Math.max(0, a.price_pence - depositPaid)) / 100).toFixed(2));
   const [tip, setTip] = useState('');
   const [method, setMethod] = useState<PayMethod>('cash');
   const [note, setNote] = useState('');
+  const [recorded, setRecorded] = useState<{ amount: number; tip: number } | null>(null);
   const { busy, error, run, setError } = useAction();
   async function save() {
     const p = parsePounds(amount || '0');
     const t = tip ? parsePounds(tip) : 0;
     if (p === null || t === null) return setError(new Error('Check the amounts.'));
-    if (await run(() => api.completeAppointment(a.id, p, method, t, note.trim() || null))) onDone();
+    if (await run(() => api.completeAppointment(a.id, p, method, t, note.trim() || null))) {
+      setRecorded({ amount: p, tip: t });
+      onFinished();
+    }
+  }
+  if (recorded) {
+    return (
+      <Sheet title="Next visit" onClose={onClose}>
+        <NextVisit a={a} recorded={recorded} onClose={onClose} />
+      </Sheet>
+    );
   }
   return (
     <Sheet title="Finish & take payment" onClose={onClose}>
@@ -529,6 +564,86 @@ function CheckoutSheet({ a, onClose, onDone }: { a: Appointment; onClose: () => 
         <button className="btn primary block" disabled={busy} onClick={save}>{busy ? 'Saving…' : 'Mark as done'}</button>
       </div>
     </Sheet>
+  );
+}
+
+/**
+ * After "Mark as done": what was recorded, then the same treatment in 2, 3 or 4 weeks, each with
+ * the date and time it would book (the same weekday and time if that's free, otherwise the
+ * nearest free time), and Pick a date. A tap opens New appointment filled in.
+ */
+function NextVisit({ a, recorded, onClose }: { a: Appointment; recorded: { amount: number; tip: number }; onClose: () => void }) {
+  const { settings: s } = useOwner();
+  const tz = s.timezone;
+  const box = useRef<HTMLDivElement>(null);
+  // The payment form has gone from under the focus: keep it in the sheet, back at its top.
+  useEffect(() => {
+    const sheet = box.current?.closest<HTMLElement>('.sheet');
+    if (sheet) { sheet.scrollTop = 0; sheet.focus({ preventScroll: true }); }
+  }, []);
+  const { data, error } = useLoad(async () => {
+    const { first, last } = nextVisitDays(a.starts_at, tz);
+    const [services, hours, busy, theirs] = await Promise.all([
+      api.listServices(), api.listOpeningHours(),
+      api.getBusyTimes(startOfDayInstant(first, tz), startOfDayInstant(addDays(last, 1), tz)),
+      api.listClientAppointments(a.client_id),
+    ]);
+    const now = new Date();
+    const treatment = sameTreatment(a, services);
+    const options = nextVisitOptions(a.starts_at, treatment.minutes, { ...s, hours }, busy, now);
+    // Already booked in: say so, so they aren't booked twice.
+    const booked = theirs.filter((x) => x.id !== a.id && (x.status === 'confirmed' || x.status === 'pending_deposit')
+      && new Date(x.starts_at) > now).sort((x, y) => x.starts_at.localeCompare(y.starts_at))[0] ?? null;
+    return { treatment, options, booked };
+  }, [a.id]);
+  const name = a.client?.full_name ?? a.booking_name;
+  const first = firstName(name);
+  // If her list couldn't be loaded, Pick a date still starts on this treatment.
+  const treatment: Treatment = data?.treatment
+    ?? { serviceId: a.service_id, name: a.service_name, minutes: a.duration_min, pricePence: a.price_pence };
+  return (
+    <div className="stack od-next" ref={box}>
+      <p className="od-paid od-next-done" role="status">{doneLine(recorded.amount, recorded.tip)}</p>
+      <h3 className="od-next-q">{nextVisitQuestion(name, treatment.name)}</h3>
+      {data?.booked && (
+        <p className="sub od-next-booked">
+          {first ? `${first} is` : 'They’re'} already booked in for {data.booked.service_name} on <span className="od-nowrap">{fmtDayTime(data.booked.starts_at, tz)}</span>.
+        </p>
+      )}
+      <ErrorBox error={error} />
+      {!data && !error ? <Spinner /> : (
+        <ul className="list card tight od-next-list">
+          {data?.options.map((o) => (
+            <li key={o.weeks}>
+              {o.at ? (
+                <Link className="list-row od-next-row" to={newAppointmentLink(a.client_id, treatment, { day: dateInZone(o.at, tz), time: fmtTime(o.at, tz) })}>
+                  <span className="od-next-text">
+                    <span className="od-next-label">In {o.weeks} weeks</span>
+                    {!o.same && <span className="od-next-note"><span className="visually-hidden"> · </span>Nearest free time</span>}
+                  </span>
+                  <span className="od-next-when"><span className="visually-hidden"> · </span>{fmtDayTime(o.at, tz)}</span>
+                  <span className="chev"><Icon name="chev" size={18} /></span>
+                </Link>
+              ) : (
+                <div className="list-row od-next-row is-full">
+                  <span className="od-next-text">
+                    <span className="od-next-label">In {o.weeks} weeks</span>
+                    <span className="od-next-note"><span className="visually-hidden"> · </span>Nothing free around then</span>
+                  </span>
+                </div>
+              )}
+            </li>
+          ))}
+          <li>
+            <Link className="list-row od-next-row" to={newAppointmentLink(a.client_id, treatment)}>
+              <span className="od-next-text"><span className="od-next-label">Pick a date</span></span>
+              <span className="chev"><Icon name="chev" size={18} /></span>
+            </Link>
+          </li>
+        </ul>
+      )}
+      <button className="btn block" onClick={onClose}>Not now</button>
+    </div>
   );
 }
 

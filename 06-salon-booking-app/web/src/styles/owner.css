@@ -818,3 +818,6 @@
 .gate-text { position: relative; margin: 12px 0 0; color: var(--ink); overflow-wrap: anywhere; }
 .gate-note { margin: 8px 0 0; color: var(--muted); font-size: 0.9rem; }
 .gate-actions { display: flex; flex-direction: column; gap: 10px; margin-top: 22px; }
+
+/* Share free times: a third button across the booking-link card, under Share link and Preview */
+.td-link-btns .td-link-free { grid-column: 1 / -1; }

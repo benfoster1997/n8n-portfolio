@@ -84,6 +84,8 @@ test('Today lists appointments that are over but never finished, oldest first, u
   await page.getByRole('button', { name: 'Finish & take payment' }).click();
   await expect(page.getByLabel('Amount paid today (£)')).toHaveValue('30.00');
   await page.getByRole('button', { name: 'Mark as done' }).click();
+  // The sheet stays open to book the next visit (next-visit.spec.ts); not now.
+  await page.getByRole('dialog', { name: 'Next visit' }).getByRole('button', { name: 'Not now' }).click();
   await expect(heroChip(page)).toHaveText('Done');
   await backToToday(page);
   await expect(count(page)).toHaveText('2');
@@ -138,6 +140,7 @@ test('a long list shows the oldest five, then how many more', async ({ page }) =
   await rows.first().click();
   await page.getByRole('button', { name: 'Finish & take payment' }).click();
   await page.getByRole('button', { name: 'Mark as done' }).click();
+  await page.getByRole('dialog', { name: 'Next visit' }).getByRole('button', { name: 'Not now' }).click();
   await expect(heroChip(page)).toHaveText('Done');
   await backToToday(page);
   await expect(count(page)).toHaveText('9');

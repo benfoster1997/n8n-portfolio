@@ -1139,6 +1139,7 @@
   mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20.5 11.6a8.5 8.5 0 0 1-12.6 7.4L3.5 20.5l1.6-4.3A8.5 8.5 0 1 1 20.5 11.6z'/%3E%3C/svg%3E") center / contain no-repeat;
 }
 .od-template textarea { background: var(--surface-2); }
+.od-template-when { margin: 4px 0 0; }
 
 /* email set-up */
 .od-status { display: flex; align-items: center; gap: 10px; font-weight: 700; border-radius: 14px; }
@@ -1290,3 +1291,47 @@
 .topbar .icon-btn.od-top-add svg { stroke-width: 2.2; }
 .topbar .icon-btn.od-top-add:active { background: var(--grad-accent); }
 @media (hover: hover) { .topbar .icon-btn.od-top-add:hover { background: var(--grad-accent); box-shadow: var(--glow-strong); } }
+
+/* ------------------------------------------------------------------ the next visit, after "Mark as done"
+   What was recorded (green, like a payment), the question, then In 2, 3 and 4 weeks with the time
+   each would book, and Pick a date: one list, the time on the right like a price */
+.od-next { gap: 12px; }
+.od-next-done { margin: 0; font-size: 0.98rem; }
+.od-next-q { font-size: 1.18rem; line-height: 1.3; text-wrap: balance; margin-top: 2px; }
+.od-next-booked { margin: -4px 0 0; }
+.od-next-list .list-row.od-next-row { gap: 10px; min-height: 58px; }
+.od-next-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.od-next-label { font-weight: 800; color: var(--ink-strong); }
+.od-next-when { flex: none; font-weight: 800; color: var(--accent); font-variant-numeric: tabular-nums; text-align: right; }
+.od-next-note { font-size: 0.84rem; font-weight: 650; color: var(--od-lilac-ink); }
+/* nothing free that week: not a link, so no chevron and no pink */
+.od-next-row.is-full { cursor: default; }
+.od-next-row.is-full .od-next-label { color: var(--muted); }
+.od-next-row.is-full .od-next-note { color: var(--muted); }
+.od-next-row.is-full:active { background: none; }
+
+/* just added for a client with no email: the WhatsApp confirmation is the thing to do */
+.od-added { gap: 12px; border-color: color-mix(in srgb, var(--ok) 30%, var(--line)); }
+.od-added > p { margin: 0; }
+.od-added .btn.wa { align-self: stretch; }
+.od-gone-time { margin: 0; }
+
+/* ------------------------------------------------------------------ share free times (a sheet on Today)
+   The message as it will be sent, in a chat bubble, with Share and Copy under it */
+.od-share { gap: 14px; }
+.od-share-range { margin-top: 2px; }
+.od-share-msg {
+  margin: 0;
+  padding: 13px 15px;
+  border-radius: 18px 18px 18px 6px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-sm);
+  color: var(--ink-strong);
+  font-size: 0.97rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.od-share-btns > .btn { flex: 1 1 120px; }
+.od-share-note, .od-share-none { margin: 0; }

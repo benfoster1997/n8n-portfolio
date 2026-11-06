@@ -2,7 +2,7 @@ import { useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../../api';
 import { ApptRow, changeText, changedAgo } from '../../components/appts';
-import { Blossom, LemonSlice } from '../../components/brand';
+import { Blossom, BrandIcon, LemonSlice } from '../../components/brand';
 import { useOwner } from '../../components/owner';
 import { ErrorBox, Icon, LateChip, Spinner, useLoad, useToast } from '../../components/ui';
 import { addDays, fmt, fmtDay, fmtDayLong, fmtDayTime, fmtTime, startOfDayInstant, todayInZone, dateInZone } from '../../lib/time';
@@ -11,6 +11,7 @@ import { dueWhatsAppReminders, lateCharge, reminderDates, reminderDays } from '.
 import { needingForms } from '../../lib/health';
 import { todayNote, UNFINISHED_SHOWN } from '../../lib/unfinished';
 import type { ClientChange } from '../../lib/types';
+import { ShareFreeTimesSheet } from './ShareFreeTimes';
 
 /** Small line pictures for the "needs attention" headers and client changes (decorative). */
 const GLYPHS: Record<string, ReactNode> = {
@@ -67,6 +68,7 @@ export function Today() {
     return { appts, services, changes, late, payments, unfinished };
   }, [today]);
   const [allForms, setAllForms] = useState(false);
+  const [sharingTimes, setSharingTimes] = useState(false);
 
   const appts = data?.appts ?? [];
   const live = appts.filter((a) => a.status !== 'cancelled');
@@ -292,9 +294,14 @@ export function Today() {
             <div className="td-link-btns">
               <button className="btn small" onClick={shareLink}><Icon name="link" size={18} /> Share link</button>
               <Link className="btn small" to="/book">Preview</Link>
+              {/* this week's real gaps, written out for a Story, a Status or a reply */}
+              <button className="btn small td-link-free" onClick={() => setSharingTimes(true)}>
+                <BrandIcon name="clock" size={18} /> Share free times
+              </button>
             </div>
             <p className="td-link-hint">Put this in your Instagram bio and WhatsApp Business profile.</p>
           </div>
+          {sharingTimes && <ShareFreeTimesSheet bookingUrl={bookingUrl} onClose={() => setSharingTimes(false)} />}
         </>
       )}
     </div>

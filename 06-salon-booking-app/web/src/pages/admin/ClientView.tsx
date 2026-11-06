@@ -8,6 +8,7 @@ import { describeAnswers } from '../../lib/consultation';
 import { shrinkImage } from '../../lib/image';
 import { fmt, fmtDay, fmtDayTime, todayInZone } from '../../lib/time';
 import { firstName, friendlyError, money, whatsappLink } from '../../lib/text';
+import { latestBooking, newAppointmentLink, sameTreatment } from '../../lib/nextVisit';
 import type { ClientPhoto, ConsultationForm, PatchTest } from '../../lib/types';
 import { Avatar, ClientSheet, Glyph } from './Clients';
 import { BrandIcon } from '../../components/brand';
@@ -19,9 +20,9 @@ export function ClientView() {
   const nav = useNavigate();
   const toast = useToast();
   const { data, error, loading, reload } = useLoad(async () => {
-    const [client, appts, tests, forms, photos] = await Promise.all([
-      api.getClient(id), api.listClientAppointments(id), api.listPatchTests(id), api.listForms(id), api.listPhotos(id)]);
-    return { client, appts, tests, forms, photos };
+    const [client, appts, tests, forms, photos, services] = await Promise.all([
+      api.getClient(id), api.listClientAppointments(id), api.listPatchTests(id), api.listForms(id), api.listPhotos(id), api.listServices()]);
+    return { client, appts, tests, forms, photos, services };
   }, [id]);
   const [sheet, setSheet] = useState<null | 'edit' | 'test' | 'delete' | 'consent' | 'health-delete'>(null);
   const [form, setForm] = useState<ConsultationForm | null>(null);
@@ -41,6 +42,9 @@ export function ClientView() {
   const spent = data!.appts.filter((a) => a.status === 'completed').reduce((n, a) => n + a.price_pence, 0);
   const visits = data!.appts.filter((a) => a.status === 'completed').length;
   const consented = !!c.health_consent_at;
+  // Book an appointment starts on their last treatment (or the one already coming up).
+  const last = latestBooking(data!.appts);
+  const bookLink = newAppointmentLink(c.id, last && sameTreatment(last, data!.services));
   const hasHealth = consented || !!c.allergies || data!.tests.length > 0 || data!.forms.length > 0;
 
   async function saveNotes() {
@@ -97,7 +101,7 @@ export function ClientView() {
         </div>
       )}
 
-      <Link className="btn primary block od-book" to={`/appointments/new?client=${c.id}`}><Icon name="plus" size={20} /> Book an appointment</Link>
+      <Link className="btn primary block od-book" to={bookLink}><Icon name="plus" size={20} /> Book an appointment</Link>
 
       <label className="check card od-regular">
         <input type="checkbox" checked={c.is_regular} disabled={act.busy}

@@ -190,6 +190,9 @@ function seed(): Store {
     source: 'online', is_new_client: true, deposit_required_pence: 1000,
     deposit_due_at: at(-6, '19:00'), created_at: jess.created_at,
   });
+  // Amelia's next infill, three weeks out, overlapping Grace's usual 13:00: when Grace's visit
+  // today is marked as done, "In 3 weeks" offers the nearest free time instead.
+  add(amelia, infill, at(21, '12:30'), 'confirmed');
   const client_changes: ClientChange[] = [
     { id: 1, appointment_id: moved.id, changed_at: hoursAgo(3), action: 'moved', old_starts_at: at(7, '15:00'),
       new_starts_at: moved.starts_at, old_service_name: infill.name, new_service_name: infill.name,

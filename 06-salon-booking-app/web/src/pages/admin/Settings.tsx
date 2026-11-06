@@ -521,12 +521,13 @@ export function TimeOffSettings() {
 export function MessageSettings() {
   const f = useSettingsForm(['wa_template_reminder', 'wa_template_deposit', 'wa_template_confirmed']);
   const d = f.draft;
-  const box = (k: 'wa_template_reminder' | 'wa_template_deposit' | 'wa_template_confirmed', label: string, def: string, long = false) => (
+  const box = (k: 'wa_template_reminder' | 'wa_template_deposit' | 'wa_template_confirmed', label: string, def: string, long = false, when?: string) => (
     <section className={`card od-template${long ? ' od-template-long' : ''}`}>
       <Field label={label}>
         <textarea value={d[k] ?? def} maxLength={1000} onChange={(e) => f.set(k, e.target.value)} />
         <button className="btn ghost small" style={{ alignSelf: 'flex-start' }} onClick={() => f.set(k, null)}>Reset to default</button>
       </Field>
+      {when && <p className="sub od-template-when">{when}</p>}
     </section>
   );
   return (
@@ -545,7 +546,8 @@ export function MessageSettings() {
       )}
       {box('wa_template_reminder', 'Reminder', DEFAULT_TEMPLATES.reminder)}
       {box('wa_template_deposit', 'Deposit request', DEFAULT_TEMPLATES.deposit, true)}
-      {box('wa_template_confirmed', 'Booking confirmed', DEFAULT_TEMPLATES.confirmed)}
+      {box('wa_template_confirmed', 'Booking confirmed', DEFAULT_TEMPLATES.confirmed, false,
+        'Offered when you add an appointment for a client with no email address.')}
       <ErrorBox error={f.error} />
       <button className="btn primary block" disabled={f.busy}
         onClick={() => f.save({

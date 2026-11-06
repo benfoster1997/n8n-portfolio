@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { api } from '../../api';
 import { ConsultationFields } from '../../components/ConsultationFields';
 import { SlotPicker, useFreeSlots } from '../../components/SlotPicker';
@@ -11,6 +11,7 @@ import {
 } from '../../components/public/parts';
 import { ErrorBox, Field, Icon, Spinner, useAction, useLoad } from '../../components/ui';
 import { blankAnswers, validateAnswers } from '../../lib/consultation';
+import { findTreatment } from '../../lib/freeTimes';
 import { openDays } from '../../lib/slots';
 import { addDays, fmtDayLong, fmtTime, minutesLabel, startOfDayInstant } from '../../lib/time';
 import { friendlyError, isPlausibleEmail, isPlausiblePhone, money } from '../../lib/text';
@@ -51,8 +52,12 @@ export function Book() {
 
 function BookingFlow({ info }: { info: BookingInfo }) {
   const tz = info.timezone;
-  const [step, setStep] = useState<Step>('service');
-  const [serviceId, setServiceId] = useState<string | null>(null);
+  const [params] = useSearchParams();
+  // A link for one treatment ("…/book?treatment=biab-infill", from Share free times) opens straight on
+  // its free times. One that isn't bookable online (or no longer exists) opens the usual page.
+  const [linked] = useState(() => findTreatment(params.get('treatment'), info.services));
+  const [step, setStep] = useState<Step>(linked ? 'time' : 'service');
+  const [serviceId, setServiceId] = useState<string | null>(linked?.id ?? null);
   const [day, setDay] = useState<string | null>(null);
   const [slot, setSlot] = useState<Date | null>(null);
   const [details, setDetails] = useState({ full_name: '', email: '', phone: '', notes: '' });

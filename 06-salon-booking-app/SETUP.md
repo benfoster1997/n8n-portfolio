@@ -227,7 +227,8 @@ once and check the new-booking alert **notifies her phone**.
 
 ## 7. Share the booking link
 
-Her booking page is `https://yourstudio.netlify.app/book`, and the **Today** screen has a **Share link** button.
+Her booking page is `https://yourstudio.netlify.app/book`, and the **Today** screen has a **Share link** button, and
+**Share free times** for a message listing her free times (see [Day to day](#day-to-day)).
 - **Instagram:** Edit profile → Links → add it, along with the privacy notice (`…/privacy`) if there's room.
 - **WhatsApp Business:** Settings → Business tools → Profile → Website.
 - **Google Business Profile:** Edit profile → Booking link.
@@ -343,6 +344,7 @@ at Deposit due still count towards the 15.
 | Send consultation forms | **Today → No consultation form on file** lists anyone booked in the next 14 days with no form and no consent recorded, regulars included. The appointment → **Send form link**. |
 | Check allergies before she starts | The appointment: allergies in red, the latest patch test and the consultation form are at the top. Today and the Diary show only an **Allergy** tag, never the details. |
 | Send WhatsApp reminders (appointments in the next 3 days) | **Today → Send N WhatsApp reminders**: tap each one, WhatsApp opens with the message written, press send |
+| Post her free times on Instagram or WhatsApp | **Today → Your booking link → Share free times**: pick the treatment (her most-booked is first) and **This week** or **Next 2 weeks**. It writes a message listing up to 8 times clients can book online, with a link that opens her booking page on that treatment. **Share** or **Copy** it into a Story, a Status or a reply. Only send it to people who've asked: sending it to clients who haven't counts as marketing, and her privacy notice promises clients she won't do that without asking. |
 | See what clients have changed or cancelled themselves | **Today → Changed by clients** (she's also emailed each time). Late ones are marked **Late**. |
 | Follow up a late cancellation | The appointment → **Late cancellation** → WhatsApp the client, then **Record payment received** when the money arrives |
 | Move a booking herself | The appointment → **Change time**. Leave *Email … their new time* ticked and the client is told. |
@@ -351,6 +353,7 @@ at Deposit due still count towards the 15.
 | A change/cancel link reached the wrong person | The appointment → **Make a new link**. The old one stops working straight away. |
 | Confirm a new client's deposit has arrived | Today → *Deposits waiting* → the booking → **Deposit received** (the client is emailed automatically) |
 | Finish an appointment and record payment | The appointment → **Finish & take payment** → cash or bank transfer |
+| Book the client's next visit before they leave | After **Mark as done** the sheet asks *Book Jess's next BIAB infill?*. **In 2 weeks**, **In 3 weeks** and **In 4 weeks** each show the time they'd book: the same day and time, or the nearest free time. **Pick a date** lets her choose. One tap fills in New appointment with no deposit, then **Add to diary**. A client with an email gets the usual confirmation; with none, the appointment offers **Send on WhatsApp** in her *Booking confirmed* wording (Settings → WhatsApp messages). Agree the date with the client first, and book one visit ahead: bookings she makes count towards a client's limit of three upcoming bookings, and a client with three can't book online. A client's record → **Book an appointment** starts on their last treatment. |
 | Block a holiday or a dentist appointment | **Diary → Block time** |
 | See a client's allergies, patch tests, form and photos | **Clients** → the client |
 | Get her figures for Self Assessment | **Money → Tax year → Download spreadsheet** |
