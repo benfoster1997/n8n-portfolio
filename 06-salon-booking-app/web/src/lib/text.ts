@@ -271,19 +271,6 @@ export function toCsv(rows: (string | number | null | undefined)[][]): string {
   return '﻿' + rows.map((r) => r.map(esc).join(',')).join('\r\n') + '\r\n';
 }
 
-export function downloadText(filename: string, text: string, type = 'text/csv;charset=utf-8') {
-  const blob = new Blob([text], { type });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  // iOS asks where to save before reading the file, so keep the link alive a while.
-  setTimeout(() => URL.revokeObjectURL(url), 60_000);
-}
-
 /** UK tax year containing a date: 6 April to 5 April. */
 export function taxYearOf(dateStr: string): { label: string; from: string; to: string } {
   const [y, m, d] = dateStr.split('-').map(Number);
@@ -295,9 +282,32 @@ export function taxYearOf(dateStr: string): { label: string; from: string; to: s
   };
 }
 
+/** What a phone with no signal (or the server out of reach) is told. */
+export const NO_SIGNAL = 'No signal: check your connection and try again.';
+
+/**
+ * How each browser says a request never got an answer: Safari on an iPhone ("Load failed"),
+ * Chrome and Edge ("Failed to fetch"), Firefox ("NetworkError when attempting to fetch
+ * resource."), and older iPhones. The Supabase client puts "TypeError: " in front.
+ */
+const NETWORK_ERRORS = [
+  'Load failed', 'Failed to fetch', 'NetworkError when attempting to fetch resource',
+  'The Internet connection appears to be offline', 'The network connection was lost',
+];
+
+const messageOf = (e: unknown) =>
+  e instanceof Error ? e.message : typeof e === 'object' && e && 'message' in e ? String((e as { message: unknown }).message) : String(e);
+
+/** The request failed for want of a connection, so it may or may not have reached the server. */
+export const isNetworkError = (e: unknown) => {
+  const msg = messageOf(e);
+  return NETWORK_ERRORS.some((t) => msg.includes(t));
+};
+
 /** Friendly wording for the short error codes the database raises. */
 export function friendlyError(e: unknown): string {
-  const msg = e instanceof Error ? e.message : typeof e === 'object' && e && 'message' in e ? String((e as { message: unknown }).message) : String(e);
+  if (isNetworkError(e)) return NO_SIGNAL;
+  const msg = messageOf(e);
   const known: Record<string, string> = {
     slot_taken: 'Sorry, that time has just been taken. Please pick another.',
     too_soon: 'That time is too soon to book online. Please pick a later time.',
@@ -338,7 +348,9 @@ export function friendlyError(e: unknown): string {
     appointments_no_overlap: 'That clashes with another appointment (including the clean-up time).',
     clients_email_unique: 'A client with that email address already exists — search for them instead.',
     'Invalid login credentials': 'That email and password don’t match.',
-    'Failed to fetch': "Can't reach the server — check your internet connection.",
+    // The booking page, when the signal dropped as they confirmed: it may have gone through.
+    booking_no_reply: 'No signal: we couldn’t tell whether your booking went through. Check your email for a confirmation '
+      + '(it can take up to 10 minutes) before you try again.',
   };
   for (const [code, text] of Object.entries(known)) if (msg.includes(code)) return text;
   return msg || 'Something went wrong. Please try again.';

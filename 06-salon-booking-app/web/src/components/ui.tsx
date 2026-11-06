@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useId, useRef, useSt
 import { useNavigate } from 'react-router-dom';
 import type { ApptStatus } from '../lib/types';
 import { friendlyError } from '../lib/text';
+import { todayInZone } from '../lib/time';
 
 // ---------------------------------------------------------------------------
 // Icons (inline SVG, so the app needs no icon font or network)
@@ -183,23 +184,114 @@ export const useToast = () => useContext(ToastCtx);
 // ---------------------------------------------------------------------------
 // Data loading
 // ---------------------------------------------------------------------------
+
+/** A background refresh that fails is tried once more after this long, before it says so. */
+export const RETRY_AFTER_MS = 1500;
+
+/**
+ * Load what a screen shows, again whenever `deps` change. What's on screen stays while it
+ * reloads. `reload` loads it again now; `refresh` does it in the background, trying once
+ * more if that fails (see useRefreshOnReturn). `loadedAt` is when it last loaded (ms).
+ */
 export function useLoad<T>(fn: () => Promise<T>, deps: unknown[]): {
-  data: T | undefined; error: unknown; loading: boolean; reload: () => void; setData: (d: T) => void;
+  data: T | undefined; error: unknown; loading: boolean; loadedAt: number | null;
+  reload: () => void; refresh: () => void; setData: (d: T) => void;
 } {
   const [data, setData] = useState<T>();
   const [error, setError] = useState<unknown>(null);
   const [loading, setLoading] = useState(true);
+  const [loadedAt, setLoadedAt] = useState<number | null>(null);
   const [tick, setTick] = useState(0);
+  // The next load is a refresh in the background.
+  const background = useRef(false);
   useEffect(() => {
     let live = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const retry = background.current;
+    background.current = false;
     setLoading(true);
-    fn().then((d) => { if (live) { setData(d); setError(null); } })
-      .catch((e) => { if (live) setError(e); })
-      .finally(() => { if (live) setLoading(false); });
-    return () => { live = false; };
+    const attempt = (again: boolean) => {
+      fn().then((d) => {
+        if (!live) return;
+        setData(d);
+        setError(null);
+        setLoadedAt(Date.now());
+        setLoading(false);
+      }, (e) => {
+        if (!live) return;
+        if (again) { timer = setTimeout(() => attempt(false), RETRY_AFTER_MS); return; }
+        setError(e);
+        setLoading(false);
+      });
+    };
+    attempt(retry);
+    return () => { live = false; clearTimeout(timer); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [...deps, tick]);
-  return { data, error, loading, reload: () => setTick((t) => t + 1), setData };
+  const reload = useCallback(() => setTick((t) => t + 1), []);
+  const refresh = useCallback(() => { background.current = true; setTick((t) => t + 1); }, []);
+  return { data, error, loading, loadedAt, reload, refresh, setData };
+}
+
+/** What's on a screen is reloaded when she comes back to the app once it's this old (or the day has changed). */
+export const STALE_AFTER_MS = 5 * 60e3;
+/** iOS can fail a request made the instant the app comes back on screen, so wait about a second first. */
+export const RETURN_DELAY_MS = 1000;
+
+/**
+ * Whether a screen loaded at `loadedAt` needs loading again: the day has changed since (in the
+ * business's time zone), or a few minutes have passed. Never before it has loaded at all.
+ */
+export function isStale(loadedAt: number | null, now: number, tz: string): boolean {
+  if (loadedAt === null) return false;
+  return now - loadedAt >= STALE_AFTER_MS || todayInZone(tz, new Date(loadedAt)) !== todayInZone(tz, new Date(now));
+}
+
+/**
+ * Reload a screen by itself when she comes back to the app (from WhatsApp, her bank app, or
+ * the next morning) if the day has changed, it's a few minutes old, or its last load failed.
+ * It waits about a second first, and `refresh` tries once more if that fails (useLoad). Never
+ * while `blocked` (a sheet open, something unsaved or still saving): it waits until it isn't.
+ */
+export function useRefreshOnReturn({ loadedAt, error, refresh, blocked, tz }: {
+  loadedAt: number | null; error: unknown; refresh: () => void; blocked: boolean; tz: string;
+}) {
+  const latest = useRef({ loadedAt, error, refresh, blocked, tz });
+  latest.current = { loadedAt, error, refresh, blocked, tz };
+  // Due while a sheet was open: done once it closes.
+  const waiting = useRef(false);
+  const due = () => {
+    const l = latest.current;
+    return !!l.error || isStale(l.loadedAt, Date.now(), l.tz);
+  };
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const back = () => {
+      if (document.visibilityState === 'hidden') return;
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        if (document.visibilityState === 'hidden' || !due()) return;
+        if (latest.current.blocked) { waiting.current = true; return; }
+        latest.current.refresh();
+      }, RETURN_DELAY_MS);
+    };
+    // Safari can also bring a page back from its back-forward cache without a visibility change.
+    const shown = (e: PageTransitionEvent) => { if (e.persisted) back(); };
+    document.addEventListener('visibilitychange', back);
+    window.addEventListener('pageshow', shown);
+    return () => {
+      document.removeEventListener('visibilitychange', back);
+      window.removeEventListener('pageshow', shown);
+      clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => {
+    if (blocked || !waiting.current) return;
+    waiting.current = false;
+    if (due()) latest.current.refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [blocked]);
 }
 
 /** Wrap an async action with busy/error state, for buttons. */

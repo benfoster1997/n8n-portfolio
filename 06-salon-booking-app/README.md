@@ -8,12 +8,13 @@ no card processor, no SMS and no paid WhatsApp.
 
 | For clients | For the owner |
 |---|---|
-| Online booking page for her Instagram bio | **Today**: what's on, deposits waiting, missing forms, appointments not finished yet, what clients changed, and her free times written out to share |
+| Online booking page for her Instagram bio | **Today**: what's on, deposits waiting, missing forms, appointments not finished yet, what clients changed, her free times written out to share, the tax bill before it's due, and a monthly backup reminder. It keeps itself up to date when she comes back to the app |
 | **Change or cancel online** from a private link, any time before the appointment | **Diary**: week view, add, move and cancel bookings, block time off, and the next visit booked as each one is finished |
 | Health and allergy consultation form for first visits | **One-tap WhatsApp** reminders (3 days ahead) and deposit requests |
 | Confirmation, change and reminder emails (72 hours before) | **Late cancellations** flagged, with a one-tap follow-up and "record payment" |
 | Bank-transfer deposit instructions (new clients only) | **Clients**: notes, allergies, patch tests, forms, private nail photos, with allergies and forms at the top of each appointment |
-| Plain-English privacy notice | **Money**: cash and bank-transfer takings, by month or UK tax year, CSV export, and roughly how much tax to put aside |
+| Plain-English privacy notice | **Money**: cash and bank-transfer takings, by month or UK tax year, a spreadsheet saved to Files, and roughly how much tax to put aside, for the year and from each month |
+| Plain words when the signal drops, including at **Confirm booking** | **Backups** saved to Files through the iPhone's share sheet, with the date of the last one |
 
 ## How it fits together
 
@@ -100,8 +101,8 @@ To run against a real Supabase project, copy `.env.example` to `.env.local` and 
 | Command | What it proves |
 |---|---|
 | `npm run test:db` | The real schema on a local PostgreSQL, acting as the public, the owner and the email script. It covers privacy (the public key reads nothing), double booking and the buffer, deposits for new clients only, time rules, consent, the email queue, the limit on unpaid bookings and its update script, the tax estimate's figures and their update script, and the actual Apps Script code run against the database. |
-| `npm test` | Slot calculation, including the BST/GMT changeover, plus UK phone numbers, money, tax years, the tax estimate (hand-worked examples), CSV injection protection, message templates, which appointments are not finished, the health strip on an appointment, the times offered for a client's next visit, and which free times are shared. |
-| `npm run test:e2e` | The demo app in Chromium on an iPhone-sized screen. A new client books, fills in the form and gets their deposit confirmed. It also covers returning clients, WhatsApp links, checkout and booking the next visit, appointments not finished yet, allergies and forms on the appointment, sharing free times and the booking link that opens on one treatment, double-booking refusal, client records, takings export, the tax estimate, settings and time off. |
+| `npm test` | Slot calculation, including the BST/GMT changeover, plus UK phone numbers, money, tax years, the tax estimate (hand-worked examples), what to put aside from a month's takings and the tax bill on Today, CSV injection protection, message templates, which appointments are not finished, the health strip on an appointment, the times offered for a client's next visit, which free times are shared, saving files through the share sheet and the last backup's date, "no signal" wording, and when a screen reloads itself. |
+| `npm run test:e2e` | The demo app in Chromium on an iPhone-sized screen. A new client books, fills in the form and gets their deposit confirmed. It also covers returning clients, WhatsApp links, checkout and booking the next visit, appointments not finished yet, allergies and forms on the appointment, sharing free times and the booking link that opens on one treatment, double-booking refusal, client records, takings export, the tax estimate, the tax bill on Today and the monthly put-aside, backups through a stand-in iPhone share sheet, screens reloading when she comes back to the app, losing signal (including as a client confirms), settings and time off. |
 
 `test:db` needs a local PostgreSQL 15+ that the current OS user can connect to, and the git history (the
 test for the unpaid-booking update reads `schema.sql` as it was before it). `test:e2e` needs

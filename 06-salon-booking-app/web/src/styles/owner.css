@@ -821,3 +821,97 @@
 
 /* Share free times: a third button across the booking-link card, under Share link and Preview */
 .td-link-btns .td-link-free { grid-column: 1 / -1; }
+
+/* When Today last loaded: tap to load it again (it also reloads by itself when she comes back to the app) */
+.td-updated {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 32px;
+  margin: 6px 0 0 -2px;
+  padding: 4px 11px 4px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface) 72%, transparent);
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.td-updated svg { flex: none; color: var(--accent); }
+.td-updated:active { background: var(--surface-2); }
+.td-updated:disabled { cursor: default; opacity: 0.8; }
+.td-updated:disabled svg { animation: spin 0.9s linear infinite; }
+
+/* Tax, in the weeks before a due date: a card with the money tax card's lemon edge, opening Money → Tax year */
+.card.td-tax {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 12px;
+  padding: 13px 16px 14px;
+  color: inherit;
+  text-decoration: none;
+  box-shadow: inset 0 3px 0 var(--lemon), var(--shadow);
+  -webkit-tap-highlight-color: transparent;
+}
+.card.td-tax:active { background: var(--surface-2); }
+.td-tax-head { display: flex; align-items: center; gap: 8px; }
+.td-tax-ico {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  color: var(--od-lemon-ink, var(--lemon));
+  background: color-mix(in srgb, var(--lemon) 14%, transparent);
+}
+.td-tax-kicker {
+  flex: 1;
+  font-size: 0.8rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent-text);
+}
+.td-tax-due { display: block; line-height: 1.45; color: var(--ink); }
+.td-tax-due b { color: var(--ink-strong); }
+.td-tax-amount { display: block; line-height: 1.45; color: var(--ink); }
+.td-tax-pounds { font-size: 1.35rem; font-weight: 800; letter-spacing: -0.01em; color: var(--ink-strong); font-variant-numeric: tabular-nums; }
+.td-tax-ask { font-weight: 700; color: var(--warn); }
+.td-tax-small { display: block; font-size: 0.82rem; line-height: 1.45; color: var(--muted); }
+
+/* Jobs that come round: the monthly backup, and the finished tax year's spreadsheet */
+.card.td-chore {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+  padding: 12px 14px 12px 12px;
+  min-height: 64px;
+  color: inherit;
+  text-decoration: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.card.td-chore:active { background: var(--surface-2); }
+.td-chore-ico {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  color: var(--accent);
+  background: radial-gradient(circle at 30% 25%, var(--surface), var(--accent-soft) 72%);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+.td-chore-title { display: block; font-weight: 800; line-height: 1.3; color: var(--ink-strong); }
+.td-chore-meta { display: block; margin-top: 2px; font-size: 0.84rem; line-height: 1.4; color: var(--muted); }
+
+/* A load that failed (e.g. no signal) above what's still shown: a little room before it */
+.td-page > .error, .dy-page > .error { margin: 0 0 12px; }
+.rm-page > .error { margin: 12px 0; }

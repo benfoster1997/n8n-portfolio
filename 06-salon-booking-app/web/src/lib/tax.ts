@@ -14,7 +14,7 @@
 // year still counts for the State Pension), and below that paying it is voluntary.
 //
 // All money is in pence. The maths is exact; round only for display.
-import type { TaxYear } from './types';
+import type { Payment, TaxYear } from './types';
 
 /** A tax year's own figures before anything is saved for it. */
 export const emptyTaxYear = (startYear: number): TaxYear =>
@@ -276,6 +276,118 @@ export function dueFromEarlierYear(taxYearStart: number, today: string):
  * at source (e.g. through PAYE), which can't happen when the business is the only income.
  */
 export const PAYMENTS_ON_ACCOUNT_FROM = 100_000;
+
+/** Whole pounds, for an estimate: 141180p → 1412. */
+export const wholePounds = (pence: number) => Math.round(pence / 100);
+
+/**
+ * A tax year's bill in whole pounds, as the cards show it (Income Tax and Class 4 each
+ * rounded, so the rows add up as shown), and each payment on account towards the next
+ * tax year: half the bill when it's £1,000 or more, otherwise 0.
+ */
+export function billInPounds(e: TaxEstimate): { bill: number; onAccount: number } {
+  const bill = wholePounds(e.incomeTax) + wholePounds(e.class4);
+  return { bill, onAccount: bill >= wholePounds(PAYMENTS_ON_ACCOUNT_FROM) ? wholePounds(e.total / 2) : 0 };
+}
+
+/** What Today says about tax: the January bill, or the July payment on account. */
+export type TaxDueOnToday =
+  | { kind: 'bill'; billYear: number; date: TaxDate; onAccount: { first: TaxDate; second: TaxDate } | null }
+  | { kind: 'july'; billYear: number; date: TaxDate };
+
+/**
+ * What Today says about tax, only in the weeks before a due date so it doesn't nag:
+ * - 1 December to 31 January: the return and bill for the tax year before this one,
+ *   due 31 January, with the first payment on account towards the next tax year
+ *   (when the bill is £1,000 or more, and while payments on account are still made).
+ * - July: the second payment on account, due 31 July, half the bill of the tax year
+ *   before last. None from 2030, once those are paid during the year instead.
+ * Null the rest of the year. `today` is yyyy-mm-dd in the business's time zone.
+ */
+export function taxDueOnToday(today: string): TaxDueOnToday | null {
+  const month = today.slice(5, 7);
+  if (month !== '12' && month !== '01' && month !== '07') return null;
+  const [y, m, d] = today.split('-').map(Number);
+  const due = dueFromEarlierYear(m > 4 || (m === 4 && d >= 6) ? y : y - 1, today);
+  if (!due) return null;
+  return (due.kind === 'july') === (month === '07') ? due : null;
+}
+
+/**
+ * The pounds behind Today's card, on her figures: in January the bill, plus the first
+ * payment on account when there is one; in July the second payment on account (0 when
+ * the bill is under £1,000, so nothing is due). Anything already paid towards the bill
+ * year isn't known to the app, so it isn't taken off.
+ */
+export function poundsDueOnToday(due: TaxDueOnToday, e: TaxEstimate): { total: number; bill: number; onAccount: number } {
+  const { bill, onAccount } = billInPounds(e);
+  if (due.kind === 'july') return { total: onAccount, bill, onAccount };
+  const first = due.onAccount ? onAccount : 0;
+  return { total: bill + first, bill, onAccount: first };
+}
+
+/** The days of a month in each tax year it falls in: one part, or two for April (1 to 5 April end the tax year before). */
+export function monthTaxParts(ym: string): { taxYearStart: number; from: string; to: string }[] {
+  const [y, m] = ym.split('-').map(Number);
+  const end = `${ym}-${String(new Date(Date.UTC(y, m, 0)).getUTCDate()).padStart(2, '0')}`;
+  if (m === 4) return [{ taxYearStart: y - 1, from: `${ym}-01`, to: `${ym}-05` }, { taxYearStart: y, from: `${ym}-06`, to: end }];
+  return [{ taxYearStart: m > 4 ? y : y - 1, from: `${ym}-01`, to: end }];
+}
+
+/**
+ * How much some takings add to a tax year's estimate: the estimate with them, minus the
+ * estimate without them, both with her own figures for the year. That's what to put aside
+ * from them. Not the takings × the year's average share of tax: while the profit climbs
+ * past the tax-free allowance, that puts aside far too little. Never below 0 (refunds).
+ */
+export function taxRise({ taxYearStart, takingsBeforePence, takingsPence, extraTakingsPence = 0, expensesPence = 0 }: {
+  taxYearStart: number;
+  /** The tax year's takings in the app before these. */
+  takingsBeforePence: number;
+  takingsPence: number;
+  extraTakingsPence?: number;
+  expensesPence?: number;
+}): number {
+  const at = (takings: number) => estimateTax({ taxYearStart, takingsPence: takings, extraTakingsPence, expensesPence }).total;
+  return Math.max(0, at(takingsBeforePence + takingsPence) - at(takingsBeforePence));
+}
+
+/**
+ * A month's takings in the app, and roughly how much of them to put aside for tax: the rise
+ * in the tax year's estimate from the month, worked out with the year's takings up to the end
+ * of the month, minus up to the end of the month before (for April, in each tax year it falls
+ * in). `payments` must cover each tax year the month is in, from its 6 April to the month's
+ * end; `figures` gives her own figures for a tax year (takings not in the app, expenses).
+ */
+export function monthPutAside(
+  ym: string,
+  payments: Pick<Payment, 'paid_on' | 'amount_pence'>[],
+  figures: (taxYearStart: number) => Pick<TaxYear, 'extra_takings_pence' | 'expenses_pence'>,
+): { takingsPence: number; putAsidePence: number } {
+  const sum = (from: string, to: string) =>
+    payments.reduce((n, p) => (p.paid_on >= from && p.paid_on <= to ? n + p.amount_pence : n), 0);
+  let takingsPence = 0;
+  let putAsidePence = 0;
+  for (const part of monthTaxParts(ym)) {
+    const yearStart = taxYearDays(part.taxYearStart).first;
+    const month = sum(part.from, part.to);
+    // Up to the end of the month before: from the tax year's first day to the day before this part.
+    const before = part.from > yearStart ? sum(yearStart, dayBefore(part.from)) : 0;
+    const f = figures(part.taxYearStart);
+    takingsPence += month;
+    putAsidePence += taxRise({
+      taxYearStart: part.taxYearStart, takingsBeforePence: before, takingsPence: month,
+      extraTakingsPence: f.extra_takings_pence, expensesPence: f.expenses_pence,
+    });
+  }
+  return { takingsPence, putAsidePence };
+}
+
+/** "2026-11-01" → "2026-10-31". */
+function dayBefore(iso: string): string {
+  const [y, m, d] = iso.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d - 1)).toISOString().slice(0, 10);
+}
 
 /** Making Tax Digital for Income Tax: takings (before expenses) in testYear over threshold → from 6 April fromYear. */
 export interface MtdStage { testYear: number; threshold: number; fromYear: number }

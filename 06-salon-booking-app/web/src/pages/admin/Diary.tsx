@@ -4,7 +4,7 @@ import { api } from '../../api';
 import { ApptRow } from '../../components/appts';
 import { BrandIcon } from '../../components/brand';
 import { useOwner } from '../../components/owner';
-import { ErrorBox, Field, Icon, Seg, Sheet, Spinner, TopBar, useAction, useLoad, useToast } from '../../components/ui';
+import { ErrorBox, Field, Icon, Seg, Sheet, Spinner, TopBar, useAction, useLoad, useRefreshOnReturn, useToast } from '../../components/ui';
 import { addDays, dateInZone, fmt, fmtDayLong, fmtTime, isoWeekday, startOfDayInstant, startOfWeek, todayInZone, zonedToInstant } from '../../lib/time';
 
 export function Diary() {
@@ -16,12 +16,14 @@ export function Diary() {
   const week = startOfWeek(day);
   const [blocking, setBlocking] = useState(false);
 
-  const { data, error, loading, reload } = useLoad(async () => {
+  const { data, error, loading, loadedAt, reload, refresh } = useLoad(async () => {
     const from = startOfDayInstant(week, tz).toISOString();
     const to = startOfDayInstant(addDays(week, 7), tz).toISOString();
     const [appts, off, hours] = await Promise.all([api.listAppointments(from, to), api.listTimeOff(from), api.listOpeningHours()]);
     return { appts, off: off.filter((t) => t.starts_at < to), hours };
   }, [week]);
+  // Up to date again when she comes back to the app, but not while she's blocking time.
+  useRefreshOnReturn({ loadedAt, error, refresh, blocked: blocking, tz });
 
   const pick = (d: string) => setParams({ d }, { replace: true });
   const dayStart = startOfDayInstant(day, tz).toISOString();

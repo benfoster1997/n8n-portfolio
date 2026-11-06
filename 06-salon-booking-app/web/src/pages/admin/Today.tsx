@@ -4,14 +4,17 @@ import { api } from '../../api';
 import { ApptRow, changeText, changedAgo } from '../../components/appts';
 import { Blossom, BrandIcon, LemonSlice } from '../../components/brand';
 import { useOwner } from '../../components/owner';
-import { ErrorBox, Icon, LateChip, Spinner, useLoad, useToast } from '../../components/ui';
+import { ErrorBox, Icon, LateChip, Spinner, useLoad, useRefreshOnReturn, useToast } from '../../components/ui';
 import { addDays, fmt, fmtDay, fmtDayLong, fmtDayTime, fmtTime, startOfDayInstant, todayInZone, dateInZone } from '../../lib/time';
 import { money } from '../../lib/text';
 import { dueWhatsAppReminders, lateCharge, reminderDates, reminderDays } from '../../lib/reminders';
 import { needingForms } from '../../lib/health';
 import { todayNote, UNFINISHED_SHOWN } from '../../lib/unfinished';
+import { taxDueOnToday, taxYearDays, yearLabel } from '../../lib/tax';
+import { backupAgeDays, backupDue, finishedTaxYear, readLastBackup, spreadsheetSaved } from '../../lib/backup';
 import type { ClientChange } from '../../lib/types';
 import { ShareFreeTimesSheet } from './ShareFreeTimes';
+import { TaxDueCard } from './TaxDue';
 
 /** Small line pictures for the "needs attention" headers and client changes (decorative). */
 const GLYPHS: Record<string, ReactNode> = {
@@ -22,6 +25,9 @@ const GLYPHS: Record<string, ReactNode> = {
   moved: <><path d="M4 8h13M13.5 4.5 17 8l-3.5 3.5M20 16H7M10.5 12.5 7 16l3.5 3.5" /></>,
   cancelled: <><circle cx="12" cy="12" r="8.5" /><path d="M9 9l6 6M15 9l-6 6" /></>,
   treatment: <><path d="M12 3.5l1.9 4.6 4.6 1.9-4.6 1.9L12 16.5l-1.9-4.6L5.5 10l4.6-1.9z" /><path d="M18.5 15.5l.8 1.9 1.9.8-1.9.8-.8 1.9-.8-1.9-1.9-.8 1.9-.8z" /></>,
+  backup: <><path d="M7.5 18.5h-1a4 4 0 0 1-.6-8 5.5 5.5 0 0 1 10.6-1.6A4.3 4.3 0 0 1 17.5 18.5h-1" /><path d="M12 11.5v8M9 16.5l3 3 3-3" /></>,
+  sheet: <><rect x="4" y="3.5" width="16" height="17" rx="2.5" /><path d="M4 9h16M4 14.5h16M10 9v11.5" /></>,
+  refresh: <><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3" /><path d="M19.5 4.5v4.2h-4.2" /></>,
 };
 function Glyph({ name, size = 20 }: { name: string; size?: number }) {
   return (
@@ -50,7 +56,7 @@ export function Today() {
   const tz = s.timezone;
   const today = todayInZone(tz);
   const toast = useToast();
-  const { data, error, loading } = useLoad(async () => {
+  const { data, error, loading, loadedAt, reload, refresh } = useLoad(async () => {
     const ahead = Math.max(s.max_days_ahead, reminderDays(s.reminder_hours_before));
     const [appts, services, changes, late, unfinished] = await Promise.all([
       api.listAppointments(startOfDayInstant(today, tz).toISOString(),
@@ -69,6 +75,8 @@ export function Today() {
   }, [today]);
   const [allForms, setAllForms] = useState(false);
   const [sharingTimes, setSharingTimes] = useState(false);
+  // Left open on her phone: up to date again when she comes back to it, unless the share sheet is open.
+  useRefreshOnReturn({ loadedAt, error, refresh, blocked: sharingTimes, tz });
 
   const appts = data?.appts ?? [];
   const live = appts.filter((a) => a.status !== 'cancelled');
@@ -118,6 +126,15 @@ export function Today() {
   const depositNote = !deposits.length ? 'None due' : !firstDue ? 'By transfer'
     : new Date(firstDue) < now ? 'Overdue' : `Due ${dateInZone(firstDue, tz) === today ? fmtTime(firstDue, tz) : fmtDay(firstDue, tz)}`;
 
+  // Tax: the January bill from 1 December, or the July payment in July (lib/tax).
+  const taxDue = taxDueOnToday(today);
+  // The monthly backup, kept track of on this phone (lib/backup).
+  const lastBackup = readLastBackup();
+  const backupAge = lastBackup ? backupAgeDays(lastBackup, now, tz) : null;
+  // After 5 April: the tax year that has just finished, until its spreadsheet is saved.
+  const finished = finishedTaxYear(today);
+  const sheetToSave = finished !== null && !spreadsheetSaved(finished) ? finished : null;
+
   return (
     <div className="page td-page">
       <header className="td-head">
@@ -131,6 +148,13 @@ export function Today() {
             </span>
           </div>
           <p className="td-date">{fmtDayLong(now, tz)}</p>
+          {loadedAt !== null && (
+            <button type="button" className="td-updated" onClick={reload} disabled={loading}>
+              <Glyph name="refresh" size={14} />
+              <span>{loading ? 'Updating…' : `Updated ${fmtTime(new Date(loadedAt), tz)}`}</span>
+              <span className="visually-hidden">. Tap to refresh.</span>
+            </button>
+          )}
         </div>
         <Link className="icon-btn td-add" to="/appointments/new" aria-label="New appointment"><Icon name="plus" /></Link>
       </header>
@@ -231,6 +255,21 @@ export function Today() {
             </div>
           )}
 
+          {taxDue && <TaxDueCard due={taxDue} today={today} />}
+          {backupDue(lastBackup, now, tz) && (
+            <Link className="card td-chore" to="/settings/backup">
+              <span className="td-chore-ico" aria-hidden="true"><Glyph name="backup" size={19} /></span>
+              <span className="grow">
+                <span className="td-chore-title">Time for your monthly backup</span>
+                <span className="td-chore-meta">
+                  {lastBackup ? `Your last one was ${fmtDay(lastBackup, tz)}, ${backupAge} days ago.` : 'There’s no backup saved on this phone yet.'}
+                </span>
+              </span>
+              <span className="chev"><Icon name="chev" size={18} /></span>
+            </Link>
+          )}
+          {sheetToSave !== null && <SpreadsheetLine year={sheetToSave} />}
+
           {remindersToSend.length > 0 && (
             <>
               <Link className="btn wa block td-wa" to="/reminders">
@@ -305,5 +344,25 @@ export function Today() {
         </>
       )}
     </div>
+  );
+}
+
+/**
+ * After 5 April, once: save the tax year that has just finished as a spreadsheet, for her tax
+ * return and her records. Only when that year has takings in the app, so there's something to save.
+ */
+function SpreadsheetLine({ year }: { year: number }) {
+  const { first, last } = taxYearDays(year);
+  const { data } = useLoad(async () => ({ year, count: (await api.listPayments(first, last)).length }), [year]);
+  if (!data || data.year !== year || data.count === 0) return null;
+  return (
+    <Link className="card td-chore" to={`/money?taxyear=${year}`}>
+      <span className="td-chore-ico" aria-hidden="true"><Glyph name="sheet" size={19} /></span>
+      <span className="grow">
+        <span className="td-chore-title">Save your {yearLabel(year)} takings spreadsheet</span>
+        <span className="td-chore-meta">That tax year has ended: keep a copy for your tax return and your records.</span>
+      </span>
+      <span className="chev"><Icon name="chev" size={18} /></span>
+    </Link>
   );
 }

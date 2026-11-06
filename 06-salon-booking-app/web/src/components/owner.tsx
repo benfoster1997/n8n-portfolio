@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState, ty
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { api } from '../api';
 import type { Session, Settings } from '../lib/types';
+import { friendlyError } from '../lib/text';
 import { Icon, Spinner } from './ui';
 import { Sprig } from './brand';
 import { Login } from '../pages/admin/Login';
@@ -74,7 +75,7 @@ export function OwnerGate({ children }: { children: ReactNode }) {
           <button className="btn primary block" onClick={() => window.location.reload()}>Try again</button>
           <button className="btn block" onClick={() => api.signOut()}>Sign out</button>
         </>}>
-        <p className="gate-text">{state.error instanceof Error ? state.error.message : String(state.error)}</p>
+        <p className="gate-text">{friendlyError(state.error)}</p>
         <p className="gate-note">If it keeps happening, sign out and sign in again.</p>
       </GateScreen>
     );

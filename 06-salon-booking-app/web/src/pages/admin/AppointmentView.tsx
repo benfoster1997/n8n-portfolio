@@ -3,7 +3,9 @@ import { Link, useLocation, useParams } from 'react-router-dom';
 import { api } from '../../api';
 import { WhatsAppButton } from '../../components/appts';
 import { useOwner } from '../../components/owner';
-import { ErrorBox, Field, Icon, LateChip, Seg, Sheet, Spinner, StatusChip, TopBar, useAction, useLoad, useToast } from '../../components/ui';
+import {
+  ErrorBox, Field, Icon, LateChip, Seg, Sheet, Spinner, StatusChip, TopBar, useAction, useLoad, useRefreshOnReturn, useToast,
+} from '../../components/ui';
 import { lateCharge, lateChargePayments } from '../../lib/reminders';
 import { availableSlots } from '../../lib/slots';
 import { addDays, dateInZone, fmt, fmtDay, fmtDayLong, fmtDayTime, fmtTime, minutesLabel, startOfDayInstant, todayInZone, zonedToInstant } from '../../lib/time';
@@ -46,12 +48,12 @@ export function AppointmentView() {
   const toast = useToast();
   // Just added from New appointment: a client with no email address gets the confirmation by WhatsApp.
   const justAdded = !!(useLocation().state as { added?: boolean } | null)?.added;
-  const { data: a, error, loading, reload, setData } = useLoad(() => api.getAppointment(id), [id]);
-  const { data: emails, reload: reloadEmails } = useLoad(() => api.listEmailLog(id), [id]);
-  const { data: changes } = useLoad(() => api.listClientChanges({ appointmentId: id }), [id]);
+  const { data: a, error, loading, loadedAt, reload, refresh, setData } = useLoad(() => api.getAppointment(id), [id]);
+  const { data: emails, reload: reloadEmails, refresh: refreshEmails } = useLoad(() => api.listEmailLog(id), [id]);
+  const { data: changes, refresh: refreshChanges } = useLoad(() => api.listClientChanges({ appointmentId: id }), [id]);
   // Money already received for a late cancellation (the deposit isn't counted here).
   const lateId = a?.status === 'cancelled' && a.cancelled_late ? a.id : null;
-  const { data: late, loading: lateLoading, reload: reloadLate } = useLoad(async () => {
+  const { data: late, loading: lateLoading, reload: reloadLate, refresh: refreshLate } = useLoad(async () => {
     if (!lateId || !a) return { id: lateId, received: [] };
     return { id: lateId, received: lateChargePayments(a, await api.listPayments(dateInZone(a.cancelled_at ?? a.starts_at, tz), todayInZone(tz))) };
   }, [lateId]);
@@ -59,6 +61,12 @@ export function AppointmentView() {
   const [sheet, setSheet] = useState<null | 'deposit' | 'checkout' | 'move' | 'cancel' | 'late'>(null);
   const [notes, setNotes] = useState<string | null>(null);
   const act = useAction();
+  // Left open: up to date again when she comes back to the app (a client may have changed or cancelled it),
+  // but never while a sheet is open, her notes are unsaved or something is still saving.
+  useRefreshOnReturn({
+    loadedAt, error, tz, blocked: sheet !== null || notes !== null || act.busy,
+    refresh: () => { refresh(); refreshEmails(); refreshChanges(); refreshLate(); },
+  });
 
   if (loading && !a) return <Spinner />;
   if (!a) return <div className="page"><TopBar title="Appointment" back /><ErrorBox error={error ?? new Error('not_found')} /></div>;

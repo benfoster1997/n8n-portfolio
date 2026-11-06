@@ -309,7 +309,8 @@ test('takings: totals, tax year and a spreadsheet download', async ({ page }) =>
   await shot(page, '10-money');
   const [download] = await Promise.all([
     page.waitForEvent('download'),
-    page.getByRole('button', { name: 'Download spreadsheet (CSV)' }).click(),
+    // No share sheet in Chromium, so it downloads (backup.spec.ts covers an iPhone's share sheet).
+    page.getByRole('button', { name: 'Save spreadsheet (CSV)' }).click(),
   ]);
   expect(download.suggestedFilename()).toMatch(/^takings-tax-year-\d{4}-\d{2}\.csv$/);
 });

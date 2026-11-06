@@ -245,8 +245,18 @@ Her booking page is `https://yourstudio.netlify.app/book`, and the **Today** scr
    from their next appointment, or record written consent you already hold before adding allergies or patch tests.
    **Today → No consultation form on file** lists anyone booked in the next 14 days who has neither.
 5. Swap the booking link on Instagram and WhatsApp to the new one.
-6. Keep Fresha running until every Fresha booking has happened, then cancel the subscription
-   and ask Fresha to delete the data it holds for her business.
+6. Keep Fresha running until every Fresha booking has happened. Before cancelling, download everything
+   she needs to keep from Fresha, so nothing is lost when the account closes:
+   - **Her takings records:** the payment transactions or sales reports, and the payout statements, for
+     every tax year she used Fresha that HMRC still needs. HMRC expects records to be kept for 5 years after
+     each tax year's 31 January deadline: for 2021–22 that's until 31 January 2028, and for 2026–27 until
+     31 January 2033.
+   - **Her appointment history and the client list.**
+   - **Copies of the consultation forms and patch-test records.** Fresha has no way to download all the forms
+     at once, so ask Fresha's support for copies of them all.
+
+   Save them with her backups (**Save to Files**, in iCloud Drive) and keep them private: they include health
+   information. Only then cancel the subscription and ask Fresha to delete the data it holds for her business.
 7. So the tax estimate counts the money taken through Fresha, add it in **Money → Tax year → Edit**
    (**Takings not recorded in this app**, plus her expenses) for this tax year. Do the same for the tax
    year before (the **‹** arrow goes back a year) if its tax return and bill are still to come: that
@@ -281,6 +291,14 @@ Class 4 National Insurance on her profit, at that year's rates for England, Wale
 - A tax year with nothing in the app and nothing added (such as the year before she switched) asks
   for that year's figures instead of showing £0. Until she uses **Edit** for a year, the card asks
   about money taken another way.
+- **Money → Month** says roughly how much of that month's takings to put aside, e.g. *Put aside about
+  £310 of November's £2,480 for tax*. It's how much the month adds to the year's estimate, so it's
+  nothing while her profit for the year is under £12,570, then 26p of each £1 (42p above £50,270).
+- **Today** shows the bill only in the weeks before it's due: from 1 December to 31 January, the tax
+  year before's return and bill (due 31 January), about how much on her figures, with the first
+  payment on account when the bill is £1,000 or more. She takes off anything she has already paid
+  towards that year: the HMRC app shows the exact amount. In July it shows the 31 July payment. Tapping
+  it opens that tax year in **Money**. With no figures for that year it asks for them instead.
 
 It's a rough guide for putting money aside, not tax advice. Wages or other income, student loan
 repayments and Scotland's rates aren't included.
@@ -339,7 +357,7 @@ at Deposit due still count towards the 15.
 
 | She wants to… | Where |
 |---|---|
-| See today and anything waiting on her | **Today** |
+| See today and anything waiting on her | **Today**. Left open on her phone, it reloads by itself when she comes back to the app, if the day has changed or a few minutes have passed (the Diary, the WhatsApp reminders and an open appointment do too, but never while she's in the middle of something). **Updated 08:31** under the date says when; tap it to load it again now. |
 | Finish appointments she forgot to mark as done | **Today → Not finished yet**: each one that's over but still says Confirmed or Deposit due, oldest first. Open it, then **Finish & take payment**, **No-show** (no email is sent) or **Cancel**. |
 | Send consultation forms | **Today → No consultation form on file** lists anyone booked in the next 14 days with no form and no consent recorded, regulars included. The appointment → **Send form link**. |
 | Check allergies before she starts | The appointment: allergies in red, the latest patch test and the consultation form are at the top. Today and the Diary show only an **Allergy** tag, never the details. |
@@ -356,9 +374,10 @@ at Deposit due still count towards the 15.
 | Book the client's next visit before they leave | After **Mark as done** the sheet asks *Book Jess's next BIAB infill?*. **In 2 weeks**, **In 3 weeks** and **In 4 weeks** each show the time they'd book: the same day and time, or the nearest free time. **Pick a date** lets her choose. One tap fills in New appointment with no deposit, then **Add to diary**. A client with an email gets the usual confirmation; with none, the appointment offers **Send on WhatsApp** in her *Booking confirmed* wording (Settings → WhatsApp messages). Agree the date with the client first, and book one visit ahead: bookings she makes count towards a client's limit of three upcoming bookings, and a client with three can't book online. A client's record → **Book an appointment** starts on their last treatment. |
 | Block a holiday or a dentist appointment | **Diary → Block time** |
 | See a client's allergies, patch tests, form and photos | **Clients** → the client |
-| Get her figures for Self Assessment | **Money → Tax year → Download spreadsheet** |
-| See roughly how much tax to put aside | **Money → Tax year**. **Edit** adds takings from before the app and her expenses for the year. |
-| Back up | **Settings → Back up your data**, monthly. Keep only the last three, somewhere encrypted. |
+| Get her figures for Self Assessment | **Money → Tax year → Save spreadsheet (CSV)**: on her iPhone the share sheet opens, so she chooses **Save to Files**, or sends it to her accountant. From 6 April, **Today** reminds her once to save the tax year that has just ended. |
+| See roughly how much tax to put aside | **Money → Month**: about how much of that month's takings to put aside. **Money → Tax year** has the whole estimate; **Edit** adds takings from before the app and her expenses for the year. |
+| Pay her tax bill on time | **Today**, from 1 December to 31 January: the 31 January bill, about how much on her figures, less anything already paid (the HMRC app shows the exact amount). In July, the 31 July payment. Tap it to see that tax year. |
+| Back up | **Settings → Back up your data**, monthly: **Get backup ready**, then **Save backup** and choose **Save to Files** (iCloud Drive), never WhatsApp or email, as it has health information in it. Then check it's in Files. The screen says when she last saved one on this phone, and **Today** says *Time for your monthly backup* about five weeks after it. Keep only the last three, in iCloud Drive and shared with no one. Photos aren't in the backup. |
 
 ---
 
@@ -428,7 +447,9 @@ So nobody is surprised later:
 |---|---|
 | A client says the change/cancel link doesn't work | Links stop working a day after the appointment, and changes aren't possible once it has started. Check **Settings → Deposits & cancellations → Clients can change or cancel online** is on. |
 | Clients say they got no email | App → Settings → Email shows when the script last checked in. At [script.google.com](https://script.google.com) → the project → **Executions**, you can see any errors. Ask the client to check their junk folder. |
-| "Can't reach the server" | The free Supabase project may have paused. Go to the Supabase dashboard → the project → **Resume project**. It's back in a few minutes with all its data (possible for up to a year after a pause). |
+| "No signal: check your connection and try again" | Check the phone has signal or Wi-Fi, then tap **Updated …** on Today (or try again). If other apps and websites work but the app still says this, the free Supabase project may have paused: go to the Supabase dashboard → the project → **Resume project**. It's back in a few minutes with all its data (possible for up to a year after a pause). |
+| A client says the booking page told them to check their email | Their signal dropped as they tapped **Confirm booking**, so the page couldn't tell whether it went through. Look in the **Diary**: if the booking is there, it did, and their confirmation email is on its way (it can take up to 10 minutes). |
+| A backup or spreadsheet isn't in Files | Try again, choose **Save to Files** in the share sheet and pick **iCloud Drive**. If the share sheet doesn't open, a backup offers **Download it instead** (a spreadsheet downloads by itself): then look in Files → **Downloads**. |
 | The email script says the secret was refused | App → Settings → Email → **Make a new secret**, then paste it into Script Properties → `EMAIL_SECRET`. |
 | "This diary already has an owner" | Someone signed in with a different email. Sign out and use the email from step 1.6. |
 | Forgot the password | On the sign-in screen, tap **Forgotten password?** |

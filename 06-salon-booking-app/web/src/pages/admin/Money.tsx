@@ -1,13 +1,17 @@
 import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { api } from '../../api';
 import { useOwner } from '../../components/owner';
 import { ErrorBox, Field, Icon, Seg, Sheet, Spinner, TopBar, useAction, useLoad, useToast } from '../../components/ui';
 import { fmt, todayInZone } from '../../lib/time';
-import { downloadText, friendlyError, money, moneyPlain, parsePounds, taxYearOf, toCsv } from '../../lib/text';
+import { friendlyError, money, moneyPlain, parsePounds, taxYearOf, toCsv } from '../../lib/text';
 import {
-  dueFromEarlierYear, estimateTax, longDate, makingTaxDigital, marginalRatesAt, mtdStage, PAYMENTS_ON_ACCOUNT_FROM, ratesFor,
-  TAX_YEAR_MAX_PENCE, taxDates, taxYearDays, weekendDue, yearLabel, type MtdStage, type TaxDate, type TaxRates,
+  billInPounds, dueFromEarlierYear, emptyTaxYear, estimateTax, longDate, makingTaxDigital, marginalRatesAt, monthPutAside, monthTaxParts, mtdStage,
+  PAYMENTS_ON_ACCOUNT_FROM, ratesFor, TAX_YEAR_MAX_PENCE, taxDates, taxYearDays, weekendDue, wholePounds, yearLabel,
+  type MtdStage, type TaxDate, type TaxRates,
 } from '../../lib/tax';
+import { downloadFile, firstShareable, isAbort, saveFile } from '../../lib/files';
+import { rememberSpreadsheet } from '../../lib/backup';
 import type { PayKind, PayMethod, Payment, TaxYear } from '../../lib/types';
 import { Heart, LemonSlice } from '../../components/brand';
 import { Glyph } from './Clients';
@@ -26,13 +30,22 @@ function shiftMonth(ym: string, by: number) {
   return d.toISOString().slice(0, 7);
 }
 
+/** "?taxyear=2025" (from Today's tax card or spreadsheet reminder): open on that tax year. */
+export function linkedTaxYear(value: string | null): number | null {
+  if (!value || !/^\d{4}$/.test(value)) return null;
+  const year = Number(value);
+  return year >= 2000 && year <= 2100 ? year : null;
+}
+
 export function Money() {
   const { settings: s } = useOwner();
   const tz = s.timezone;
   const today = todayInZone(tz);
-  const [view, setView] = useState<'month' | 'year'>('month');
+  const [params] = useSearchParams();
+  const [linked] = useState(() => linkedTaxYear(params.get('taxyear')));
+  const [view, setView] = useState<'month' | 'year'>(linked === null ? 'month' : 'year');
   const [month, setMonth] = useState(today.slice(0, 7));
-  const [yearOf, setYearOf] = useState(today);
+  const [yearOf, setYearOf] = useState(linked === null ? today : `${linked}-06-01`);
   const [adding, setAdding] = useState(false);
   const toast = useToast();
 
@@ -58,16 +71,29 @@ export function Money() {
   const longStats = [cash, bank, tips, refunds].some((p) => money(p).length > 6);
   const longTotal = money(total).length > 7;
 
-  function exportCsv() {
+  // On an iPhone the spreadsheet goes to the share sheet, where she chooses Save to Files (or sends it
+  // to her accountant); elsewhere it downloads. Either way she's asked to check, never told it's saved.
+  async function exportCsv() {
     const lines = [['Date', 'Client', 'Description', 'Type', 'Paid by', 'Amount (£)', 'Note']];
     for (const p of [...rows].reverse()) {
       lines.push([p.paid_on, p.client_name ?? '', p.description ?? '', KIND_LABEL[p.kind], METHOD_LABEL[p.method], moneyPlain(p.amount_pence), p.note ?? '']);
     }
     lines.push([], ['Total', '', '', '', '', moneyPlain(total), ''], ['Cash', '', '', '', '', moneyPlain(cash), ''], ['Bank transfer', '', '', '', '', moneyPlain(bank), '']);
     const name = view === 'month' ? `takings-${month}.csv` : `takings-tax-year-${ty.label.replace('–', '-')}.csv`;
-    downloadText(name, toCsv(lines));
-    toast('Spreadsheet downloaded');
+    const file = new File([toCsv(lines)], name, { type: 'text/csv' });
+    // The finished tax year's spreadsheet: Today stops reminding her about it.
+    const saved = () => { if (view === 'year') rememberSpreadsheet(Number(ty.from.slice(0, 4))); toast('Check it’s in Files'); };
+    try {
+      await saveFile([file]);
+      saved();
+    } catch (e) {
+      if (isAbort(e)) return; // she closed the share sheet
+      // The share sheet couldn't open: download it instead.
+      downloadFile(file, name);
+      saved();
+    }
   }
+  const canShare = !!firstShareable([new File([''], 'takings.csv', { type: 'text/csv' })]);
 
   const byDay = new Map<string, Payment[]>();
   for (const p of rows) byDay.set(p.paid_on, [...(byDay.get(p.paid_on) ?? []), p]);
@@ -107,7 +133,11 @@ export function Money() {
           {view === 'year' && (
             <TaxCard startYear={Number(ty.from.slice(0, 4))} rangeLabel={labelSub ?? ''} today={today} takingsPence={total} hasTakings={rows.length > 0} />
           )}
-          <button className="btn block od-export" disabled={!rows.length || loading} onClick={exportCsv}><Glyph name="download" size={20} /> Download spreadsheet (CSV)</button>
+          {view === 'month' && total > 0 && (
+            <MonthPutAside month={month} today={today} tz={tz} version={`${rows.length}:${total}`} />
+          )}
+          <button className="btn block od-export" disabled={!rows.length || loading} onClick={exportCsv}><Glyph name="download" size={20} /> Save spreadsheet (CSV)</button>
+          {canShare && rows.length > 0 && <p className="od-export-hint">Choose Save to Files, or send it to your accountant.</p>}
           <p className="od-tax-note">
             <span className="od-tax-note-ic" aria-hidden="true"><Glyph name="receipt" size={17} /></span>
             This is your record of money received, for your Self Assessment. Keep the receipts for your expenses (products, training, insurance):
@@ -159,8 +189,61 @@ export function Money() {
   );
 }
 
+/**
+ * Month view: roughly how much of the month's takings to put aside for tax. That's how much they
+ * raise the tax year's estimate, with her own figures for the year (lib/tax monthPutAside), so it
+ * grows as her profit for the year passes the tax-free allowance. `version` changes when the
+ * month's entries do.
+ */
+function MonthPutAside({ month, today, tz, version }: { month: string; today: string; tz: string; version: string }) {
+  const parts = monthTaxParts(month);
+  const from = taxYearDays(parts[0].taxYearStart).first;
+  const to = parts[parts.length - 1].to;
+  const key = `${month}/${version}`;
+  const { data } = useLoad(async () => {
+    const [payments, ...figures] = await Promise.all([api.listPayments(from, to), ...parts.map((p) => api.getTaxYear(p.taxYearStart))]);
+    return { key, payments, figures };
+  }, [key]);
+  // Only this month's, once it's in; if it can't be worked out, the line is left off.
+  if (!data || data.key !== key) return null;
+  const figuresFor = (year: number) => data.figures.find((r) => r.start_year === year) ?? emptyTaxYear(year);
+  const { takingsPence, putAsidePence } = monthPutAside(month, data.payments, figuresFor);
+  if (takingsPence <= 0) return null;
+  const pounds = wholePounds(putAsidePence);
+  const current = month === today.slice(0, 7);
+  const name = fmt(`${month}-15T12:00:00Z`, 'MMMM', tz);
+  const years = parts.map((p) => yearLabel(p.taxYearStart)).join(' and ');
+  const taken = current ? <>the <b>{money(takingsPence)}</b> taken so far this month,</> : <>{name}’s <b>{money(takingsPence)}</b></>;
+  // Nothing saved with Edit for the tax year: takings from before she switched apps are missing, so this is too low.
+  const unsaved = parts.filter((p) => nothingSaved(figuresFor(p.taxYearStart)));
+  return (
+    <div className="od-putaside">
+      <span className="od-putaside-ic" aria-hidden="true"><Glyph name="pound" size={20} /></span>
+      <div className="od-putaside-text">
+        {pounds > 0 ? (
+          <>
+            <p className="od-putaside-main">Put aside about <b>{showPounds(pounds)}</b> of {taken} for tax.</p>
+            <p className="od-putaside-sub">That’s how much {current ? 'this month' : name} adds to your rough tax estimate for {years}.</p>
+          </>
+        ) : (
+          <p className="od-putaside-main">
+            Nothing to put aside for tax from {current ? <>the <b>{money(takingsPence)}</b> taken so far this month</> : taken}: on your
+            figures, your profit for {years} {current ? 'is' : 'was'} still tax-free.
+          </p>
+        )}
+        {unsaved.length > 0 && (
+          <p className="od-putaside-sub">
+            Took money another way in {unsaved.map((p) => yearLabel(p.taxYearStart)).join(' or ')}, such as through another app? Add it
+            under Tax year → <b>Edit</b>, or this will be too low.
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /** Whole pounds, for an estimate: 141180 → 1412. */
-const toPounds = (pence: number) => Math.round(pence / 100);
+const toPounds = wholePounds;
 /** Whole pounds as money: 1412 → "£1,412". */
 const showPounds = (pounds: number) => money(pounds * 100);
 
@@ -383,15 +466,15 @@ function TaxFigures({ startYear, today, takingsPence, row }: { startYear: number
   const profit = Math.max(0, takings - off);
   const incomeTax = toPounds(e.incomeTax);
   const class4 = toPounds(e.class4);
-  const total = incomeTax + class4;
+  // The bill and each payment on account in whole pounds, the same as Today's tax card (lib/tax).
+  const { bill: total, onAccount } = billInPounds(e);
   const share = Math.round(e.shareOfTakings * 100);
   const allowance = showPounds(allowancePounds);
   // The trading allowance is the one figure that changes for 2027–28, and that isn't law yet.
   const notLaw = r.announced ? ' (announced, not law yet)' : '';
   const personal = showPounds(toPounds(r.personalAllowance));
   // A bill of £1,000 or more usually brings two payments on account towards the next
-  // tax year, each half of it: by 31 January, on top of the bill, and by 31 July.
-  const onAccount = total >= toPounds(PAYMENTS_ON_ACCOUNT_FROM) ? toPounds(e.total / 2) : 0;
+  // tax year, each half of it (onAccount): by 31 January, on top of the bill, and by 31 July.
   // Both of them until the bill is due, then the July one on its own until that's due too.
   const plan = onAccount > 0 && !duePassed ? dates.nextYear : null;
   const julyOnly = onAccount > 0 && duePassed && dates.nextYear && today <= dates.nextYear.second.iso ? dates.nextYear.second : null;

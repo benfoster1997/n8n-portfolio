@@ -770,5 +770,31 @@ export function demoApi(): Api {
   };
   // Reload from storage if another tab changed the demo.
   if (typeof window !== 'undefined') window.addEventListener('storage', (e) => { if (e.key === KEY) db = load(); });
-  return api;
+  return withSignal(api);
+}
+
+/** What the live API says when an iPhone has no signal (the Supabase client puts the error's name first). */
+const NO_SIGNAL_ERROR = 'TypeError: Load failed';
+
+/**
+ * Like the live API with no signal: while the phone is offline nothing goes through, and a reply
+ * that was on its way when the signal dropped is lost, although the change itself has been made
+ * (as when a booking reaches the server but its answer never comes back). Signing in is kept on
+ * the phone in the live app too, so the session calls still work.
+ */
+function withSignal(api: Api): Api {
+  const offline = () => typeof navigator !== 'undefined' && navigator.onLine === false;
+  const onPhone = new Set(['mode', 'getSession', 'onAuthChange']);
+  const out: Record<string, unknown> = {};
+  for (const [name, value] of Object.entries(api)) {
+    if (typeof value !== 'function' || onPhone.has(name)) { out[name] = value; continue; }
+    const call = value as (...args: unknown[]) => Promise<unknown>;
+    out[name] = async (...args: unknown[]) => {
+      if (offline()) throw new Error(NO_SIGNAL_ERROR);
+      const result = await call(...args);
+      if (offline()) throw new Error(NO_SIGNAL_ERROR);
+      return result;
+    };
+  }
+  return out as unknown as Api;
 }
