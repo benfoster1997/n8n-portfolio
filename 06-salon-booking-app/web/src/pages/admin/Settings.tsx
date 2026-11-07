@@ -9,10 +9,12 @@ import { BrandIcon, Heart, LemonSlice, ScriptTitle, Strapline } from '../../comp
 import { Glyph } from './Clients';
 import { AddOnsMenu } from '../../components/public/menu';
 import {
-  DEFAULT_TEMPLATES, TEMPLATE_PLACEHOLDERS, checkHandle, downloadText, friendlyError, isPlausibleEmail, money, parseMenu, parsePounds,
+  DEFAULT_TEMPLATES, TEMPLATE_PLACEHOLDERS, checkHandle, friendlyError, isPlausibleEmail, money, parseMenu, parsePounds,
   socialLink, type SocialSite,
 } from '../../lib/text';
 import { WEEKDAY_NAMES, fmtDay, fmtDayTime, fmtTime, minutesLabel, todayInZone } from '../../lib/time';
+import { downloadFile, fileSize, isAbort, saveFile } from '../../lib/files';
+import { lastBackupText, readLastBackup, rememberBackup } from '../../lib/backup';
 import type { OpeningHours, Service, Settings as S } from '../../lib/types';
 
 type Group = 'business' | 'bookings' | 'messages' | 'data';
@@ -26,7 +28,7 @@ const SECTIONS: { to: string; label: string; sub: string; icon: ReactNode; group
   { to: 'deposits', label: 'Deposits & cancellations', sub: 'Deposits, bank details, cancellation policy', icon: <Glyph name="pound" />, group: 'bookings' },
   { to: 'messages', label: 'WhatsApp messages', sub: 'Wording of reminders', icon: <Icon name="whatsapp" size={20} />, group: 'messages' },
   { to: 'email', label: 'Email confirmations & reminders', sub: 'Free, sent from your Gmail', icon: <Icon name="mail" size={20} />, group: 'messages' },
-  { to: 'backup', label: 'Back up your data', sub: 'Download everything', icon: <Glyph name="download" />, group: 'data' },
+  { to: 'backup', label: 'Back up your data', sub: 'Save a copy of everything', icon: <Glyph name="download" />, group: 'data' },
   { to: 'account', label: 'Account', sub: 'Password, sign out', icon: <Glyph name="user" />, group: 'data' },
 ];
 const GROUPS: { id: Group; title: string }[] = [
@@ -49,6 +51,7 @@ function SettingsRow({ to, label, sub, icon }: { to: string; label: string; sub:
 
 export function SettingsHome() {
   const { session, settings: s } = useOwner();
+  const lastBackup = readLastBackup();
   return (
     <div className="page od od-settings">
       <TopBar title="Settings" />
@@ -63,7 +66,10 @@ export function SettingsHome() {
         <div key={g.id}>
           <div className="section-title">{g.title}</div>
           <div className="card tight od-set-list"><ul className="list">
-            {SECTIONS.filter((x) => x.group === g.id).map((x) => <SettingsRow key={x.to} to={`/settings/${x.to}`} label={x.label} sub={x.sub} icon={x.icon} />)}
+            {SECTIONS.filter((x) => x.group === g.id).map((x) => (
+              <SettingsRow key={x.to} to={`/settings/${x.to}`} label={x.label} icon={x.icon}
+                sub={x.to === 'backup' && lastBackup ? `Last backup ${fmtDay(lastBackup, s.timezone)}` : x.sub} />
+            ))}
           </ul></div>
         </div>
       ))}
@@ -521,12 +527,13 @@ export function TimeOffSettings() {
 export function MessageSettings() {
   const f = useSettingsForm(['wa_template_reminder', 'wa_template_deposit', 'wa_template_confirmed']);
   const d = f.draft;
-  const box = (k: 'wa_template_reminder' | 'wa_template_deposit' | 'wa_template_confirmed', label: string, def: string, long = false) => (
+  const box = (k: 'wa_template_reminder' | 'wa_template_deposit' | 'wa_template_confirmed', label: string, def: string, long = false, when?: string) => (
     <section className={`card od-template${long ? ' od-template-long' : ''}`}>
       <Field label={label}>
         <textarea value={d[k] ?? def} maxLength={1000} onChange={(e) => f.set(k, e.target.value)} />
         <button className="btn ghost small" style={{ alignSelf: 'flex-start' }} onClick={() => f.set(k, null)}>Reset to default</button>
       </Field>
+      {when && <p className="sub od-template-when">{when}</p>}
     </section>
   );
   return (
@@ -545,7 +552,8 @@ export function MessageSettings() {
       )}
       {box('wa_template_reminder', 'Reminder', DEFAULT_TEMPLATES.reminder)}
       {box('wa_template_deposit', 'Deposit request', DEFAULT_TEMPLATES.deposit, true)}
-      {box('wa_template_confirmed', 'Booking confirmed', DEFAULT_TEMPLATES.confirmed)}
+      {box('wa_template_confirmed', 'Booking confirmed', DEFAULT_TEMPLATES.confirmed, false,
+        'Offered when you add an appointment for a client with no email address.')}
       <ErrorBox error={f.error} />
       <button className="btn primary block" disabled={f.busy}
         onClick={() => f.save({
@@ -622,22 +630,87 @@ export function EmailSettings() {
   );
 }
 
+/** What happened when she last tapped Save backup. */
+type BackupSaved = 'shared' | 'downloaded' | 'closed' | 'failed';
+
+/**
+ * Back up your data, in two taps: "Get backup ready" fetches everything into one file, then
+ * "Save backup" hands it to the iPhone's share sheet (iOS only opens it straight from a tap), where
+ * she chooses Save to Files. Where the share sheet can't take the file, it downloads instead. The
+ * date of the last one is kept on this phone, and Today reminds her after about five weeks.
+ */
 export function BackupSettings() {
+  const { settings: s } = useOwner();
+  const tz = s.timezone;
+  const [last, setLast] = useState(() => readLastBackup());
+  const [ready, setReady] = useState<{ files: File[]; size: number } | null>(null);
+  const [saved, setSaved] = useState<BackupSaved | null>(null);
   const { busy, error, run } = useAction();
-  const toast = useToast();
+
+  async function getReady() {
+    setSaved(null);
+    await run(async () => {
+      const text = JSON.stringify(await api.exportAll(), null, 2);
+      const name = `bookings-backup-${todayInZone(tz)}`;
+      // JSON first; a browser that only shares a few kinds of file gets the same text as a .txt file.
+      setReady({
+        files: [new File([text], `${name}.json`, { type: 'application/json' }), new File([text], `${name}.txt`, { type: 'text/plain' })],
+        size: new Blob([text]).size,
+      });
+    });
+  }
+  const done = (how: 'shared' | 'downloaded') => {
+    const at = new Date();
+    rememberBackup(at);
+    setLast(at.toISOString());
+    setSaved(how);
+  };
+  async function save() {
+    if (!ready) return;
+    try {
+      done(await saveFile(ready.files));
+    } catch (e) {
+      setSaved(isAbort(e) ? 'closed' : 'failed');
+    }
+  }
+
   return (
     <Page title="Back up your data">
       <section className="card stack od-set-card od-backup">
         <span className="od-ic od-backup-ic" aria-hidden="true"><Glyph name="download" size={24} /></span>
-        <p>Download everything — clients, appointments, forms, patch tests, takings, your tax estimate figures and settings — as one file. Keep it somewhere private (it contains health information). Photos aren’t included in the file.</p>
-        <p className="sub">The free database plan doesn’t back up your data for you, so download a backup now and then, e.g. at the start of each month.</p>
+        <p>Save a copy of everything — clients, appointments, forms, patch tests, takings, your tax estimate figures and settings — as one file. Photos aren’t included in the file.</p>
+        <p className="sub">The free database plan gives you no backup you can download or restore yourself, so save one at the start of each month.</p>
       </section>
+      <p className="od-backup-last">
+        <span className="od-backup-last-ic" aria-hidden="true"><Glyph name="calendar" size={18} /></span>
+        <span>Last backup: {last ? <b>{lastBackupText(last, new Date(), tz)}</b> : 'none saved on this phone yet'}</span>
+      </p>
       <ErrorBox error={error} />
-      <button className="btn primary block" disabled={busy} onClick={() => run(async () => {
-        const all = await api.exportAll();
-        downloadText(`bookings-backup-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(all, null, 2), 'application/json');
-        toast('Backup downloaded');
-      })}>{busy ? 'Preparing…' : 'Download backup'}</button>
+      {!ready ? (
+        <button className="btn primary block" disabled={busy} onClick={getReady}>{busy ? 'Getting it ready…' : 'Get backup ready'}</button>
+      ) : (
+        <section className="card stack od-set-card od-backup-ready" aria-label="Your backup">
+          <p className="od-backup-file">
+            <Icon name="tick" size={18} />
+            <span><b>Your backup is ready</b><span className="od-backup-name">{ready.files[0].name} · {fileSize(ready.size)}</span></span>
+          </p>
+          <p className="od-backup-where">
+            Choose <b>Save to Files</b> (iCloud Drive). Don’t send it by WhatsApp or email: it has health information in it.
+          </p>
+          <button className="btn primary block" onClick={save}><Glyph name="download" size={20} /> Save backup</button>
+          {saved === 'shared' && <p className="od-backup-saved" role="status">Check it’s in Files, in iCloud Drive.</p>}
+          {saved === 'downloaded' && <p className="od-backup-saved" role="status">Check it’s in Files, in Downloads.</p>}
+          {saved === 'closed' && <p className="sub od-backup-note" role="status">Not saved yet: tap Save backup and choose Save to Files.</p>}
+          {saved === 'failed' && (
+            <div className="stack od-backup-failed" role="alert">
+              <p className="sub od-backup-note">Your phone couldn’t open the share sheet for the file.</p>
+              <button className="btn block" onClick={() => { downloadFile(ready.files[0], ready.files[0].name); done('downloaded'); }}>
+                Download it instead
+              </button>
+            </div>
+          )}
+        </section>
+      )}
     </Page>
   );
 }

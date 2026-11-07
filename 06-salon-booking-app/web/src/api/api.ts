@@ -59,6 +59,12 @@ export interface Api {
 
   // --- owner: diary --------------------------------------------------------
   listAppointments(fromIso: string, toIso: string): Promise<Appointment[]>;
+  /**
+   * Appointments that had ended by `beforeIso` but still say Confirmed or Deposit due: never
+   * finished, marked as a no-show or cancelled. The oldest `limit` of them, and how many there are in all.
+   */
+  listUnfinished(beforeIso: string, limit: number): Promise<{ appts: Appointment[]; total: number }>;
+  /** With the client's health information (allergies, consent, patch tests and forms). */
   getAppointment(id: string): Promise<Appointment | null>;
   createAppointment(a: NewAppointment): Promise<Appointment>;
   updateAppointment(id: string, patch: Partial<Pick<Appointment,

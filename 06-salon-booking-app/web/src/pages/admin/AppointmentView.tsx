@@ -1,15 +1,22 @@
-import { useMemo, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useLocation, useParams } from 'react-router-dom';
 import { api } from '../../api';
 import { WhatsAppButton } from '../../components/appts';
 import { useOwner } from '../../components/owner';
-import { ErrorBox, Field, Icon, LateChip, Seg, Sheet, Spinner, StatusChip, TopBar, useAction, useLoad, useToast } from '../../components/ui';
+import {
+  ErrorBox, Field, Icon, LateChip, Seg, Sheet, Spinner, StatusChip, TopBar, useAction, useLoad, useRefreshOnReturn, useToast,
+} from '../../components/ui';
 import { lateCharge, lateChargePayments } from '../../lib/reminders';
 import { availableSlots } from '../../lib/slots';
 import { addDays, dateInZone, fmt, fmtDay, fmtDayLong, fmtDayTime, fmtTime, minutesLabel, startOfDayInstant, todayInZone, zonedToInstant } from '../../lib/time';
 import { fillTemplate, firstName, freeChangeDeadline, lateFromEarlierChange, manageLink, money, noticeLabel, parsePounds, whatsappLink } from '../../lib/text';
+import { consentOnly, formLine, formOnFile, formOrConsent, patchTestLine } from '../../lib/health';
+import { isUnfinished, noShowQuestion } from '../../lib/unfinished';
+import {
+  doneLine, newAppointmentLink, nextVisitDays, nextVisitOptions, nextVisitQuestion, sameTreatment, type Treatment,
+} from '../../lib/nextVisit';
 import { Glyph } from './Clients';
-import type { Appointment, CancelledBy, ClientChange, EmailKind, PayMethod, Settings } from '../../lib/types';
+import type { Appointment, ApptHealth, CancelledBy, ClientChange, EmailKind, PayMethod, Settings } from '../../lib/types';
 
 const EMAIL_LABEL: Record<EmailKind, string> = {
   booking_received: 'Booking confirmation',
@@ -39,9 +46,11 @@ export function AppointmentView() {
   const { settings: s } = useOwner();
   const tz = s.timezone;
   const toast = useToast();
-  const { data: a, error, loading, reload, setData } = useLoad(() => api.getAppointment(id), [id]);
-  const { data: emails, reload: reloadEmails } = useLoad(() => api.listEmailLog(id), [id]);
-  const { data: changes } = useLoad(() => api.listClientChanges({ appointmentId: id }), [id]);
+  // Just added from New appointment: a client with no email address gets the confirmation by WhatsApp.
+  const justAdded = !!(useLocation().state as { added?: boolean } | null)?.added;
+  const { data: a, error, loading, loadedAt, reload, refresh, setData } = useLoad(() => api.getAppointment(id), [id]);
+  const { data: emails, reload: reloadEmails, refresh: refreshEmails } = useLoad(() => api.listEmailLog(id), [id]);
+  const { data: changes, refresh: refreshChanges } = useLoad(() => api.listClientChanges({ appointmentId: id }), [id]);
   // Money already received for a late cancellation (the deposit isn't counted here).
   const lateId = a?.status === 'cancelled' && a.cancelled_late ? a.id : null;
   const { data: late, loading: lateLoading, reload: reloadLate } = useLoad(async () => {
@@ -52,11 +61,22 @@ export function AppointmentView() {
   const [sheet, setSheet] = useState<null | 'deposit' | 'checkout' | 'move' | 'cancel' | 'late'>(null);
   const [notes, setNotes] = useState<string | null>(null);
   const act = useAction();
+  // Left open: up to date again when she comes back to the app (a client may have changed or cancelled it),
+  // but never while a sheet is open, her notes are unsaved or something is still saving. Money received for a
+  // late cancellation is only recorded on this screen, which reloads it then, so it isn't reloaded here: its
+  // buttons would vanish while it loaded, just as she went to tap one.
+  useRefreshOnReturn({
+    loadedAt, error, tz, blocked: sheet !== null || notes !== null || act.busy,
+    refresh: () => { refresh(); refreshEmails(); refreshChanges(); },
+  });
 
   if (loading && !a) return <Spinner />;
   if (!a) return <div className="page"><TopBar title="Appointment" back /><ErrorBox error={error ?? new Error('not_found')} /></div>;
 
   const live = a.status === 'confirmed' || a.status === 'pending_deposit';
+  // Over, but still Confirmed or Deposit due: Today lists it under "Not finished yet". Nothing here then
+  // messages the client as if it were still to come: no deposit chase, change link or confirmation email.
+  const unfinished = isUnfinished(a);
   const started = new Date(a.starts_at) <= new Date(Date.now() + 2 * 3600e3);
   const overdue = a.status === 'pending_deposit' && a.deposit_due_at && new Date(a.deposit_due_at) < new Date();
   const phone = a.client?.phone_e164;
@@ -87,7 +107,14 @@ export function AppointmentView() {
     }
   }
   async function noShow() {
-    if (!window.confirm('Mark as a no-show? They will still be treated as a new client next time (deposit required).')) return;
+    // Whether they'd be asked for a deposit next time follows the booking page's rule: a client with
+    // no visit marked as done who isn't ticked as a regular, or one it can't find by their email address.
+    // If the visits can't be checked, the question says it generally.
+    const visits = await api.countCompletedVisits(a!.client_id).catch(() => null);
+    const question = noShowQuestion({
+      name: first, visits, regular: !!a!.health?.is_regular, hasEmail: !!a!.client?.email, depositPence: s.deposit_amount_pence,
+    });
+    if (!window.confirm(question)) return;
     if (await act.run(() => api.updateAppointment(a!.id, { status: 'no_show' }))) { toast('Marked as no-show'); reload(); }
   }
   async function adoptBookingPhone() {
@@ -141,12 +168,14 @@ export function AppointmentView() {
   return (
     <div className="page stack od od-appt">
       <TopBar title={a.client?.full_name ?? 'Appointment'} back />
+      {/* It couldn't be brought up to date (no signal, say): what's below is from before. */}
+      <ErrorBox error={error} />
 
       <div className={`card od-hero od-hero-${a.status}`}>
         <div className="od-hero-main">
           <DateTile iso={a.starts_at} tz={tz} />
           <div className="od-hero-info">
-            <div className="od-hero-chips"><StatusChip status={a.status} /></div>
+            <div className="od-hero-chips"><StatusChip status={a.status} unfinished={unfinished} /></div>
             <div className="od-hero-service">{a.service_name}</div>
             <div className="od-when">
               <span className="od-when-day">{fmtDayLong(a.starts_at, tz)}</span>
@@ -172,7 +201,7 @@ export function AppointmentView() {
           <div><dt>Price</dt><dd className="od-price">{money(a.price_pence)}</dd></div>
           <div><dt>Reference</dt><dd className="mono od-ref">{a.reference}</dd></div>
           <div><dt>Booked</dt><dd>{a.source === 'online' ? 'Online' : 'By you'}{DOT}<span className="od-nowrap">{fmtDayTime(a.created_at, tz)}</span></dd></div>
-          {a.is_new_client && <div><dt>Client</dt><dd>New client{a.has_form ? <>{DOT}<span className="od-nowrap">form on file</span></> : <span className="flag">{DOT}no consultation form</span>}</dd></div>}
+          {a.is_new_client && <div><dt>Client</dt><dd>New client{formOrConsent(a) ? <>{DOT}<span className="od-nowrap">{consentOnly(a.health ? formOnFile(a.health) : null) ? 'consent recorded' : 'form on file'}</span></> : <span className="flag">{DOT}no consultation form</span>}</dd></div>}
           {a.deposit_required_pence > 0 && (
             <div>
               <dt>Deposit</dt>
@@ -188,6 +217,24 @@ export function AppointmentView() {
           </details>
         )}
       </div>
+
+      {justAdded && a.status === 'confirmed' && a.client && !a.client.email && phone && (
+        <section className="card stack od-added" aria-label="Added to your diary">
+          <div className="od-panel-head">
+            <span className="od-ic ok" aria-hidden="true"><Icon name="tick" size={20} /></span>
+            <h3>Added to your diary</h3>
+          </div>
+          <p className="sub">
+            {firstName(a.client.full_name) || 'This client'} has no email address, so no confirmation email goes. Send your
+            “Booking confirmed” message on WhatsApp instead.
+          </p>
+          <WhatsAppButton a={a} s={s} kind="confirmed" label="Send on WhatsApp" />
+        </section>
+      )}
+
+      {a.status !== 'cancelled' && a.health && (
+        <HealthStrip a={a} h={a.health} s={s} first={first} phone={phone} checkPhone={checkPhone} formUrl={formUrl} onCopy={copy} />
+      )}
 
       {live && changesCard}
 
@@ -208,7 +255,7 @@ export function AppointmentView() {
 
       {a.client && (
         <div className="od-contact">
-          {phone && !lateId && (live && !checkPhone ? <WhatsAppButton a={a} s={s} label="WhatsApp" />
+          {phone && !lateId && (live && !unfinished && !checkPhone ? <WhatsAppButton a={a} s={s} label="WhatsApp" />
             : <a className="btn wa" href={whatsappLink(phone, `Hi ${first}, `)} target="_blank" rel="noreferrer"><Icon name="whatsapp" size={20} /> WhatsApp</a>)}
           {a.client.phone && <a className="btn" href={`tel:${a.client.phone.replace(/\s/g, '')}`}><Icon name="phone" size={20} /> Call</a>}
           <Link className="btn" to={`/clients/${a.client.id}`}><Glyph name="user" size={20} /> Client record</Link>
@@ -243,7 +290,7 @@ export function AppointmentView() {
         </div>
       )}
 
-      {a.status === 'pending_deposit' && (
+      {a.status === 'pending_deposit' && !unfinished && (
         <div className="card stack attention od-panel">
           <div className="od-panel-head">
             <span className="od-ic lemon" aria-hidden="true"><Glyph name="clock" /></span>
@@ -271,27 +318,7 @@ export function AppointmentView() {
         </div>
       )}
 
-      {live && !a.has_form && (
-        <div className="card stack od-tool">
-          <div className="od-panel-head">
-            <span className="od-ic" aria-hidden="true"><Glyph name="doc" /></span>
-            <h3>Consultation form</h3>
-          </div>
-          <p className="sub">{a.is_new_client ? 'This new client hasn’t filled in the health and allergy form yet.' : 'No health and allergy form on file for this client. Send them the link to fill one in.'}</p>
-          {checkPhone && phone && <p className="sub" style={{ margin: 0 }}>Check their mobile above before you send this link.</p>}
-          <div className="btn-row">
-            {phone && !checkPhone && (
-              <a className="btn wa" target="_blank" rel="noreferrer" style={WIDE}
-                href={whatsappLink(phone, `Hi ${first}, before your appointment please fill in this quick consultation form (it takes 2 minutes): ${formUrl}\n${s.business_name}`)}>
-                <Icon name="whatsapp" size={20} /> Send form link
-              </a>
-            )}
-            <button className="btn" onClick={() => copy(formUrl, 'Form link')}><Icon name="link" size={20} /> Copy link</button>
-          </div>
-        </div>
-      )}
-
-      {live && s.client_self_service && (
+      {live && !unfinished && s.client_self_service && (
         <div className="card stack od-tool">
           <div className="od-panel-head">
             <span className="od-ic" aria-hidden="true"><Icon name="link" size={20} /></span>
@@ -349,12 +376,16 @@ export function AppointmentView() {
           </ul>
         ) : <div className="empty">{a.client?.email ? 'No emails yet.' : 'No email address saved for this client.'}</div>}
       </div>
-      {live && a.client?.email && <button className="btn ghost" disabled={act.busy} onClick={resend}>Re-send confirmation email</button>}
+      {live && !unfinished && a.client?.email && <button className="btn ghost" disabled={act.busy} onClick={resend}>Re-send confirmation email</button>}
 
       {sheet === 'deposit' && <DepositSheet a={a} onClose={() => setSheet(null)} onDone={() => { toast('Deposit recorded — client confirmed'); done(); }} />}
-      {sheet === 'checkout' && <CheckoutSheet a={a} onClose={() => setSheet(null)} onDone={() => { toast('Payment recorded'); done(); }} />}
+      {/* For a visit today the sheet stays open once it's done, to book the next visit; the screen behind it already says Done. */}
+      {sheet === 'checkout' && <CheckoutSheet a={a} onClose={() => setSheet(null)} onFinished={() => { reload(); reloadEmails(); }} />}
       {sheet === 'move' && <MoveSheet a={a} tz={tz} onClose={() => setSheet(null)} onDone={(msg) => { toast(msg); done(); }} />}
-      {sheet === 'cancel' && <CancelSheet a={a} onClose={() => setSheet(null)} onDone={() => { toast('Appointment cancelled'); done(); }} />}
+      {sheet === 'cancel' && (
+        <CancelSheet a={a} onClose={() => setSheet(null)} onDone={() => { toast('Appointment cancelled'); done(); }}
+          onNoShow={() => { setSheet(null); void noShow(); }} />
+      )}
       {sheet === 'late' && (
         <LatePaymentSheet a={a} tz={tz} amount={charge.owed} onClose={() => setSheet(null)}
           onDone={() => { toast('Payment recorded'); setSheet(null); reloadLate(); }} />
@@ -371,6 +402,50 @@ function DateTile({ iso, tz }: { iso: string; tz: string }) {
       <span className="od-dt-day">{fmt(iso, 'd', tz)}</span>
       <span className="od-dt-mon">{fmt(iso, 'MMM', tz)}</span>
     </div>
+  );
+}
+
+/**
+ * The client's allergies, latest patch test and consultation form, near the top: what she needs
+ * before she starts. Consent she recorded (a paper form, WhatsApp or email) counts as on file;
+ * from WhatsApp or email it says "consent recorded", as no form was filled in. With none on file,
+ * or one over a year old, the form link to send: it works until a day after the appointment.
+ * The full answers are on the client's record.
+ */
+function HealthStrip({ a, h, s, first, phone, checkPhone, formUrl, onCopy }: {
+  a: Appointment; h: ApptHealth; s: Settings; first: string; phone: string | null | undefined; checkPhone: boolean;
+  formUrl: string; onCopy: (text: string, what: string) => void;
+}) {
+  const tz = s.timezone;
+  const test = patchTestLine(h.patch_tests, tz, a.starts_at);
+  const form = formLine(h, tz, a.starts_at);
+  const live = a.status === 'confirmed' || a.status === 'pending_deposit';
+  const linkWorks = live && new Date(a.starts_at).getTime() > Date.now() - 86400e3;
+  const ask = linkWorks && (!form.onFile || form.old);
+  const formTone = !form.onFile ? (live ? 'danger' : 'quiet') : form.old ? 'warn' : 'plain';
+  return (
+    <section className="card od-hstrip" aria-label="Health and allergies">
+      {h.allergies?.trim() && (
+        <p className="od-hstrip-allergy"><span className="od-hstrip-allergy-ic" aria-hidden="true" /><span><b>Allergies:</b> {h.allergies}</span></p>
+      )}
+      <dl className="od-receipt od-hstrip-rows">
+        <div><dt>Patch test</dt><dd className={`od-hs-${test.tone}`}>{test.text}</dd></div>
+        <div><dt>Consultation form</dt><dd className={`od-hs-${formTone}`}>{form.text}</dd></div>
+      </dl>
+      {ask && form.old && <p className="od-hstrip-note">Form over a year old: send a fresh one.</p>}
+      {ask && checkPhone && phone && <p className="sub od-hstrip-note">Check their mobile below before you send the form link.</p>}
+      {ask && (
+        <div className="btn-row od-hstrip-btns">
+          {phone && !checkPhone && (
+            <a className="btn wa small" target="_blank" rel="noreferrer"
+              href={whatsappLink(phone, `Hi ${first}, before your appointment please fill in this quick consultation form (it takes 2 minutes): ${formUrl}\n${s.business_name}`)}>
+              <Icon name="whatsapp" size={18} /> Send form link
+            </a>
+          )}
+          <button className="btn small" onClick={() => onCopy(formUrl, 'Form link')}><Icon name="link" size={18} /> Copy link</button>
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -458,18 +533,38 @@ function DepositSheet({ a, onClose, onDone }: { a: Appointment; onClose: () => v
   );
 }
 
-function CheckoutSheet({ a, onClose, onDone }: { a: Appointment; onClose: () => void; onDone: () => void }) {
+/**
+ * Finish & take payment. Once it's marked as done the sheet stays open on the next visit
+ * (NextVisit), while the screen behind it updates; Not now, Close or Escape closes it.
+ * A visit from another day (one from "Not finished yet") just closes with what was recorded:
+ * the client isn't there to agree a date, and the choices would count from that old day.
+ */
+function CheckoutSheet({ a, onClose, onFinished }: { a: Appointment; onClose: () => void; onFinished: () => void }) {
+  const tz = useOwner().settings.timezone;
+  const toast = useToast();
   const depositPaid = a.deposit_paid_at ? a.deposit_required_pence : 0;
   const [amount, setAmount] = useState(((Math.max(0, a.price_pence - depositPaid)) / 100).toFixed(2));
   const [tip, setTip] = useState('');
   const [method, setMethod] = useState<PayMethod>('cash');
   const [note, setNote] = useState('');
+  const [recorded, setRecorded] = useState<{ amount: number; tip: number } | null>(null);
   const { busy, error, run, setError } = useAction();
   async function save() {
     const p = parsePounds(amount || '0');
     const t = tip ? parsePounds(tip) : 0;
     if (p === null || t === null) return setError(new Error('Check the amounts.'));
-    if (await run(() => api.completeAppointment(a.id, p, method, t, note.trim() || null))) onDone();
+    if (await run(() => api.completeAppointment(a.id, p, method, t, note.trim() || null))) {
+      onFinished();
+      if (dateInZone(a.starts_at, tz) !== todayInZone(tz)) { toast(doneLine(p, t)); onClose(); return; }
+      setRecorded({ amount: p, tip: t });
+    }
+  }
+  if (recorded) {
+    return (
+      <Sheet title="Next visit" onClose={onClose}>
+        <NextVisit a={a} recorded={recorded} onClose={onClose} />
+      </Sheet>
+    );
   }
   return (
     <Sheet title="Finish & take payment" onClose={onClose}>
@@ -491,6 +586,86 @@ function CheckoutSheet({ a, onClose, onDone }: { a: Appointment; onClose: () => 
         <button className="btn primary block" disabled={busy} onClick={save}>{busy ? 'Saving…' : 'Mark as done'}</button>
       </div>
     </Sheet>
+  );
+}
+
+/**
+ * After "Mark as done": what was recorded, then the same treatment in 2, 3 or 4 weeks, each with
+ * the date and time it would book (the same weekday and time if that's free, otherwise the
+ * nearest free time), and Pick a date. A tap opens New appointment filled in.
+ */
+function NextVisit({ a, recorded, onClose }: { a: Appointment; recorded: { amount: number; tip: number }; onClose: () => void }) {
+  const { settings: s } = useOwner();
+  const tz = s.timezone;
+  const box = useRef<HTMLDivElement>(null);
+  // The payment form has gone from under the focus: keep it in the sheet, back at its top.
+  useEffect(() => {
+    const sheet = box.current?.closest<HTMLElement>('.sheet');
+    if (sheet) { sheet.scrollTop = 0; sheet.focus({ preventScroll: true }); }
+  }, []);
+  const { data, error } = useLoad(async () => {
+    const { first, last } = nextVisitDays(a.starts_at, tz);
+    const [services, hours, busy, theirs] = await Promise.all([
+      api.listServices(), api.listOpeningHours(),
+      api.getBusyTimes(startOfDayInstant(first, tz), startOfDayInstant(addDays(last, 1), tz)),
+      api.listClientAppointments(a.client_id),
+    ]);
+    const now = new Date();
+    const treatment = sameTreatment(a, services);
+    const options = nextVisitOptions(a.starts_at, treatment.minutes, { ...s, hours }, busy, now);
+    // Already booked in: say so, so they aren't booked twice.
+    const booked = theirs.filter((x) => x.id !== a.id && (x.status === 'confirmed' || x.status === 'pending_deposit')
+      && new Date(x.starts_at) > now).sort((x, y) => x.starts_at.localeCompare(y.starts_at))[0] ?? null;
+    return { treatment, options, booked };
+  }, [a.id]);
+  const name = a.client?.full_name ?? a.booking_name;
+  const first = firstName(name);
+  // If her list couldn't be loaded, Pick a date still starts on this treatment.
+  const treatment: Treatment = data?.treatment
+    ?? { serviceId: a.service_id, name: a.service_name, minutes: a.duration_min, pricePence: a.price_pence };
+  return (
+    <div className="stack od-next" ref={box}>
+      <p className="od-paid od-next-done" role="status">{doneLine(recorded.amount, recorded.tip)}</p>
+      <h3 className="od-next-q">{nextVisitQuestion(name, treatment.name)}</h3>
+      {data?.booked && (
+        <p className="sub od-next-booked">
+          {first ? `${first} is` : 'They’re'} already booked in for {data.booked.service_name} on <span className="od-nowrap">{fmtDayTime(data.booked.starts_at, tz)}</span>.
+        </p>
+      )}
+      <ErrorBox error={error} />
+      {!data && !error ? <Spinner /> : (
+        <ul className="list card tight od-next-list">
+          {data?.options.map((o) => (
+            <li key={o.weeks}>
+              {o.at ? (
+                <Link className="list-row od-next-row" to={newAppointmentLink(a.client_id, treatment, { day: dateInZone(o.at, tz), time: fmtTime(o.at, tz) })}>
+                  <span className="od-next-text">
+                    <span className="od-next-label">In {o.weeks} weeks</span>
+                    {!o.same && <span className="od-next-note"><span className="visually-hidden"> · </span>Nearest free time</span>}
+                  </span>
+                  <span className="od-next-when"><span className="visually-hidden"> · </span>{fmtDayTime(o.at, tz)}</span>
+                  <span className="chev"><Icon name="chev" size={18} /></span>
+                </Link>
+              ) : (
+                <div className="list-row od-next-row is-full">
+                  <span className="od-next-text">
+                    <span className="od-next-label">In {o.weeks} weeks</span>
+                    <span className="od-next-note"><span className="visually-hidden"> · </span>Nothing free around then</span>
+                  </span>
+                </div>
+              )}
+            </li>
+          ))}
+          <li>
+            <Link className="list-row od-next-row" to={newAppointmentLink(a.client_id, treatment)}>
+              <span className="od-next-text"><span className="od-next-label">Pick a date</span></span>
+              <span className="chev"><Icon name="chev" size={18} /></span>
+            </Link>
+          </li>
+        </ul>
+      )}
+      <button className="btn block" onClick={onClose}>Not now</button>
+    </div>
   );
 }
 
@@ -599,21 +774,30 @@ function MoveSheet({ a, tz, onClose, onDone }: { a: Appointment; tz: string; onC
   );
 }
 
-function CancelSheet({ a, onClose, onDone }: { a: Appointment; onClose: () => void; onDone: () => void }) {
+function CancelSheet({ a, onClose, onDone, onNoShow }: { a: Appointment; onClose: () => void; onDone: () => void; onNoShow: () => void }) {
   const { settings: s } = useOwner();
+  // Already started (or over): a client who never came is a no-show, which sends no email, so the
+  // email starts unticked, and a cancellation now isn't a late one by the client.
+  const [begun] = useState(() => new Date(a.starts_at).getTime() <= Date.now());
   const [reason, setReason] = useState('');
-  const [notify, setNotify] = useState(!!a.client?.email);
+  const [notify, setNotify] = useState(!!a.client?.email && !begun);
   const [late, setLate] = useState(false);
   const { busy, error, run } = useAction();
   // Inside the notice period, or the client already changed it inside one: if the
   // client is the one cancelling, it's a late cancellation. No notice period means no policy.
   const changedLate = s.cancel_notice_hours > 0 && a.late_fee_pence != null;
-  const inNotice = changedLate
-    || (s.cancel_notice_hours > 0 && Date.now() > freeChangeDeadline(a.starts_at, s.cancel_notice_hours).getTime());
+  const inNotice = !begun && (changedLate
+    || (s.cancel_notice_hours > 0 && Date.now() > freeChangeDeadline(a.starts_at, s.cancel_notice_hours).getTime()));
   const who = firstName(a.client?.full_name) || 'The client';
   return (
     <Sheet title="Cancel appointment" onClose={onClose}>
       <div className="stack">
+        {begun && (
+          <div className="notice od-noshow-hint">
+            <p>If {firstName(a.client?.full_name ?? a.booking_name) || 'the client'} never came, mark a <span className="od-nowrap">no-show</span> instead: it doesn’t email them.</p>
+            <button type="button" className="btn small" onClick={onNoShow}>Mark as a no-show</button>
+          </div>
+        )}
         <Field label="Reason (optional)" hint={notify ? 'Included in the email to the client.' : undefined}>
           <input type="text" value={reason} maxLength={500} onChange={(e) => setReason(e.target.value)} />
         </Field>

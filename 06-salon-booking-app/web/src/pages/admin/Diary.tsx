@@ -4,7 +4,7 @@ import { api } from '../../api';
 import { ApptRow } from '../../components/appts';
 import { BrandIcon } from '../../components/brand';
 import { useOwner } from '../../components/owner';
-import { ErrorBox, Field, Icon, Seg, Sheet, Spinner, TopBar, useAction, useLoad, useToast } from '../../components/ui';
+import { ErrorBox, Field, Icon, Seg, Sheet, Spinner, TopBar, useAction, useLoad, useRefreshOnReturn, useToast } from '../../components/ui';
 import { addDays, dateInZone, fmt, fmtDayLong, fmtTime, isoWeekday, startOfDayInstant, startOfWeek, todayInZone, zonedToInstant } from '../../lib/time';
 
 export function Diary() {
@@ -16,12 +16,14 @@ export function Diary() {
   const week = startOfWeek(day);
   const [blocking, setBlocking] = useState(false);
 
-  const { data, error, loading, reload } = useLoad(async () => {
+  const { data, error, loading, loadedAt, reload, refresh } = useLoad(async () => {
     const from = startOfDayInstant(week, tz).toISOString();
     const to = startOfDayInstant(addDays(week, 7), tz).toISOString();
     const [appts, off, hours] = await Promise.all([api.listAppointments(from, to), api.listTimeOff(from), api.listOpeningHours()]);
     return { appts, off: off.filter((t) => t.starts_at < to), hours };
   }, [week]);
+  // Up to date again when she comes back to the app, but not while she's blocking time.
+  useRefreshOnReturn({ loadedAt, error, refresh, blocked: blocking, tz });
 
   const pick = (d: string) => setParams({ d }, { replace: true });
   const dayStart = startOfDayInstant(day, tz).toISOString();
@@ -71,12 +73,16 @@ export function Diary() {
       </div>
       <div className="day-head dy-day-head">
         <h2>{fmtDayLong(day + 'T12:00:00Z', tz)}</h2>
-        <span className={`dy-hours${dayOff ? ' is-off' : hours?.is_open ? '' : ' is-closed'}`}>
-          <BrandIcon name="clock" size={15} />{dayOff ? 'Day off' : hours?.is_open ? `Open ${hours.open_time}–${hours.close_time}` : 'Closed'}
-        </span>
+        {/* her opening hours once they've loaded: never "Closed" for want of them */}
+        {data && (
+          <span className={`dy-hours${dayOff ? ' is-off' : hours?.is_open ? '' : ' is-closed'}`}>
+            <BrandIcon name="clock" size={15} />{dayOff ? 'Day off' : hours?.is_open ? `Open ${hours.open_time}–${hours.close_time}` : 'Closed'}
+          </span>
+        )}
       </div>
       <ErrorBox error={error} />
-      {loading && !data ? <Spinner /> : (
+      {/* Nothing has loaded (no signal, say): never "Nothing booked" made up from nothing */}
+      {loading && !data ? <Spinner /> : !data ? <button className="btn primary block" onClick={reload}>Try again</button> : (
         <div className="card tight dy-day">
           {items.length === 0 ? <div className="empty">Nothing booked.</div> : (
             <ul className="list">

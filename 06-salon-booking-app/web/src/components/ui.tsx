@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useId, useRef, useSt
 import { useNavigate } from 'react-router-dom';
 import type { ApptStatus } from '../lib/types';
 import { friendlyError } from '../lib/text';
+import { todayInZone } from '../lib/time';
 
 // ---------------------------------------------------------------------------
 // Icons (inline SVG, so the app needs no icon font or network)
@@ -27,6 +28,8 @@ const paths: Record<string, ReactNode> = {
   link: <><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1" /><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1" /></>,
   trash: <><path d="M4 7h16M9.5 7V4.5h5V7M6.5 7l1 13h9l1-13" /></>,
   close: <path d="M6 6l12 12M18 6L6 18" />,
+  share: <><path d="M12 14.5V3.5M7.8 7.7 12 3.5l4.2 4.2" /><path d="M8 10.5H6.5A2.5 2.5 0 0 0 4 13v5.5A2.5 2.5 0 0 0 6.5 21h11a2.5 2.5 0 0 0 2.5-2.5V13a2.5 2.5 0 0 0-2.5-2.5H16" /></>,
+  copy: <><rect x="8.5" y="8.5" width="12" height="12" rx="2.5" /><path d="M15.5 8.5V6A2.5 2.5 0 0 0 13 3.5H6A2.5 2.5 0 0 0 3.5 6v7A2.5 2.5 0 0 0 6 15.5h2.5" /></>,
 };
 
 export function Icon({ name, size = 24, title }: { name: keyof typeof paths | string; size?: number; title?: string }) {
@@ -49,7 +52,9 @@ const STATUS: Record<ApptStatus, { label: string; cls: string }> = {
   cancelled: { label: 'Cancelled', cls: 'danger' },
   no_show: { label: 'No-show', cls: 'danger' },
 };
-export function StatusChip({ status }: { status: ApptStatus }) {
+/** unfinished: its time has passed but it still says Confirmed or Deposit due (lib/unfinished). */
+export function StatusChip({ status, unfinished }: { status: ApptStatus; unfinished?: boolean }) {
+  if (unfinished) return <span className="chip warn">Not finished</span>;
   const s = STATUS[status];
   return <span className={`chip ${s.cls}`}>{s.label}</span>;
 }
@@ -179,23 +184,123 @@ export const useToast = () => useContext(ToastCtx);
 // ---------------------------------------------------------------------------
 // Data loading
 // ---------------------------------------------------------------------------
+
+/** A background refresh that fails is tried once more after this long, before it says so. */
+export const RETRY_AFTER_MS = 1500;
+
+/**
+ * Load what a screen shows, again whenever `deps` change. What's on screen stays while it
+ * reloads. `reload` loads it again now; `refresh` does it in the background, trying once
+ * more if that fails (see useRefreshOnReturn). `loadedAt` is when it last loaded (ms).
+ * `setData` puts a change she has just made on screen: a refresh that was already on its
+ * way then leaves the screen as it is, as its answer may be from before her change.
+ */
 export function useLoad<T>(fn: () => Promise<T>, deps: unknown[]): {
-  data: T | undefined; error: unknown; loading: boolean; reload: () => void; setData: (d: T) => void;
+  data: T | undefined; error: unknown; loading: boolean; loadedAt: number | null;
+  reload: () => void; refresh: () => void; setData: (d: T) => void;
 } {
   const [data, setData] = useState<T>();
   const [error, setError] = useState<unknown>(null);
   const [loading, setLoading] = useState(true);
+  const [loadedAt, setLoadedAt] = useState<number | null>(null);
   const [tick, setTick] = useState(0);
+  // The next load is a refresh in the background.
+  const background = useRef(false);
+  // How many changes she has put on screen with setData.
+  const edits = useRef(0);
   useEffect(() => {
     let live = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const retry = background.current;
+    background.current = false;
+    const seen = edits.current;
     setLoading(true);
-    fn().then((d) => { if (live) { setData(d); setError(null); } })
-      .catch((e) => { if (live) setError(e); })
-      .finally(() => { if (live) setLoading(false); });
-    return () => { live = false; };
+    const attempt = (again: boolean) => {
+      fn().then((d) => {
+        if (!live) return;
+        // She has changed something since this refresh set off, so its answer may be from before that:
+        // keep what's on screen. (An answer came, so there's signal.)
+        if (retry && edits.current !== seen) { setError(null); setLoading(false); return; }
+        setData(d);
+        setError(null);
+        setLoadedAt(Date.now());
+        setLoading(false);
+      }, (e) => {
+        if (!live) return;
+        if (again) { timer = setTimeout(() => attempt(false), RETRY_AFTER_MS); return; }
+        setError(e);
+        setLoading(false);
+      });
+    };
+    attempt(retry);
+    return () => { live = false; clearTimeout(timer); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [...deps, tick]);
-  return { data, error, loading, reload: () => setTick((t) => t + 1), setData };
+  const reload = useCallback(() => setTick((t) => t + 1), []);
+  const refresh = useCallback(() => { background.current = true; setTick((t) => t + 1); }, []);
+  const change = useCallback((d: T) => { edits.current += 1; setData(d); }, []);
+  return { data, error, loading, loadedAt, reload, refresh, setData: change };
+}
+
+/** What's on a screen is reloaded when she comes back to the app once it's this old (or the day has changed). */
+export const STALE_AFTER_MS = 5 * 60e3;
+/** iOS can fail a request made the instant the app comes back on screen, so wait about a second first. */
+export const RETURN_DELAY_MS = 1000;
+
+/**
+ * Whether a screen loaded at `loadedAt` needs loading again: the day has changed since (in the
+ * business's time zone), or a few minutes have passed. Never before it has loaded at all.
+ */
+export function isStale(loadedAt: number | null, now: number, tz: string): boolean {
+  if (loadedAt === null) return false;
+  return now - loadedAt >= STALE_AFTER_MS || todayInZone(tz, new Date(loadedAt)) !== todayInZone(tz, new Date(now));
+}
+
+/**
+ * Reload a screen by itself when she comes back to the app (from WhatsApp, her bank app, or
+ * the next morning) if the day has changed, it's a few minutes old, or its last load failed.
+ * It waits about a second first, and `refresh` tries once more if that fails (useLoad). Never
+ * while `blocked` (a sheet open, something unsaved or still saving): it waits until it isn't.
+ */
+export function useRefreshOnReturn({ loadedAt, error, refresh, blocked, tz }: {
+  loadedAt: number | null; error: unknown; refresh: () => void; blocked: boolean; tz: string;
+}) {
+  const latest = useRef({ loadedAt, error, refresh, blocked, tz });
+  latest.current = { loadedAt, error, refresh, blocked, tz };
+  // Due while a sheet was open: done once it closes.
+  const waiting = useRef(false);
+  const due = () => {
+    const l = latest.current;
+    return !!l.error || isStale(l.loadedAt, Date.now(), l.tz);
+  };
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const back = () => {
+      if (document.visibilityState === 'hidden') return;
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        if (document.visibilityState === 'hidden' || !due()) return;
+        if (latest.current.blocked) { waiting.current = true; return; }
+        latest.current.refresh();
+      }, RETURN_DELAY_MS);
+    };
+    // Safari can also bring a page back from its back-forward cache without a visibility change.
+    const shown = (e: PageTransitionEvent) => { if (e.persisted) back(); };
+    document.addEventListener('visibilitychange', back);
+    window.addEventListener('pageshow', shown);
+    return () => {
+      document.removeEventListener('visibilitychange', back);
+      window.removeEventListener('pageshow', shown);
+      clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => {
+    if (blocked || !waiting.current) return;
+    waiting.current = false;
+    if (due()) latest.current.refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [blocked]);
 }
 
 /** Wrap an async action with busy/error state, for buttons. */

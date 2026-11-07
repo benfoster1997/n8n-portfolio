@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { api } from '../../api';
 import { ConsultationFields } from '../../components/ConsultationFields';
 import { SlotPicker, useFreeSlots } from '../../components/SlotPicker';
@@ -11,12 +11,29 @@ import {
 } from '../../components/public/parts';
 import { ErrorBox, Field, Icon, Spinner, useAction, useLoad } from '../../components/ui';
 import { blankAnswers, validateAnswers } from '../../lib/consultation';
+import { findTreatment } from '../../lib/freeTimes';
 import { openDays } from '../../lib/slots';
 import { addDays, fmtDayLong, fmtTime, minutesLabel, startOfDayInstant } from '../../lib/time';
-import { friendlyError, isPlausibleEmail, isPlausiblePhone, money } from '../../lib/text';
+import { friendlyError, isNetworkError, isPlausibleEmail, isPlausiblePhone, money } from '../../lib/text';
 import type { BookingInfo, BusyRange } from '../../lib/types';
 
 type Step = 'service' | 'time' | 'details' | 'done';
+
+/** The database's answers that mean the chosen time can't be booked any more: back to the free times. */
+const TIME_GONE = ['slot_taken', 'too_soon', 'too_far', 'closed', 'outside_hours', 'invalid_time'];
+
+/**
+ * What a failed "Confirm booking" means for the client:
+ * - 'no_reply': the signal dropped, so the booking may or may not have gone through. Retrying
+ *   straight away could book twice, or say their own time has just been taken.
+ * - 'time_gone': the time has just been taken (or is now too soon): pick another.
+ * - 'other': anything else, said in plain words on the details step.
+ */
+export function bookingFailure(e: unknown): 'no_reply' | 'time_gone' | 'other' {
+  if (isNetworkError(e)) return 'no_reply';
+  const msg = e instanceof Error ? e.message : String((e as { message?: unknown } | null)?.message ?? e);
+  return TIME_GONE.some((code) => msg.includes(code)) ? 'time_gone' : 'other';
+}
 
 export function Book() {
   useClientManifest();
@@ -51,8 +68,12 @@ export function Book() {
 
 function BookingFlow({ info }: { info: BookingInfo }) {
   const tz = info.timezone;
-  const [step, setStep] = useState<Step>('service');
-  const [serviceId, setServiceId] = useState<string | null>(null);
+  const [params] = useSearchParams();
+  // A link for one treatment ("…/book?treatment=biab-infill", from Share free times) opens straight on
+  // its free times. One that isn't bookable online (or no longer exists) opens the usual page.
+  const [linked] = useState(() => findTreatment(params.get('treatment'), info.services));
+  const [step, setStep] = useState<Step>(linked ? 'time' : 'service');
+  const [serviceId, setServiceId] = useState<string | null>(linked?.id ?? null);
   const [day, setDay] = useState<string | null>(null);
   const [slot, setSlot] = useState<Date | null>(null);
   const [details, setDetails] = useState({ full_name: '', email: '', phone: '', notes: '' });
@@ -66,6 +87,10 @@ function BookingFlow({ info }: { info: BookingInfo }) {
   const policy = info.cancellation_policy?.trim() || null;
   const [result, setResult] = useState<{ reference: string; starts_at: string } | null>(null);
   const { busy, error, run, setError } = useAction();
+  // Back on the free times because the time they chose has gone: why, above the times.
+  const [timeGone, setTimeGone] = useState<string | null>(null);
+  // The time they were booking when the signal dropped: it may now be theirs.
+  const [noReplyFor, setNoReplyFor] = useState<string | null>(null);
   const topRef = useRef<HTMLDivElement>(null);
 
   const service = info.services.find((s) => s.id === serviceId);
@@ -99,17 +124,40 @@ function BookingFlow({ info }: { info: BookingInfo }) {
     }
     if (!ageOk) return setError(new Error('Please confirm you are 16 or over, or that a parent or guardian is booking for you.'));
     if (policy && !policyOk) return setError(new Error('policy_required'));
+    const at = slot!.toISOString();
+    let failed: unknown = null;
     const ok = await run(async () => {
-      setResult(await api.createBooking({
-        service_id: service!.id, starts_at: slot!.toISOString(), full_name: details.full_name.trim(),
-        email: details.email.trim(), phone: details.phone.trim(), notes: details.notes.trim() || null,
-        consultation: firstVisit ? answers : null, health_consent: firstVisit ? consent : false,
-        signed_name: firstVisit ? signedName.trim() : null,
-        policy_accepted: !!policy && policyOk,
-      }));
+      try {
+        setResult(await api.createBooking({
+          service_id: service!.id, starts_at: at, full_name: details.full_name.trim(),
+          email: details.email.trim(), phone: details.phone.trim(), notes: details.notes.trim() || null,
+          consultation: firstVisit ? answers : null, health_consent: firstVisit ? consent : false,
+          signed_name: firstVisit ? signedName.trim() : null,
+          policy_accepted: !!policy && policyOk,
+        }));
+      } catch (e) {
+        failed = e;
+        throw e;
+      }
     });
-    if (ok) setStep('done');
-    else reloadBusy(); // the slot may have just gone; refresh what's free
+    if (ok) { setStep('done'); return; }
+    const why = bookingFailure(failed);
+    if (why === 'no_reply') {
+      // The booking may have been made with the reply lost on the way back: check before trying again.
+      setNoReplyFor(at);
+      setError(new Error('booking_no_reply'));
+      return;
+    }
+    reloadBusy(); // the time may have just gone; refresh what's free
+    if (why === 'time_gone') {
+      // If that's the time they were booking when the signal dropped, it may be theirs now.
+      setTimeGone(noReplyFor === at
+        ? 'That time is booked now. If it was you, a moment ago, check your email for your confirmation. Otherwise, please pick another time.'
+        : friendlyError(failed));
+      setError(null);
+      setSlot(null);
+      setStep('time');
+    }
   }
 
   const stepIndex = { service: 0, time: 1, details: 2, done: 3 }[step];
@@ -149,15 +197,17 @@ function BookingFlow({ info }: { info: BookingInfo }) {
 
       {step === 'time' && service && (
         <>
-          <ChosenTreatment name={service.name} durationMin={service.duration_min} pricePence={service.price_pence} onChange={() => setStep('service')} />
+          <ChosenTreatment name={service.name} durationMin={service.duration_min} pricePence={service.price_pence}
+            onChange={() => { setTimeGone(null); setStep('service'); }} />
           <ScriptTitle className="step-title">Pick a day and time</ScriptTitle>
+          {timeGone && <div className="notice warn pub-time-gone" role="alert">{timeGone}</div>}
           <ErrorBox error={busyError} />
           {!busyTimes ? <Spinner /> : daysWithSlots.length === 0 ? (
             <div className="notice">Sorry — there are no free times in the next {info.max_days_ahead} days. Please get in touch directly.</div>
           ) : (
             <>
               <SlotPicker days={daysWithSlots} slotsByDay={slotsByDay} day={day} slot={slot} tz={tz}
-                onDay={(d) => { setDay(d); setSlot(null); }} onSlot={setSlot} />
+                onDay={(d) => { setDay(d); setSlot(null); }} onSlot={(t) => { setSlot(t); setTimeGone(null); }} />
               <StickyAction when={slot} tz={tz}>
                 <button className="btn primary block" disabled={!slot} onClick={() => setStep('details')}>Continue <NextArrow /></button>
               </StickyAction>
@@ -240,7 +290,7 @@ function BookingFlow({ info }: { info: BookingInfo }) {
             lines={[`${fmtDayLong(result.starts_at, tz)} at ${fmtTime(result.starts_at, tz)}`, minutesLabel(service.duration_min)]}
             stub={<RefStub reference={result.reference} />} />
           <ul className="pub-next" role="list">
-            <li><GroupIcon name="mail" /><span>A confirmation is on its way to <b>{details.email.trim()}</b> (check your junk folder).</span></li>
+            <li><GroupIcon name="mail" /><span>A confirmation is on its way to <b>{details.email.trim()}</b>. It can take up to 10 minutes: if it isn’t there by then, check your junk folder.</span></li>
             {info.deposit_amount_pence > 0 && (
               <li><GroupIcon name="bank" /><span>If you’re a new client, it has the bank details for your deposit — use your reference so it can be matched.</span></li>
             )}

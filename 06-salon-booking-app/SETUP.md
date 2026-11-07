@@ -227,7 +227,8 @@ once and check the new-booking alert **notifies her phone**.
 
 ## 7. Share the booking link
 
-Her booking page is `https://yourstudio.netlify.app/book`, and the **Today** screen has a **Share link** button.
+Her booking page is `https://yourstudio.netlify.app/book`, and the **Today** screen has a **Share link** button, and
+**Share free times** for a message listing her free times (see [Day to day](#day-to-day)).
 - **Instagram:** Edit profile → Links → add it, along with the privacy notice (`…/privacy`) if there's room.
 - **WhatsApp Business:** Settings → Business tools → Profile → Website.
 - **Google Business Profile:** Edit profile → Booking link.
@@ -242,9 +243,20 @@ Her booking page is `https://yourstudio.netlify.app/book`, and the **Today** scr
    treats them as new until their first visit is marked done.
 4. Health information doesn't come across from Fresha automatically. For each regular, either send the form link
    from their next appointment, or record written consent you already hold before adding allergies or patch tests.
+   **Today → No consultation form on file** lists anyone booked in the next 14 days who has neither.
 5. Swap the booking link on Instagram and WhatsApp to the new one.
-6. Keep Fresha running until every Fresha booking has happened, then cancel the subscription
-   and ask Fresha to delete the data it holds for her business.
+6. Keep Fresha running until every Fresha booking has happened. Before cancelling, download everything
+   she needs to keep from Fresha, so nothing is lost when the account closes:
+   - **Her takings records:** the payment transactions or sales reports, and the payout statements, for
+     every tax year she used Fresha that HMRC still needs. HMRC expects records to be kept for 5 years after
+     each tax year's 31 January deadline: for 2021–22 that's until 31 January 2028, and for 2026–27 until
+     31 January 2033.
+   - **Her appointment history and the client list.**
+   - **Copies of the consultation forms and patch-test records.** Fresha has no way to download all the forms
+     at once, so ask Fresha's support for copies of them all.
+
+   Save them with her backups (**Save to Files**, in iCloud Drive) and keep them private: they include health
+   information. Only then cancel the subscription and ask Fresha to delete the data it holds for her business.
 7. So the tax estimate counts the money taken through Fresha, add it in **Money → Tax year → Edit**
    (**Takings not recorded in this app**, plus her expenses) for this tax year. Do the same for the tax
    year before (the **‹** arrow goes back a year) if its tax return and bill are still to come: that
@@ -279,6 +291,14 @@ Class 4 National Insurance on her profit, at that year's rates for England, Wale
 - A tax year with nothing in the app and nothing added (such as the year before she switched) asks
   for that year's figures instead of showing £0. Until she uses **Edit** for a year, the card asks
   about money taken another way.
+- **Money → Month** says roughly how much of that month's takings to put aside, e.g. *Put aside about
+  £645 of November's £2,480 for tax*. It's how much the month adds to the year's estimate, so it's
+  nothing while her profit for the year is under £12,570, then 26p of each £1 (42p above £50,270).
+- **Today** shows the bill only in the weeks before it's due: from 1 December to 31 January, the tax
+  year before's return and bill (due 31 January), about how much on her figures, with the first
+  payment on account when the bill is £1,000 or more. She takes off anything she has already paid
+  towards that year: the HMRC app shows the exact amount. In July it shows the 31 July payment. Tapping
+  it opens that tax year in **Money**. With no figures for that year it asks for them instead.
 
 It's a rough guide for putting money aside, not tax advice. Wages or other income, student loan
 repayments and Scotland's rates aren't included.
@@ -300,12 +320,50 @@ takings in the app), but saving her figures says the database update hasn't been
 
 ---
 
+## Appointments that were never finished
+
+The booking page stops taking bookings while 15 online bookings are waiting for a deposit (the brake
+in [What this app does not do](#what-this-app-does-not-do)). Only bookings that haven't started yet
+count towards those 15, so a new client who never paid and never came can't switch online booking off.
+
+Anything that's over but was never finished is listed on **Today → Not finished yet**, oldest first,
+and says *Not finished* in the Diary. Until it's dealt with, its money is missing from her takings,
+and a client whose visit was never marked as done is still treated as new. For each one, open it and:
+
+- **Finish & take payment** if the visit happened (the payment is dated today; for a visit from another
+  day it doesn't offer to book the next one, as the client isn't there),
+- **No-show** if they never came (no email is sent), or
+- **Cancel** for anything else. For one that has already started, *Email the client* is unticked to begin with.
+
+### Set up before old unpaid bookings stopped counting? Run the update once
+
+A new install gets this from `schema.sql`. An install made with an older `schema.sql` (anything set
+up before this version, including in early November 2026) needs the database's booking function
+brought up to date once. It doesn't depend on the app, so before or after the new version goes live
+are both fine. If you're not sure, run it: it's safe on any install.
+
+1. **Supabase → SQL Editor → New query**.
+2. Open [`supabase/updates/2026-11-unpaid-limit.sql`](supabase/updates/2026-11-unpaid-limit.sql), copy
+   **all** of it, paste it in and press **Run**. It should say *Success. No rows returned*. If a box
+   called **Potential issues detected** appears, choose **Run query**: a line inside the function (it
+   clears out its own old records) can set it off, and the update deletes nothing.
+
+It replaces that one function with this version, keeps who can use it, and changes nothing else: no
+tables, settings or bookings. Running it twice does no harm. Until it has been run, old bookings left
+at Deposit due still count towards the 15.
+
+---
+
 ## Day to day
 
 | She wants to… | Where |
 |---|---|
-| See today and anything waiting on her | **Today** |
+| See today and anything waiting on her | **Today**. Left open on her phone, it reloads by itself when she comes back to the app, if the day has changed or a few minutes have passed (the Diary, the WhatsApp reminders and an open appointment do too, but never while she's in the middle of something). **Updated 08:31** under the date says when; tap it to load it again now. |
+| Finish appointments she forgot to mark as done | **Today → Not finished yet**: each one that's over but was never finished, oldest first. Open it, then **Finish & take payment**, **No-show** (no email is sent) or **Cancel**. |
+| Send consultation forms | **Today → No consultation form on file** lists anyone booked in the next 14 days with no form and no consent recorded, regulars included. The appointment → **Send form link**. |
+| Check allergies before she starts | The appointment: allergies in red, the latest patch test and the consultation form are at the top. Today and the Diary show only an **Allergy** tag, never the details. |
 | Send WhatsApp reminders (appointments in the next 3 days) | **Today → Send N WhatsApp reminders**: tap each one, WhatsApp opens with the message written, press send |
+| Post her free times on Instagram or WhatsApp | **Today → Your booking link → Share free times**: pick the treatment (her most-booked is first) and **This week** or **Next 2 weeks**. It writes a message listing up to 8 times clients can book online, with a link that opens her booking page on that treatment. **Share** or **Copy** it into a Story, a Status or a reply. Only send it to people who've asked: sending it to clients who haven't counts as marketing, and her privacy notice promises clients she won't do that without asking. |
 | See what clients have changed or cancelled themselves | **Today → Changed by clients** (she's also emailed each time). Late ones are marked **Late**. |
 | Follow up a late cancellation | The appointment → **Late cancellation** → WhatsApp the client, then **Record payment received** when the money arrives |
 | Move a booking herself | The appointment → **Change time**. Leave *Email … their new time* ticked and the client is told. |
@@ -314,11 +372,13 @@ takings in the app), but saving her figures says the database update hasn't been
 | A change/cancel link reached the wrong person | The appointment → **Make a new link**. The old one stops working straight away. |
 | Confirm a new client's deposit has arrived | Today → *Deposits waiting* → the booking → **Deposit received** (the client is emailed automatically) |
 | Finish an appointment and record payment | The appointment → **Finish & take payment** → cash or bank transfer |
+| Book the client's next visit before they leave | After **Mark as done** on a visit today, the sheet asks *Book Jess's next BIAB infill?*. **In 2 weeks**, **In 3 weeks** and **In 4 weeks** each show the time they'd book: the same day and time, or the nearest free time. **Pick a date** lets her choose. One tap fills in New appointment with no deposit, then **Add to diary**. A client with an email gets the usual confirmation; with none, the appointment offers **Send on WhatsApp** in her *Booking confirmed* wording (Settings → WhatsApp messages). Agree the date with the client first, and book one visit ahead: bookings she makes count towards a client's limit of three upcoming bookings, and a client with three can't book online. A client's record → **Book an appointment** starts on their last treatment. |
 | Block a holiday or a dentist appointment | **Diary → Block time** |
 | See a client's allergies, patch tests, form and photos | **Clients** → the client |
-| Get her figures for Self Assessment | **Money → Tax year → Download spreadsheet** |
-| See roughly how much tax to put aside | **Money → Tax year**. **Edit** adds takings from before the app and her expenses for the year. |
-| Back up | **Settings → Back up your data**, monthly. Keep only the last three, somewhere encrypted. |
+| Get her figures for Self Assessment | **Money → Tax year → Save spreadsheet (CSV)**: on her iPhone the share sheet opens, so she chooses **Save to Files**, or sends it to her accountant. From 6 April, **Today** reminds her once to save the tax year that has just ended. |
+| See roughly how much tax to put aside | **Money → Month**: about how much of that month's takings to put aside. **Money → Tax year** has the whole estimate; **Edit** adds takings from before the app and her expenses for the year. |
+| Pay her tax bill on time | **Today**, from 1 December to 31 January: the 31 January bill, about how much on her figures, less anything already paid (the HMRC app shows the exact amount). In July, the 31 July payment. Tap it to see that tax year. |
+| Back up | **Settings → Back up your data**, monthly: **Get backup ready**, then **Save backup** and choose **Save to Files** (iCloud Drive), never WhatsApp or email, as it has health information in it. Then check it's in Files. The screen says when she last saved one on this phone, and **Today** says *Time for your monthly backup* about five weeks after it. Keep only the last three, in iCloud Drive and shared with no one. Photos aren't in the backup. |
 
 ---
 
@@ -376,9 +436,9 @@ So nobody is surprised later:
   that works with Making Tax Digital for the quarterly updates and the tax return. The tax estimate
   warns her when that's coming, but the app can't send them.
 - **One person only.** It's built for one diary, not a salon with staff.
-- **A brake on online bookings.** At most 6 an hour, 25 a day and 15 waiting for a deposit, and 3 an hour from any
-  one internet connection. This stops someone flooding the diary or using her Gmail to send spam. Real clients
-  who hit it are asked to try later or get in touch.
+- **A brake on online bookings.** At most 6 an hour, 25 a day and 15 still to come and waiting for a deposit,
+  and 3 an hour from any one internet connection. This stops someone flooding the diary or using her Gmail
+  to send spam. Real clients who hit it are asked to try later or get in touch.
 
 ---
 
@@ -388,11 +448,14 @@ So nobody is surprised later:
 |---|---|
 | A client says the change/cancel link doesn't work | Links stop working a day after the appointment, and changes aren't possible once it has started. Check **Settings → Deposits & cancellations → Clients can change or cancel online** is on. |
 | Clients say they got no email | App → Settings → Email shows when the script last checked in. At [script.google.com](https://script.google.com) → the project → **Executions**, you can see any errors. Ask the client to check their junk folder. |
-| "Can't reach the server" | The free Supabase project may have paused. Go to the Supabase dashboard → the project → **Resume project**. It's back in a few minutes with all its data (possible for up to a year after a pause). |
+| "No signal: check your connection and try again" | Check the phone has signal or Wi-Fi, then tap **Updated …** on Today, or **Try again**. If other apps and websites work but the app still says this, the free Supabase project may have paused: go to the Supabase dashboard → the project → **Resume project**. It's back in a few minutes with all its data (possible for up to a year after a pause). |
+| A client says the booking page told them to check their email | Their signal dropped as they tapped **Confirm booking**, so the page couldn't tell whether it went through. Look in the **Diary**: if the booking is there, it did, and their confirmation email is on its way (it can take up to 10 minutes). |
+| A backup or spreadsheet isn't in Files | Try again, choose **Save to Files** in the share sheet and pick **iCloud Drive**. If the share sheet doesn't open, a backup offers **Download it instead** (a spreadsheet downloads by itself): then look in Files → **Downloads**. |
 | The email script says the secret was refused | App → Settings → Email → **Make a new secret**, then paste it into Script Properties → `EMAIL_SECRET`. |
 | "This diary already has an owner" | Someone signed in with a different email. Sign out and use the email from step 1.6. |
 | Forgot the password | On the sign-in screen, tap **Forgotten password?** |
 | **Settings → Booking page** won't save ("Could not find the … column") | The app is newer than the database. Run [`supabase/schema.sql`](supabase/schema.sql) again in the SQL Editor (it keeps all her data and settings), then save again. |
 | Saving the tax estimate's figures says the database update hasn't been run | Run the update once: see [Tax to put aside](#set-up-before-the-tax-estimate-was-added-run-the-update-once). |
+| Clients are told "Lots of bookings are coming in right now" | One of the brakes on online bookings has been reached (see [What this app does not do](#what-this-app-does-not-do)). If it lasts more than a day, it's the 15 waiting for a deposit: on **Today**, mark the ones that have paid under **Deposits waiting**, and deal with **Not finished yet**. If old bookings that have passed still seem to count, run the update once: see [Appointments that were never finished](#set-up-before-old-unpaid-bookings-stopped-counting-run-the-update-once). |
 | Changed the web address | Update **Settings → Business details → This app's web address**, and Supabase → Authentication → URL Configuration. |
 | Wants it to look different, or a new feature | Everything is in this folder. See [README.md](README.md). |

@@ -1,8 +1,9 @@
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../../api';
 import { WhatsAppButton } from '../../components/appts';
 import { useOwner } from '../../components/owner';
-import { ErrorBox, Icon, Spinner, StatusChip, TopBar, useLoad } from '../../components/ui';
+import { ErrorBox, Icon, Spinner, StatusChip, TopBar, useLoad, useRefreshOnReturn } from '../../components/ui';
 import { addDays, fmtDayLong, fmtTime, startOfDayInstant, todayInZone } from '../../lib/time';
 import { dueWhatsAppReminders, reminderDates, reminderRange } from '../../lib/reminders';
 import type { Appointment } from '../../lib/types';
@@ -18,10 +19,13 @@ export function Reminders() {
   const tz = s.timezone;
   const today = todayInZone(tz);
   const ahead = reminderDates(s);
-  const { data, error, loading, setData } = useLoad(() => {
+  const { data, error, loading, loadedAt, refresh, setData } = useLoad(() => {
     const { fromIso, toIso } = reminderRange(s);
     return api.listAppointments(fromIso, toIso);
   }, [today, s.reminder_hours_before]);
+  // Reminders still being marked as sent: when she comes back from WhatsApp, those save before the list reloads.
+  const [saving, setSaving] = useState(0);
+  useRefreshOnReturn({ loadedAt, error, refresh, blocked: saving > 0, tz });
 
   const now = new Date();
   const live = (data ?? []).filter((a) => (a.status === 'confirmed' || a.status === 'pending_deposit') && new Date(a.starts_at) > now);
@@ -32,7 +36,9 @@ export function Reminders() {
   async function markSent(a: Appointment) {
     const when = new Date().toISOString();
     setData((data ?? []).map((x) => (x.id === a.id ? { ...x, whatsapp_reminder_sent_at: when } : x)));
+    setSaving((n) => n + 1);
     try { await api.updateAppointment(a.id, { whatsapp_reminder_sent_at: when }); } catch { /* shown as not sent next time */ }
+    finally { setSaving((n) => n - 1); }
   }
 
   const initials = (a: Appointment) => (a.client?.full_name ?? a.booking_name ?? '?')

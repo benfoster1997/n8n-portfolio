@@ -129,6 +129,7 @@ function seed(): Store {
     cl('Isla Morgan', '07700 900104', 'isla@example.com', null, 'Bites nails — BIAB has really helped.'),
     cl('Chloe Bennett', '07700 900105', null),
     cl('Ruby Clarke', '07700 900106', 'ruby@example.com'),
+    cl('Jess Collins', '07700 900107', 'jess@example.com'),
   ];
   const appts: Store['appointments'] = [];
   const add = (c: Client, s: Service, start: string, status: Appointment['status'], extra: Partial<Appointment> = {}) => {
@@ -147,7 +148,7 @@ function seed(): Store {
     return a;
   };
   const [gel, biab, infill, acrylic, toes] = services;
-  const [amelia, grace, sophie, isla, chloe, ruby] = clients;
+  const [amelia, grace, sophie, isla, chloe, ruby, jess] = clients;
   const payments: Payment[] = [];
   const paid = (a: { id: string; client_id: string; service_name: string; price_pence: number; starts_at: string }, c: Client, method: Payment['method']) =>
     payments.push({ id: uid(), appointment_id: a.id, client_id: c.id, client_name: c.full_name, description: a.service_name,
@@ -181,6 +182,17 @@ function seed(): Store {
     source: 'online', cancelled_by: 'client', cancelled_late: true, cancelled_at: hoursAgo(4), late_fee_pence: toes.price_pence,
     client_changed_at: hoursAgo(4), cancel_reason: 'Sorry — something came up at work.',
   });
+  // Over, but never finished: a visit she didn't mark as done, and a new client who booked online,
+  // never sent the deposit and never came. Today lists them under "Not finished yet".
+  add(grace, infill, at(-4, '14:00'), 'confirmed');
+  jess.created_at = at(-7, '19:00');
+  add(jess, biab, at(-5, '14:00'), 'pending_deposit', {
+    source: 'online', is_new_client: true, deposit_required_pence: 1000,
+    deposit_due_at: at(-6, '19:00'), created_at: jess.created_at,
+  });
+  // Amelia's next infill, three weeks out, overlapping Grace's usual 13:00: when Grace's visit
+  // today is marked as done, "In 3 weeks" offers the nearest free time instead.
+  add(amelia, infill, at(21, '12:30'), 'confirmed');
   const client_changes: ClientChange[] = [
     { id: 1, appointment_id: moved.id, changed_at: hoursAgo(3), action: 'moved', old_starts_at: at(7, '15:00'),
       new_starts_at: moved.starts_at, old_service_name: infill.name, new_service_name: infill.name,
@@ -247,9 +259,27 @@ export function demoApi(): Api {
     const c = db.clients.find((x) => x.id === id);
     return c ? { id: c.id, full_name: c.full_name, email: c.email, phone: c.phone, phone_e164: c.phone_e164 } : undefined;
   };
-  const shape = (a: Store['appointments'][number]): Appointment => ({
-    ...a, client: clientLite(a.client_id), has_form: db.forms.some((f) => f.client_id === a.client_id),
-  });
+  // As in the live API: lists only know whether the client has allergies, consent and a form recorded…
+  const shape = (a: Store['appointments'][number]): Appointment => {
+    const c = db.clients.find((x) => x.id === a.client_id);
+    return {
+      ...a, client: clientLite(a.client_id), has_form: db.forms.some((f) => f.client_id === a.client_id),
+      has_consent: !!c?.health_consent_at, has_allergies: !!c?.allergies?.trim(),
+    };
+  };
+  // …and one appointment on its own comes with the client's health information.
+  const shapeDetail = (a: Store['appointments'][number]): Appointment => {
+    const c = db.clients.find((x) => x.id === a.client_id);
+    return {
+      ...shape(a),
+      health: c ? {
+        allergies: c.allergies, consent_at: c.health_consent_at, consent_note: c.health_consent_note, is_regular: c.is_regular,
+        patch_tests: db.patch_tests.filter((p) => p.client_id === c.id).map(({ tested_on, result }) => ({ tested_on, result }))
+          .sort((x, y) => y.tested_on.localeCompare(x.tested_on)),
+        forms: db.forms.filter((f) => f.client_id === c.id).map((f) => f.submitted_at).sort().reverse(),
+      } : undefined,
+    };
+  };
   const busyFor = (excludeId?: string): BusyRange[] => [
     ...db.appointments.filter((a) => ACTIVE.has(a.status) && a.id !== excludeId).map((a) => ({ starts_at: a.starts_at, ends_at: a.busy_until })),
     ...db.time_off.map((t) => ({ starts_at: t.starts_at, ends_at: t.ends_at })),
@@ -512,7 +542,14 @@ export function demoApi(): Api {
       return delay(db.appointments.filter((a) => a.starts_at < toIso && a.ends_at > fromIso)
         .sort((a, b) => a.starts_at.localeCompare(b.starts_at)).map(shape));
     },
-    async getAppointment(id) { needOwner(); const a = db.appointments.find((x) => x.id === id); return delay(a ? shape(a) : null); },
+    async listUnfinished(beforeIso, limit) {
+      needOwner();
+      const before = new Date(beforeIso).getTime();
+      const all = db.appointments.filter((a) => (a.status === 'confirmed' || a.status === 'pending_deposit') && new Date(a.ends_at).getTime() <= before)
+        .sort((a, b) => a.starts_at.localeCompare(b.starts_at) || a.id.localeCompare(b.id));
+      return delay({ appts: all.slice(0, limit).map(shape), total: all.length });
+    },
+    async getAppointment(id) { needOwner(); const a = db.appointments.find((x) => x.id === id); return delay(a ? shapeDetail(a) : null); },
     async createAppointment(n) {
       needOwner();
       if (clash(n.starts_at, n.duration_min)) fail('appointments_no_overlap');
@@ -526,7 +563,7 @@ export function demoApi(): Api {
       });
       db.appointments.push(a);
       commit();
-      return delay(shape(a));
+      return delay(shapeDetail(a));
     },
     async updateAppointment(id, patch) {
       needOwner();
@@ -543,7 +580,7 @@ export function demoApi(): Api {
       }
       db.appointments[i] = withBusy(next);
       commit();
-      return delay(shape(db.appointments[i]));
+      return delay(shapeDetail(db.appointments[i]));
     },
     async markDepositPaid(id, method) {
       needOwner();
@@ -733,5 +770,31 @@ export function demoApi(): Api {
   };
   // Reload from storage if another tab changed the demo.
   if (typeof window !== 'undefined') window.addEventListener('storage', (e) => { if (e.key === KEY) db = load(); });
-  return api;
+  return withSignal(api);
+}
+
+/** What the live API says when an iPhone has no signal (the Supabase client puts the error's name first). */
+const NO_SIGNAL_ERROR = 'TypeError: Load failed';
+
+/**
+ * Like the live API with no signal: while the phone is offline nothing goes through, and a reply
+ * that was on its way when the signal dropped is lost, although the change itself has been made
+ * (as when a booking reaches the server but its answer never comes back). Signing in is kept on
+ * the phone in the live app too, so the session calls still work.
+ */
+function withSignal(api: Api): Api {
+  const offline = () => typeof navigator !== 'undefined' && navigator.onLine === false;
+  const onPhone = new Set(['mode', 'getSession', 'onAuthChange']);
+  const out: Record<string, unknown> = {};
+  for (const [name, value] of Object.entries(api)) {
+    if (typeof value !== 'function' || onPhone.has(name)) { out[name] = value; continue; }
+    const call = value as (...args: unknown[]) => Promise<unknown>;
+    out[name] = async (...args: unknown[]) => {
+      if (offline()) throw new Error(NO_SIGNAL_ERROR);
+      const result = await call(...args);
+      if (offline()) throw new Error(NO_SIGNAL_ERROR);
+      return result;
+    };
+  }
+  return out as unknown as Api;
 }

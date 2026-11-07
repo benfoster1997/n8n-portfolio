@@ -1024,3 +1024,6 @@
 /* a footer link moves to the next line whole ("privacy notice"), not split in two */
 .book > p.sub.centre a,
 .manage > p.sub.centre a { white-space: nowrap; }
+
+/* Back on the free times because the chosen time has just gone */
+.pub-time-gone { margin: 0; line-height: 1.45; }

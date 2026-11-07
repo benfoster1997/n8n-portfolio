@@ -131,6 +131,26 @@ export interface Appointment {
   client?: ClientLite;
   /** True when the client has at least one consultation form on file. */
   has_form?: boolean;
+  /** The client's consent to keeping health information is recorded: from the online form, or by the owner (Record consent). */
+  has_consent?: boolean;
+  /** The client has allergies recorded. Only that: lists show an "Allergy" tag, never the details. */
+  has_allergies?: boolean;
+  /** One appointment on its own (getAppointment, updateAppointment): the client's health information, for the strip at the top. */
+  health?: ApptHealth;
+}
+
+/** A client's health information as the appointment screen shows it. */
+export interface ApptHealth {
+  allergies: string | null;
+  /** When consent to keeping health information was given, and how ("Paper consultation form", "Online consultation form", …). */
+  consent_at: string | null;
+  consent_note: string | null;
+  /** A regular moved over from another system (never asked for a new-client deposit). */
+  is_regular: boolean;
+  /** Newest first. */
+  patch_tests: Pick<PatchTest, 'tested_on' | 'result'>[];
+  /** When each consultation form was filled in, newest first. */
+  forms: string[];
 }
 
 /** One change a client made to their own booking online. */

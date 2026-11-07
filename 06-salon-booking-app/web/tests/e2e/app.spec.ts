@@ -137,6 +137,10 @@ test('the owner adds an appointment, finishes it and takes cash', async ({ page 
   await expect(page.getByLabel('Amount paid today (£)')).toHaveValue('10.00');
   await page.getByRole('radio', { name: 'Cash' }).click();
   await page.getByRole('button', { name: 'Mark as done' }).click();
+  // Yesterday's, so Ruby isn't there to book her next visit: it closes, saying what was recorded.
+  // (A visit today stays open to book the next one: next-visit.spec.ts.)
+  await expect(page.locator('.toast')).toHaveText('Done: £10 recorded.');
+  await expect(page.getByRole('dialog')).toHaveCount(0);
   await expect(page.locator('.chip', { hasText: 'Done' })).toBeVisible();
 });
 
@@ -303,7 +307,8 @@ test('takings: totals, tax year and a spreadsheet download', async ({ page }) =>
   await shot(page, '10-money');
   const [download] = await Promise.all([
     page.waitForEvent('download'),
-    page.getByRole('button', { name: 'Download spreadsheet (CSV)' }).click(),
+    // No share sheet in Chromium, so it downloads (backup.spec.ts covers an iPhone's share sheet).
+    page.getByRole('button', { name: 'Save spreadsheet (CSV)' }).click(),
   ]);
   expect(download.suggestedFilename()).toMatch(/^takings-tax-year-\d{4}-\d{2}\.csv$/);
 });
