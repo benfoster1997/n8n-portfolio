@@ -110,10 +110,10 @@ describe('the card', () => {
     expect(t).not.toContain('Pay by');
   });
 
-  it('after the Friday before a weekend due date: pay today by Faster Payments or card', () => {
+  it('after the Friday before a weekend due date: pay today by Faster Payments or debit card (HMRC takes no personal credit cards)', () => {
     const { text: t } = card('2027-01-30', figures(saved(2025, 28_500, 2_150)));
     expect(t).not.toContain('Pay by Friday 29 January');
-    expect(t).toContain('Not paid yet? Pay today by Faster Payments (your banking app) or card: those count on the day.');
+    expect(t).toContain('Not paid yet? Pay today by Faster Payments (your banking app) or debit card: those count on the day.');
   });
 
   it('a due date on a weekday: no “to be safe” day', () => {
@@ -121,6 +121,21 @@ describe('the card', () => {
     const { text: t } = card('2027-12-10', figures(saved(2026, 28_500, 2_150)));
     expect(t).toContain('Your 2026–27 tax return and bill are due Monday 31 January.');
     expect(t).not.toContain('to be safe');
+  });
+
+  it('only the app’s takings, with nothing saved for that year (the year she switched apps): says the figure is too low without the rest', () => {
+    // 2026–27, from 1 December 2027: £15,000 taken in the app from September, nothing added with Edit.
+    // £14,000 of profit after the trading allowance: £286 Income Tax and £86 Class 4.
+    const appOnly: BillYearFigures = { row: nothing(2026).row, takingsPence: gbp(15_000), hasTakings: true };
+    const hint = 'Took money another way in 2026–27, such as through another app? Tap to add it, or this is too low.';
+    const { text: t } = card('2027-12-05', appOnly);
+    expect(t).toContain('About £372 on your figures.');
+    expect(t).toContain(hint);
+    // Under the tax-free allowance on the app's takings alone: still worth asking.
+    expect(card('2027-12-05', { ...appOnly, takingsPence: gbp(9_000) }).text).toContain(`Nothing to pay on your figures. ${hint}`);
+    // Once she has saved her figures for that year (even just expenses), it isn't said.
+    expect(card('2027-12-05', figures(saved(2026, 0, 500), 15_000)).text).not.toContain('Took money another way');
+    expect(card('2026-12-07', figures(saved(2025, 28_500, 2_150))).text).not.toContain('Took money another way');
   });
 
   it('while her figures load, and if they can’t be', () => {
@@ -158,7 +173,8 @@ describe('the card', () => {
 const allDue: TaxDueOnToday[] = ['2026-12-07', '2027-07-05'].map((d) => taxDueOnToday(d)!);
 it('never uses the tab names, so the card can’t be mistaken for a tab', () => {
   for (const due of allDue) {
-    for (const f of [figures(saved(2025, 28_500, 2_150)), nothing(2025), null]) {
+    for (const f of [figures(saved(2025, 28_500, 2_150)), nothing(2025), null,
+      { row: nothing(2025).row, takingsPence: gbp(15_000), hasTakings: true }]) {
       const t = text(renderToStaticMarkup(createElement(StaticRouter, { location: '/' }, createElement(TaxDueView, { due, today: '2026-12-07', figures: f, failed: false }))));
       expect(t).not.toMatch(/\b(Today|Diary|Clients|Money|Settings)\b/);
     }

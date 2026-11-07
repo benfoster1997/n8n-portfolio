@@ -52,17 +52,20 @@ async function backToToday(page: Page) {
 test('Today lists appointments that are over but never finished, oldest first, until each is dealt with', async ({ page }) => {
   await signIn(page);
   await expect(count(page)).toHaveText('4');
-  await expect(card(page)).toContainText('These have passed but still say Confirmed or Deposit due. Finish each one, or mark a no-show.');
+  await expect(card(page)).toContainText('These are over but were never finished. Finish each one, or mark a no-show.');
   await expect(card(page).getByRole('link')).toHaveText([
     `${at(-5, '14:00')} · Jess Collins · BIAB new set`,
     `${at(-4, '14:00')} · Grace Patel · BIAB infill`,
     `${at(0, '10:00')} · Isla Morgan · BIAB infill`,
     `${at(0, '13:00')} · Grace Patel · BIAB infill`,
   ]);
-  // Today's two are over, so the tile doesn't say "All done" while they're still to finish.
-  await expect(tileNote(page)).toHaveText('4 to finish');
+  // Today's two are over, so the tile doesn't say "All done" while they're still to finish. It counts
+  // only today's: the tile is about today, and the older two are in the card.
+  await expect(tileNote(page)).toHaveText('2 to finish');
   // Jess's old unpaid booking isn't counted as a deposit still to come.
   await expect(page.locator('.card.attention', { hasText: 'Deposits waiting' })).not.toContainText('Jess Collins');
+  // Isla's visit this morning is over: it's listed here, not again under No consultation form on file.
+  await expect(page.locator('.card.attention', { hasText: 'No consultation form on file' })).not.toContainText('Isla Morgan');
   await shot(page, 'n01-today-not-finished');
 
   // Jess never paid and never came: a no-show, asked about the way it is for a new client.
@@ -84,8 +87,10 @@ test('Today lists appointments that are over but never finished, oldest first, u
   await page.getByRole('button', { name: 'Finish & take payment' }).click();
   await expect(page.getByLabel('Amount paid today (£)')).toHaveValue('30.00');
   await page.getByRole('button', { name: 'Mark as done' }).click();
-  // The sheet stays open to book the next visit (next-visit.spec.ts); not now.
-  await page.getByRole('dialog', { name: 'Next visit' }).getByRole('button', { name: 'Not now' }).click();
+  // From another day, Grace isn't there to agree her next visit (and its dates would count from Saturday):
+  // it just says what was recorded. A visit today offers the next one (next-visit.spec.ts).
+  await expect(page.locator('.toast')).toHaveText('Done: £30 recorded.');
+  await expect(page.getByRole('dialog')).toHaveCount(0);
   await expect(heroChip(page)).toHaveText('Done');
   await backToToday(page);
   await expect(count(page)).toHaveText('2');
@@ -129,6 +134,8 @@ test('a long list shows the oldest five, then how many more', async ({ page }) =
   });
   await page.reload();
   await expect(count(page)).toHaveText('10');
+  // The first tile still counts only today's.
+  await expect(tileNote(page)).toHaveText('2 to finish');
   const rows = card(page).getByRole('link');
   await expect(rows).toHaveCount(5);
   await expect(rows.first()).toContainText(at(-30, '11:00'));
@@ -140,7 +147,7 @@ test('a long list shows the oldest five, then how many more', async ({ page }) =
   await rows.first().click();
   await page.getByRole('button', { name: 'Finish & take payment' }).click();
   await page.getByRole('button', { name: 'Mark as done' }).click();
-  await page.getByRole('dialog', { name: 'Next visit' }).getByRole('button', { name: 'Not now' }).click();
+  await expect(page.locator('.toast')).toHaveText('Done: £30 recorded.');
   await expect(heroChip(page)).toHaveText('Done');
   await backToToday(page);
   await expect(count(page)).toHaveText('9');
@@ -158,7 +165,8 @@ test('the No-show question is true for a returning client and for a regular', as
   let asked = answerNext(page, false);
   await page.getByRole('button', { name: 'No-show' }).click();
   await expect.poll(() => asked.text).toBe('Mark Isla as a no-show? It can’t be undone, and they aren’t emailed. '
-    + 'As Isla has had a visit marked as done before, they won’t be asked for a £10 deposit if they book online again.');
+    + 'As Isla has had a visit marked as done before, they won’t be asked for a £10 deposit if they book online again '
+    + 'with the email address on their record.');
   // Saying no leaves it as it was.
   await expect(heroChip(page)).toHaveText('Not finished');
 
@@ -169,8 +177,58 @@ test('the No-show question is true for a returning client and for a regular', as
   asked = answerNext(page, false);
   await page.getByRole('button', { name: 'No-show' }).click();
   await expect.poll(() => asked.text).toBe('Mark Jess as a no-show? It can’t be undone, and they aren’t emailed. '
-    + 'As Jess is ticked as a regular, they won’t be asked for a £10 deposit if they book online again.');
+    + 'As Jess is ticked as a regular, they won’t be asked for a £10 deposit if they book online again with the email address on their record.');
   await expect(heroChip(page)).toHaveText('Not finished');
+
+  // Chloe has had a visit marked as done, but has no email address on her record: the booking page
+  // finds clients by email, so online she'd be a new client, asked for the deposit.
+  await editDemo(page, (db) => {
+    const usual = db.appointments.find((a) => a.booking_name === 'Chloe Bennett' && a.status === 'confirmed')!;
+    const starts = zonedToInstant(TODAY, '15:00');
+    const ends = new Date(starts.getTime() + usual.duration_min * 60e3).toISOString();
+    db.appointments.push({ ...usual, id: 'chloe-today', reference: 'CHLOE1', public_token: '00000000-0000-4000-8000-0000000000c1',
+      starts_at: starts.toISOString(), ends_at: ends, busy_until: ends });
+  });
+  await page.goto('/appointments/chloe-today');
+  await expect(page.getByRole('heading', { name: 'Chloe Bennett' })).toBeVisible();
+  asked = answerNext(page, false);
+  await page.getByRole('button', { name: 'No-show' }).click();
+  await expect.poll(() => asked.text).toBe('Mark Chloe as a no-show? It can’t be undone, and they aren’t emailed. '
+    + 'Chloe has no email address on their record, so if they book online they’ll be asked for the £10 deposit like a new client.');
+});
+
+test('a booking that’s over doesn’t chase a deposit, send the change link or re-send the confirmation', async ({ page }) => {
+  await signIn(page);
+  // Jess's online booking from five days ago, still waiting for its deposit.
+  await card(page).getByRole('link', { name: /Jess Collins/ }).click();
+  await expect(page.getByRole('heading', { name: 'Jess Collins' })).toBeVisible();
+  await expect(heroChip(page)).toHaveText('Not finished');
+  await expect(page.getByText(/Waiting for the £10 deposit/)).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Deposit received' })).toHaveCount(0);
+  await expect(page.getByRole('link', { name: /Ask for the deposit/ })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Change or cancel link' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Re-send confirmation email' })).toHaveCount(0);
+  // WhatsApp just opens a chat with her, with nothing about the booking written in.
+  const wa = page.locator('.od-contact').getByRole('link', { name: 'WhatsApp' });
+  expect(decodeURIComponent((await wa.getAttribute('href'))!.split('text=')[1])).toBe('Hi Jess, ');
+  // What she can do with it is all still there.
+  await expect(page.getByRole('button', { name: 'Finish & take payment' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'No-show' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Cancel', exact: true })).toBeVisible();
+  await shot(page, 'n05-over-no-deposit-chase');
+  // Nothing was emailed.
+  const jess = (await demo(page)).appointments.find((a) => a.booking_name === 'Jess Collins')!;
+  expect((await demo(page)).outbox.filter((o) => o.appointment_id === jess.id)).toEqual([]);
+
+  // Sophie's, tomorrow, still waits for its deposit as before.
+  await page.goto('/');
+  await page.locator('.card.attention', { hasText: 'Deposits waiting' }).getByRole('link', { name: /Sophie Turner/ }).click();
+  await expect(page.getByRole('heading', { name: 'Sophie Turner' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Deposit received' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Change or cancel link' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Re-send confirmation email' })).toBeVisible();
+  const ask = page.locator('.od-contact').getByRole('link', { name: 'WhatsApp' });
+  expect(decodeURIComponent((await ask.getAttribute('href'))!.split('text=')[1])).toContain('deposit');
 });
 
 test('cancelling one that has already started: no email unless she ticks it, no late tick, and No-show suggested', async ({ page }) => {

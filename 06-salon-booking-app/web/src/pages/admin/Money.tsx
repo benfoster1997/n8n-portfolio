@@ -81,8 +81,9 @@ export function Money() {
     lines.push([], ['Total', '', '', '', '', moneyPlain(total), ''], ['Cash', '', '', '', '', moneyPlain(cash), ''], ['Bank transfer', '', '', '', '', moneyPlain(bank), '']);
     const name = view === 'month' ? `takings-${month}.csv` : `takings-tax-year-${ty.label.replace('–', '-')}.csv`;
     const file = new File([toCsv(lines)], name, { type: 'text/csv' });
-    // The finished tax year's spreadsheet: Today stops reminding her about it.
-    const saved = () => { if (view === 'year') rememberSpreadsheet(Number(ty.from.slice(0, 4))); toast('Check it’s in Files'); };
+    // A finished tax year's spreadsheet: Today stops reminding her about it. One saved while the year
+    // is still running stops short, so the reminder after 5 April still comes.
+    const saved = () => { if (view === 'year' && today > ty.to) rememberSpreadsheet(Number(ty.from.slice(0, 4))); toast('Check it’s in Files'); };
     try {
       await saveFile([file]);
       saved();
@@ -209,10 +210,14 @@ function MonthPutAside({ month, today, tz, version }: { month: string; today: st
   const figuresFor = (year: number) => data.figures.find((r) => r.start_year === year) ?? emptyTaxYear(year);
   const { takingsPence, putAsidePence } = monthPutAside(month, data.payments, figuresFor);
   if (takingsPence <= 0) return null;
-  const pounds = wholePounds(putAsidePence);
+  // Never "nothing to put aside" for an amount that rounds down to £0.
+  const pounds = putAsidePence > 0 ? Math.max(1, wholePounds(putAsidePence)) : 0;
   const current = month === today.slice(0, 7);
   const name = fmt(`${month}-15T12:00:00Z`, 'MMMM', tz);
-  const years = parts.map((p) => yearLabel(p.taxYearStart)).join(' and ');
+  // Only the tax years this month's takings are in: April's 1st to 5th are in the year before.
+  const takenIn = (p: { from: string; to: string }) =>
+    data.payments.reduce((n, x) => (x.paid_on >= p.from && x.paid_on <= p.to ? n + x.amount_pence : n), 0);
+  const years = parts.filter((p) => takenIn(p) > 0).map((p) => yearLabel(p.taxYearStart)).join(' and ');
   const taken = current ? <>the <b>{money(takingsPence)}</b> taken so far this month,</> : <>{name}’s <b>{money(takingsPence)}</b></>;
   // Nothing saved with Edit for the tax year: takings from before she switched apps are missing, so this is too low.
   const unsaved = parts.filter((p) => nothingSaved(figuresFor(p.taxYearStart)));

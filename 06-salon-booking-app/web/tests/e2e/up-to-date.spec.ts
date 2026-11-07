@@ -21,7 +21,7 @@ async function shot(page: Page, name: string) {
 interface DemoAppt {
   id: string; client_id: string; booking_name: string | null; status: string; starts_at: string; ends_at: string; busy_until: string;
   reference: string; public_token: string; cancelled_at: string | null; cancelled_by: string | null; cancel_reason: string | null;
-  whatsapp_reminder_sent_at: string | null;
+  cancelled_late: boolean; whatsapp_reminder_sent_at: string | null;
 }
 interface DemoStore {
   appointments: DemoAppt[];
@@ -153,6 +153,102 @@ test('the Diary, the reminders list and an open appointment reload when she come
   await expect(chloe).toContainText('WhatsApp opened');
 });
 
+/** WhatsApp opens in a new tab: stand in for it, so nothing leaves the machine. */
+const whatsApp = (page: Page) => page.context().route('https://wa.me/**', (r) => r.fulfill({ body: 'WhatsApp' }));
+const reminderRow = (page: Page, name: string) => page.locator('.rm-item', { hasText: name });
+
+test('a reminder sent while the list is reloading stays marked as sent when the reload’s answer comes in', async ({ page }) => {
+  await whatsApp(page);
+  await phone(page);
+  await signIn(page);
+  await page.goto('/reminders');
+  const chloe = reminderRow(page, 'Chloe Bennett');
+  await expect(chloe).toContainText('Ready to send');
+  // Back after six minutes: a second later the list sets off to reload. The clock is stopped, so its answer waits.
+  await away(page);
+  await page.clock.pauseAt(new Date(NOW.getTime() + 6 * 60e3));
+  await back(page);
+  await page.clock.runFor(1_000);
+  await page.waitForTimeout(300); // the reload is on its way
+  // Before it comes back, she taps Send reminder: WhatsApp opens.
+  const popup = page.waitForEvent('popup');
+  await chloe.getByRole('link', { name: 'Send reminder' }).click();
+  await (await popup).close();
+  await expect(chloe).toContainText('WhatsApp opened');
+  // The reload's answer (from before her tap) comes in, then the save's.
+  await page.clock.runFor(1_000);
+  await page.waitForTimeout(300);
+  await expect(chloe).toContainText('WhatsApp opened');
+  await expect(chloe).not.toContainText('Ready to send');
+  expect(booking(await demo(page), 'Chloe Bennett', '2026-11-05', '11:00').whatsapp_reminder_sent_at).not.toBeNull();
+
+  // That reload didn't count, so coming back again a minute later reloads it: up to date, and still marked.
+  await meanwhile(page, (db) => addBooking(db, 'Ruby Clarke', '2026-11-05', '15:30'));
+  await page.clock.resume();
+  await awayFor(page, '01:00');
+  await expect(reminderRow(page, 'Ruby Clarke').filter({ hasText: '15:30' })).toBeVisible();
+  await expect(chloe).toContainText('WhatsApp opened');
+});
+
+test('a reminder sent before the list reloads stays marked, and the reload still brings what’s new', async ({ page }) => {
+  await whatsApp(page);
+  await phone(page);
+  await signIn(page);
+  await page.goto('/reminders');
+  const chloe = reminderRow(page, 'Chloe Bennett');
+  await expect(chloe).toContainText('Ready to send');
+  await meanwhile(page, (db) => addBooking(db, 'Ruby Clarke', '2026-11-05', '15:30'));
+  // Six minutes on she taps Send reminder, sends it in WhatsApp and comes back: the list is reloaded.
+  await page.clock.fastForward('06:00');
+  const popup = page.waitForEvent('popup');
+  await chloe.getByRole('link', { name: 'Send reminder' }).click();
+  await away(page);
+  await (await popup).close();
+  await back(page);
+  await expect(reminderRow(page, 'Ruby Clarke').filter({ hasText: '15:30' })).toBeVisible();
+  await expect(chloe).toContainText('WhatsApp opened');
+  await expect(chloe).not.toContainText('Ready to send');
+});
+
+test('an open appointment that can’t be brought up to date says so, and keeps what it had', async ({ page, context }) => {
+  await phone(page);
+  await signIn(page);
+  const isla = booking(await demo(page), 'Isla Morgan', TODAY, '10:00');
+  await page.goto(`/appointments/${isla.id}`);
+  await expect(page.locator('.od-hero .chip')).toHaveText('Confirmed');
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  await signal(page, context, false);
+  await awayFor(page, '06:00');
+  // Both tries fail: it says so at the top.
+  await expect(page.getByRole('alert')).toHaveText(NO_SIGNAL);
+  await expect(page.locator('.od-hero .chip')).toHaveText('Confirmed');
+  await shot(page, 'u05-appointment-no-signal');
+  // Signal back: next time she comes back it's up to date, and the line has gone.
+  await signal(page, context, true);
+  await awayFor(page, '00:10');
+  await expect(page.getByRole('alert')).toHaveCount(0);
+});
+
+test('a late cancellation’s Record payment received doesn’t vanish while the appointment reloads', async ({ page }) => {
+  await phone(page);
+  await signIn(page);
+  // Isla cancelled tomorrow's gel toes late: the full price is owed.
+  const late = (await demo(page)).appointments.find((a) => a.status === 'cancelled' && a.cancelled_late)!;
+  await page.goto(`/appointments/${late.id}`);
+  const record = page.getByRole('button', { name: 'Record payment received' });
+  await expect(record).toBeVisible();
+  // Back after six minutes: the appointment reloads. The clock is stopped, so its answers wait.
+  await away(page);
+  await page.clock.pauseAt(new Date(NOW.getTime() + 6 * 60e3));
+  await back(page);
+  await page.clock.runFor(1_000);
+  await page.waitForTimeout(300);
+  await expect(record).toBeVisible();
+  await expect(page.getByRole('link', { name: 'WhatsApp Isla' })).toBeVisible();
+  await page.clock.runFor(1_000);
+  await expect(record).toBeVisible();
+});
+
 test('never reloads under an open sheet or unsaved notes: it waits until they’re done', async ({ page }) => {
   await phone(page);
   await signIn(page);
@@ -236,6 +332,50 @@ test('signing in with no signal says so in plain words', async ({ page, context 
   await signal(page, context, false);
   await page.getByRole('button', { name: 'Sign in' }).click();
   await expect(page.getByRole('alert')).toHaveText(NO_SIGNAL);
+});
+
+test('Today or the Diary opened with no signal: Try again, never a free day made up from nothing', async ({ page, context }) => {
+  await signIn(page);
+  await page.getByRole('link', { name: 'Clients', exact: true }).click();
+  await expect(page.getByRole('link', { name: /Isla Morgan/ })).toBeVisible();
+  await signal(page, context, false);
+
+  await page.getByRole('link', { name: 'Today', exact: true }).click();
+  await expect(page.getByRole('alert')).toHaveText(NO_SIGNAL);
+  await expect(page.getByRole('button', { name: 'Try again' })).toBeVisible();
+  for (const madeUp of ['Free day', 'Nothing booked today.', 'Nothing booked tomorrow.', 'Booked today']) {
+    await expect(page.getByText(madeUp)).toHaveCount(0);
+  }
+  await expect(page.locator('.td-tiles')).toHaveCount(0);
+  await shot(page, 'u06-today-opened-no-signal');
+
+  await page.getByRole('link', { name: 'Diary', exact: true }).click();
+  await expect(page.getByRole('alert')).toHaveText(NO_SIGNAL);
+  await expect(page.getByRole('button', { name: 'Try again' })).toBeVisible();
+  await expect(page.getByText('Nothing booked.')).toHaveCount(0);
+  await expect(page.locator('.dy-hours')).toHaveCount(0); // not "Closed" for want of her opening hours
+
+  // Signal back: Try again loads it.
+  await signal(page, context, true);
+  await page.getByRole('button', { name: 'Try again' }).click();
+  await expect(page.locator('.dy-day')).toContainText('Isla Morgan');
+  await expect(page.locator('.dy-hours')).toHaveText('Open 09:30–17:30');
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  await page.getByRole('link', { name: 'Today', exact: true }).click();
+  await expect(updated(page)).toHaveText(/^Updated /);
+  await expect(todays(page)).toContainText('Isla Morgan');
+  await expect(page.getByRole('alert')).toHaveCount(0);
+});
+
+test('opening the app with no signal: it’ll open once there’s signal, and never says to sign out', async ({ page }) => {
+  await signIn(page);
+  // The phone has no signal as the app opens again (the page itself is on the phone).
+  await page.addInitScript(() => Object.defineProperty(Navigator.prototype, 'onLine', { configurable: true, get: () => false }));
+  await page.reload();
+  await expect(page.getByRole('heading', { name: 'Can’t open the diary' })).toBeVisible();
+  await expect(page.getByText(NO_SIGNAL)).toBeVisible();
+  await expect(page.getByText('It will open again once you have signal.')).toBeVisible();
+  await expect(page.getByText(/sign out and sign in again/)).toHaveCount(0);
 });
 
 /** Book a Gel polish on the first free time (Thursday 5 November, 09:30) as a returning client, up to Confirm booking. */

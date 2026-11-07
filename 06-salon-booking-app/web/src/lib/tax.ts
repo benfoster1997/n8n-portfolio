@@ -234,8 +234,9 @@ export function taxDates(taxYearStart: number): {
 /**
  * A due date at a weekend: the day it falls on, and the Friday before ("Friday 29 January").
  * HMRC says a payment due at a weekend has to reach it by the last working day before,
- * unless it's by Faster Payments or card (not checked independently), so paying by that
- * Friday is safe either way. 31 January and 31 July are never bank holidays.
+ * unless it's by Faster Payments or debit card (not checked independently; HMRC doesn't take
+ * personal credit cards), so paying by that Friday is safe either way. 31 January and 31 July
+ * are never bank holidays.
  */
 export function weekendDue(iso: string): { day: 'Saturday' | 'Sunday'; friday: string } | null {
   const [y, m, d] = iso.split('-').map(Number);

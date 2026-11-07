@@ -30,9 +30,10 @@ export function TaxDueCard({ due, today }: { due: TaxDueOnToday; today: string }
   return <TaxDueView due={due} today={today} figures={figures} failed={!figures && !!error && !loading} />;
 }
 
+/** Nothing saved with Edit for that year. */
+const nothingSaved = (row: TaxYear) => row.updated_at === null && !row.extra_takings_pence && !row.expenses_pence;
 /** Nothing saved with Edit for that year, and nothing in the app for it either: there's no figure to give. */
-const noFigures = (f: BillYearFigures) =>
-  !f.hasTakings && f.row.updated_at === null && !f.row.extra_takings_pence && !f.row.expenses_pence;
+const noFigures = (f: BillYearFigures) => !f.hasTakings && nothingSaved(f.row);
 
 /** The card for what has loaded so far (exported for the tests). */
 export function TaxDueView({ due, today, figures, failed }: {
@@ -52,14 +53,20 @@ export function TaxDueView({ due, today, figures, failed }: {
   }
   const weekend = weekendDue(due.date.iso);
   const dueDay = fmtDayLong(`${due.date.iso}T12:00:00Z`);
-  // The Friday has gone and the date is at a weekend: it can still be paid on the day, by Faster Payments or card.
+  // The Friday has gone and the date is at a weekend: it can still be paid on the day, by Faster Payments or
+  // debit card (HMRC doesn't take personal credit cards).
   const safeDay = weekend && today <= fridayBefore(due.date.iso)
     ? <> Pay by <span className="od-nowrap">{weekend.friday}</span> to be safe.</>
-    : weekend ? <> Not paid yet? Pay today by Faster Payments (your banking app) or card: those count on the day.</> : null;
+    : weekend ? <> Not paid yet? Pay today by Faster Payments (your banking app) or debit card: those count on the day.</> : null;
   const nothing = due.kind === 'bill' && amount?.total === 0;
   const ask = due.kind === 'bill'
     ? `Add your ${year} takings and expenses to see your bill.`
     : `Add your ${year} takings and expenses to see roughly how much.`;
+  // Only the app's takings, as she hasn't used Edit for that year: in the year she switched apps, the
+  // money taken before is missing. (No tab names on the card: tapping it opens that year, with Edit.)
+  const appOnly = figures && nothingSaved(figures.row)
+    ? <span className="td-tax-small">Took money another way in {year}, such as through another app? Tap to add it, or this is too low.</span>
+    : null;
   return (
     <Link className="card td-tax" to={`/money?taxyear=${due.billYear}`}>
       <span className="td-tax-head">
@@ -74,7 +81,7 @@ export function TaxDueView({ due, today, figures, failed }: {
             on account.{safeDay}</>}
       </span>
       {amount ? (
-        nothing ? <span className="td-tax-amount">Nothing to pay on your figures.</span> : (
+        nothing ? <><span className="td-tax-amount">Nothing to pay on your figures.</span>{appOnly}</> : (
           <>
             <span className="td-tax-amount">
               About <b className="td-tax-pounds">{money(amount.total * 100)}</b> on your figures
@@ -87,6 +94,7 @@ export function TaxDueView({ due, today, figures, failed }: {
                 ? <>Less anything you’ve already paid towards {year} (the HMRC app shows the exact amount).</>
                 : <>The HMRC app shows the exact amount.</>}
             </span>
+            {appOnly}
           </>
         )
       ) : figures ? (

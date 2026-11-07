@@ -192,6 +192,8 @@ export const RETRY_AFTER_MS = 1500;
  * Load what a screen shows, again whenever `deps` change. What's on screen stays while it
  * reloads. `reload` loads it again now; `refresh` does it in the background, trying once
  * more if that fails (see useRefreshOnReturn). `loadedAt` is when it last loaded (ms).
+ * `setData` puts a change she has just made on screen: a refresh that was already on its
+ * way then leaves the screen as it is, as its answer may be from before her change.
  */
 export function useLoad<T>(fn: () => Promise<T>, deps: unknown[]): {
   data: T | undefined; error: unknown; loading: boolean; loadedAt: number | null;
@@ -204,15 +206,21 @@ export function useLoad<T>(fn: () => Promise<T>, deps: unknown[]): {
   const [tick, setTick] = useState(0);
   // The next load is a refresh in the background.
   const background = useRef(false);
+  // How many changes she has put on screen with setData.
+  const edits = useRef(0);
   useEffect(() => {
     let live = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const retry = background.current;
     background.current = false;
+    const seen = edits.current;
     setLoading(true);
     const attempt = (again: boolean) => {
       fn().then((d) => {
         if (!live) return;
+        // She has changed something since this refresh set off, so its answer may be from before that:
+        // keep what's on screen. (An answer came, so there's signal.)
+        if (retry && edits.current !== seen) { setError(null); setLoading(false); return; }
         setData(d);
         setError(null);
         setLoadedAt(Date.now());
@@ -230,7 +238,8 @@ export function useLoad<T>(fn: () => Promise<T>, deps: unknown[]): {
   }, [...deps, tick]);
   const reload = useCallback(() => setTick((t) => t + 1), []);
   const refresh = useCallback(() => { background.current = true; setTick((t) => t + 1); }, []);
-  return { data, error, loading, loadedAt, reload, refresh, setData };
+  const change = useCallback((d: T) => { edits.current += 1; setData(d); }, []);
+  return { data, error, loading, loadedAt, reload, refresh, setData: change };
 }
 
 /** What's on a screen is reloaded when she comes back to the app once it's this old (or the day has changed). */

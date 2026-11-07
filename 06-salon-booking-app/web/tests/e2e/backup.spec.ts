@@ -183,3 +183,17 @@ test('after 5 April, Today asks once for the finished tax year’s spreadsheet',
   await expect(page.getByText('Today’s appointments')).toBeVisible();
   await expect(line).toHaveCount(0);
 });
+
+test('a tax year’s spreadsheet saved before the year has ended doesn’t stop the reminder after 5 April', async ({ page }) => {
+  // Friday 6 November 2026: she saves 2026–27's spreadsheet so far, from 6 April to today.
+  await signIn(page);
+  await page.goto('/money?taxyear=2026');
+  await expect(page.getByText('Tax year 2026–27')).toBeVisible();
+  const [download] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: 'Save spreadsheet (CSV)' }).click()]);
+  expect(download.suggestedFilename()).toBe('takings-tax-year-2026-27.csv');
+  await expect(page.getByText('Check it’s in Files')).toBeVisible();
+  // Saturday 10 April 2027: that copy stops in November, so Today still asks for the whole year's.
+  await page.clock.setSystemTime(new Date('2027-04-10T09:00:00Z'));
+  await page.goto('/');
+  await expect(page.getByRole('link', { name: /Save your 2026–27 takings spreadsheet/ })).toBeVisible();
+});

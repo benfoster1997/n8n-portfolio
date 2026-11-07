@@ -9,7 +9,7 @@ import { addDays, fmt, fmtDay, fmtDayLong, fmtDayTime, fmtTime, startOfDayInstan
 import { money } from '../../lib/text';
 import { dueWhatsAppReminders, lateCharge, reminderDates, reminderDays } from '../../lib/reminders';
 import { needingForms } from '../../lib/health';
-import { todayNote, UNFINISHED_SHOWN } from '../../lib/unfinished';
+import { isUnfinished, todayNote, UNFINISHED_SHOWN } from '../../lib/unfinished';
 import { taxDueOnToday, taxYearDays, yearLabel } from '../../lib/tax';
 import { backupAgeDays, backupDue, finishedTaxYear, readLastBackup, spreadsheetSaved } from '../../lib/backup';
 import type { ClientChange } from '../../lib/types';
@@ -120,8 +120,8 @@ export function Today() {
   const now = new Date();
   const hour = Number(fmt(now, 'H', tz));
   const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
-  // Never "All done" while something that's over still needs finishing.
-  const nextNote = todayNote(todays, unfinished.total, tz, now);
+  // Never "All done" while one of today's that's over still needs finishing (older ones are under Not finished yet).
+  const nextNote = todayNote(todays, todays.filter((a) => isUnfinished(a, now.getTime())).length, tz, now);
   const firstDue = deposits[0]?.deposit_due_at;
   const depositNote = !deposits.length ? 'None due' : !firstDue ? 'By transfer'
     : new Date(firstDue) < now ? 'Overdue' : `Due ${dateInZone(firstDue, tz) === today ? fmtTime(firstDue, tz) : fmtDay(firstDue, tz)}`;
@@ -159,7 +159,8 @@ export function Today() {
         <Link className="icon-btn td-add" to="/appointments/new" aria-label="New appointment"><Icon name="plus" /></Link>
       </header>
       <ErrorBox error={error} />
-      {loading && !data ? <Spinner /> : (
+      {/* Nothing has loaded (no signal, say): never "Free day" or "Nothing booked" made up from nothing */}
+      {loading && !data ? <Spinner /> : !data ? <button className="btn primary block" onClick={reload}>Try again</button> : (
         <>
           <div className="td-tiles">
             <div className="td-tile td-tile-main">
@@ -204,7 +205,7 @@ export function Today() {
           {unfinished.total > 0 && (
             <div className="card tight attention td-attn td-unf">
               <AttentionHead icon="unfinished" title="Not finished yet" count={unfinished.total} />
-              <p className="td-attn-sub">These have passed but still say Confirmed or Deposit due. Finish each one, or mark a <span className="od-nowrap">no-show</span>.</p>
+              <p className="td-attn-sub">These are over but were never finished. Finish each one, or mark a <span className="od-nowrap">no-show</span>.</p>
               <ul className="list">{unfinished.appts.map((a) => (
                 <li key={a.id}><Link className="list-row td-unf-row" to={`/appointments/${a.id}`}>
                   <span className="grow td-unf-text">
@@ -255,21 +256,6 @@ export function Today() {
             </div>
           )}
 
-          {taxDue && <TaxDueCard due={taxDue} today={today} />}
-          {backupDue(lastBackup, now, tz) && (
-            <Link className="card td-chore" to="/settings/backup">
-              <span className="td-chore-ico" aria-hidden="true"><Glyph name="backup" size={19} /></span>
-              <span className="grow">
-                <span className="td-chore-title">Time for your monthly backup</span>
-                <span className="td-chore-meta">
-                  {lastBackup ? `Your last one was ${fmtDay(lastBackup, tz)}, ${backupAge} days ago.` : 'There’s no backup saved on this phone yet.'}
-                </span>
-              </span>
-              <span className="chev"><Icon name="chev" size={18} /></span>
-            </Link>
-          )}
-          {sheetToSave !== null && <SpreadsheetLine year={sheetToSave} />}
-
           {remindersToSend.length > 0 && (
             <>
               <Link className="btn wa block td-wa" to="/reminders">
@@ -296,6 +282,22 @@ export function Today() {
             {tomorrow.length ? <ul className="list">{tomorrow.map((a) => <ApptRow key={a.id} a={a} tz={tz} />)}</ul>
               : <div className="empty">Nothing booked tomorrow.</div>}
           </div>
+
+          {/* Jobs that come round (the tax bill, the monthly backup, a finished tax year's spreadsheet): after the days' appointments */}
+          {taxDue && <TaxDueCard due={taxDue} today={today} />}
+          {backupDue(lastBackup, now, tz) && (
+            <Link className="card td-chore" to="/settings/backup">
+              <span className="td-chore-ico" aria-hidden="true"><Glyph name="backup" size={19} /></span>
+              <span className="grow">
+                <span className="td-chore-title">Time for your monthly backup</span>
+                <span className="td-chore-meta">
+                  {lastBackup ? `Your last one was ${fmtDay(lastBackup, tz)}, ${backupAge} days ago.` : 'There’s no backup saved on this phone yet.'}
+                </span>
+              </span>
+              <span className="chev"><Icon name="chev" size={18} /></span>
+            </Link>
+          )}
+          {sheetToSave !== null && <SpreadsheetLine year={sheetToSave} />}
 
           {changes.length > 0 && (
             <>

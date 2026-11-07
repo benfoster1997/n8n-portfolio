@@ -84,6 +84,11 @@ test('after Mark as done, the same treatment in 2, 3 or 4 weeks is one tap from 
   await expect(page.getByLabel('Treatment').locator('option:checked')).toHaveText('BIAB infill · 1 hr · £30');
   await expect(page.getByLabel('Date')).toHaveValue('2026-11-18');
   await expect(page.locator('.slot.on')).toHaveText('13:00');
+  // All filled in, so it opens at Add to diary, above the tab bar, for the one more tap.
+  const add = page.getByRole('button', { name: 'Add to diary' });
+  await expect(add).toBeInViewport();
+  await expect.poll(async () => (await add.boundingBox())!.y + (await add.boundingBox())!.height)
+    .toBeLessThanOrEqual((await page.locator('.tabbar').boundingBox())!.y);
   // A returning client now: no deposit. She has an email, so the confirmation is ticked.
   await expect(page.getByLabel(/Ask for a £10 deposit/)).not.toBeChecked();
   await expect(page.getByLabel('Email a confirmation to the client')).toBeChecked();
@@ -215,6 +220,8 @@ test('a time in the link that has gone since is cleared, with a note', async ({ 
   // Amelia is in at 12:30 that day.
   await page.goto(`/appointments/new?client=${grace.client_id}&service=${grace.service_id}&d=2026-11-25&t=12%3A30`);
   await expect(page.getByText('12:30 isn’t free any more. Pick another time.')).toBeVisible();
+  // Nothing to add yet, so it stays at the top.
+  expect(await page.evaluate(() => window.scrollY)).toBe(0);
   await expect(page.locator('.slot.on')).toHaveCount(0);
   await page.getByRole('button', { name: '11:15' }).click();
   await expect(page.getByText('isn’t free any more')).toHaveCount(0);

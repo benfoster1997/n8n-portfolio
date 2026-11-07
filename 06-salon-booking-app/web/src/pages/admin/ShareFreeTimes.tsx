@@ -65,7 +65,7 @@ export function ShareFreeTimesSheet({ bookingUrl, onClose }: { bookingUrl: strin
           <p className="notice warn od-share-none">Online booking is paused, so clients can’t book any times at the moment. You can open it again in Settings → Business details.</p>
         )}
         {data?.info.booking_enabled && !service && (
-          <p className="notice warn od-share-none">None of your treatments can be booked online yet. Choose which can in Settings → Treatments.</p>
+          <p className="notice warn od-share-none">None of your treatments can be booked online yet. Choose which can in Settings → Treatments &amp; prices.</p>
         )}
         {data?.info.booking_enabled && service && out && (
           <>

@@ -292,7 +292,7 @@ Class 4 National Insurance on her profit, at that year's rates for England, Wale
   for that year's figures instead of showing £0. Until she uses **Edit** for a year, the card asks
   about money taken another way.
 - **Money → Month** says roughly how much of that month's takings to put aside, e.g. *Put aside about
-  £310 of November's £2,480 for tax*. It's how much the month adds to the year's estimate, so it's
+  £645 of November's £2,480 for tax*. It's how much the month adds to the year's estimate, so it's
   nothing while her profit for the year is under £12,570, then 26p of each £1 (42p above £50,270).
 - **Today** shows the bill only in the weeks before it's due: from 1 December to 31 January, the tax
   year before's return and bill (due 31 January), about how much on her figures, with the first
@@ -326,11 +326,12 @@ The booking page stops taking bookings while 15 online bookings are waiting for 
 in [What this app does not do](#what-this-app-does-not-do)). Only bookings that haven't started yet
 count towards those 15, so a new client who never paid and never came can't switch online booking off.
 
-Anything that's over but still says Confirmed or Deposit due is listed on **Today → Not finished yet**,
-oldest first. Until it's dealt with, its money is missing from her takings, and a client whose visit
-was never marked as done is still treated as new. For each one, open it and:
+Anything that's over but was never finished is listed on **Today → Not finished yet**, oldest first,
+and says *Not finished* in the Diary. Until it's dealt with, its money is missing from her takings,
+and a client whose visit was never marked as done is still treated as new. For each one, open it and:
 
-- **Finish & take payment** if the visit happened (the payment is dated today),
+- **Finish & take payment** if the visit happened (the payment is dated today; for a visit from another
+  day it doesn't offer to book the next one, as the client isn't there),
 - **No-show** if they never came (no email is sent), or
 - **Cancel** for anything else. For one that has already started, *Email the client* is unticked to begin with.
 
@@ -358,7 +359,7 @@ at Deposit due still count towards the 15.
 | She wants to… | Where |
 |---|---|
 | See today and anything waiting on her | **Today**. Left open on her phone, it reloads by itself when she comes back to the app, if the day has changed or a few minutes have passed (the Diary, the WhatsApp reminders and an open appointment do too, but never while she's in the middle of something). **Updated 08:31** under the date says when; tap it to load it again now. |
-| Finish appointments she forgot to mark as done | **Today → Not finished yet**: each one that's over but still says Confirmed or Deposit due, oldest first. Open it, then **Finish & take payment**, **No-show** (no email is sent) or **Cancel**. |
+| Finish appointments she forgot to mark as done | **Today → Not finished yet**: each one that's over but was never finished, oldest first. Open it, then **Finish & take payment**, **No-show** (no email is sent) or **Cancel**. |
 | Send consultation forms | **Today → No consultation form on file** lists anyone booked in the next 14 days with no form and no consent recorded, regulars included. The appointment → **Send form link**. |
 | Check allergies before she starts | The appointment: allergies in red, the latest patch test and the consultation form are at the top. Today and the Diary show only an **Allergy** tag, never the details. |
 | Send WhatsApp reminders (appointments in the next 3 days) | **Today → Send N WhatsApp reminders**: tap each one, WhatsApp opens with the message written, press send |
@@ -371,7 +372,7 @@ at Deposit due still count towards the 15.
 | A change/cancel link reached the wrong person | The appointment → **Make a new link**. The old one stops working straight away. |
 | Confirm a new client's deposit has arrived | Today → *Deposits waiting* → the booking → **Deposit received** (the client is emailed automatically) |
 | Finish an appointment and record payment | The appointment → **Finish & take payment** → cash or bank transfer |
-| Book the client's next visit before they leave | After **Mark as done** the sheet asks *Book Jess's next BIAB infill?*. **In 2 weeks**, **In 3 weeks** and **In 4 weeks** each show the time they'd book: the same day and time, or the nearest free time. **Pick a date** lets her choose. One tap fills in New appointment with no deposit, then **Add to diary**. A client with an email gets the usual confirmation; with none, the appointment offers **Send on WhatsApp** in her *Booking confirmed* wording (Settings → WhatsApp messages). Agree the date with the client first, and book one visit ahead: bookings she makes count towards a client's limit of three upcoming bookings, and a client with three can't book online. A client's record → **Book an appointment** starts on their last treatment. |
+| Book the client's next visit before they leave | After **Mark as done** on a visit today, the sheet asks *Book Jess's next BIAB infill?*. **In 2 weeks**, **In 3 weeks** and **In 4 weeks** each show the time they'd book: the same day and time, or the nearest free time. **Pick a date** lets her choose. One tap fills in New appointment with no deposit, then **Add to diary**. A client with an email gets the usual confirmation; with none, the appointment offers **Send on WhatsApp** in her *Booking confirmed* wording (Settings → WhatsApp messages). Agree the date with the client first, and book one visit ahead: bookings she makes count towards a client's limit of three upcoming bookings, and a client with three can't book online. A client's record → **Book an appointment** starts on their last treatment. |
 | Block a holiday or a dentist appointment | **Diary → Block time** |
 | See a client's allergies, patch tests, form and photos | **Clients** → the client |
 | Get her figures for Self Assessment | **Money → Tax year → Save spreadsheet (CSV)**: on her iPhone the share sheet opens, so she chooses **Save to Files**, or sends it to her accountant. From 6 April, **Today** reminds her once to save the tax year that has just ended. |
@@ -447,7 +448,7 @@ So nobody is surprised later:
 |---|---|
 | A client says the change/cancel link doesn't work | Links stop working a day after the appointment, and changes aren't possible once it has started. Check **Settings → Deposits & cancellations → Clients can change or cancel online** is on. |
 | Clients say they got no email | App → Settings → Email shows when the script last checked in. At [script.google.com](https://script.google.com) → the project → **Executions**, you can see any errors. Ask the client to check their junk folder. |
-| "No signal: check your connection and try again" | Check the phone has signal or Wi-Fi, then tap **Updated …** on Today (or try again). If other apps and websites work but the app still says this, the free Supabase project may have paused: go to the Supabase dashboard → the project → **Resume project**. It's back in a few minutes with all its data (possible for up to a year after a pause). |
+| "No signal: check your connection and try again" | Check the phone has signal or Wi-Fi, then tap **Updated …** on Today, or **Try again**. If other apps and websites work but the app still says this, the free Supabase project may have paused: go to the Supabase dashboard → the project → **Resume project**. It's back in a few minutes with all its data (possible for up to a year after a pause). |
 | A client says the booking page told them to check their email | Their signal dropped as they tapped **Confirm booking**, so the page couldn't tell whether it went through. Look in the **Diary**: if the booking is there, it did, and their confirmation email is on its way (it can take up to 10 minutes). |
 | A backup or spreadsheet isn't in Files | Try again, choose **Save to Files** in the share sheet and pick **iCloud Drive**. If the share sheet doesn't open, a backup offers **Download it instead** (a spreadsheet downloads by itself): then look in Files → **Downloads**. |
 | The email script says the secret was refused | App → Settings → Email → **Make a new secret**, then paste it into Script Properties → `EMAIL_SECRET`. |

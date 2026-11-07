@@ -137,12 +137,10 @@ test('the owner adds an appointment, finishes it and takes cash', async ({ page 
   await expect(page.getByLabel('Amount paid today (£)')).toHaveValue('10.00');
   await page.getByRole('radio', { name: 'Cash' }).click();
   await page.getByRole('button', { name: 'Mark as done' }).click();
-  // The sheet stays open to book the next visit (next-visit.spec.ts covers the rest).
-  const next = page.getByRole('dialog', { name: 'Next visit' });
-  await expect(next.locator('.od-next-done')).toHaveText('Done: £10 recorded.');
-  await expect(next.getByRole('heading', { name: 'Book Ruby’s next Removal only?' })).toBeVisible();
-  await next.getByRole('button', { name: 'Not now' }).click();
-  await expect(next).toHaveCount(0);
+  // Yesterday's, so Ruby isn't there to book her next visit: it closes, saying what was recorded.
+  // (A visit today stays open to book the next one: next-visit.spec.ts.)
+  await expect(page.locator('.toast')).toHaveText('Done: £10 recorded.');
+  await expect(page.getByRole('dialog')).toHaveCount(0);
   await expect(page.locator('.chip', { hasText: 'Done' })).toBeVisible();
 });
 

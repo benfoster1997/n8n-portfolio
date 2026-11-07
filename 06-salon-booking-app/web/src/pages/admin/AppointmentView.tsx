@@ -10,7 +10,7 @@ import { lateCharge, lateChargePayments } from '../../lib/reminders';
 import { availableSlots } from '../../lib/slots';
 import { addDays, dateInZone, fmt, fmtDay, fmtDayLong, fmtDayTime, fmtTime, minutesLabel, startOfDayInstant, todayInZone, zonedToInstant } from '../../lib/time';
 import { fillTemplate, firstName, freeChangeDeadline, lateFromEarlierChange, manageLink, money, noticeLabel, parsePounds, whatsappLink } from '../../lib/text';
-import { formLine, formOrConsent, patchTestLine } from '../../lib/health';
+import { consentOnly, formLine, formOnFile, formOrConsent, patchTestLine } from '../../lib/health';
 import { isUnfinished, noShowQuestion } from '../../lib/unfinished';
 import {
   doneLine, newAppointmentLink, nextVisitDays, nextVisitOptions, nextVisitQuestion, sameTreatment, type Treatment,
@@ -53,7 +53,7 @@ export function AppointmentView() {
   const { data: changes, refresh: refreshChanges } = useLoad(() => api.listClientChanges({ appointmentId: id }), [id]);
   // Money already received for a late cancellation (the deposit isn't counted here).
   const lateId = a?.status === 'cancelled' && a.cancelled_late ? a.id : null;
-  const { data: late, loading: lateLoading, reload: reloadLate, refresh: refreshLate } = useLoad(async () => {
+  const { data: late, loading: lateLoading, reload: reloadLate } = useLoad(async () => {
     if (!lateId || !a) return { id: lateId, received: [] };
     return { id: lateId, received: lateChargePayments(a, await api.listPayments(dateInZone(a.cancelled_at ?? a.starts_at, tz), todayInZone(tz))) };
   }, [lateId]);
@@ -62,17 +62,20 @@ export function AppointmentView() {
   const [notes, setNotes] = useState<string | null>(null);
   const act = useAction();
   // Left open: up to date again when she comes back to the app (a client may have changed or cancelled it),
-  // but never while a sheet is open, her notes are unsaved or something is still saving.
+  // but never while a sheet is open, her notes are unsaved or something is still saving. Money received for a
+  // late cancellation is only recorded on this screen, which reloads it then, so it isn't reloaded here: its
+  // buttons would vanish while it loaded, just as she went to tap one.
   useRefreshOnReturn({
     loadedAt, error, tz, blocked: sheet !== null || notes !== null || act.busy,
-    refresh: () => { refresh(); refreshEmails(); refreshChanges(); refreshLate(); },
+    refresh: () => { refresh(); refreshEmails(); refreshChanges(); },
   });
 
   if (loading && !a) return <Spinner />;
   if (!a) return <div className="page"><TopBar title="Appointment" back /><ErrorBox error={error ?? new Error('not_found')} /></div>;
 
   const live = a.status === 'confirmed' || a.status === 'pending_deposit';
-  // Over, but still Confirmed or Deposit due: Today lists it under "Not finished yet".
+  // Over, but still Confirmed or Deposit due: Today lists it under "Not finished yet". Nothing here then
+  // messages the client as if it were still to come: no deposit chase, change link or confirmation email.
   const unfinished = isUnfinished(a);
   const started = new Date(a.starts_at) <= new Date(Date.now() + 2 * 3600e3);
   const overdue = a.status === 'pending_deposit' && a.deposit_due_at && new Date(a.deposit_due_at) < new Date();
@@ -105,9 +108,12 @@ export function AppointmentView() {
   }
   async function noShow() {
     // Whether they'd be asked for a deposit next time follows the booking page's rule: a client with
-    // no visit marked as done who isn't ticked as a regular. If that can't be checked, the question says it generally.
+    // no visit marked as done who isn't ticked as a regular, or one it can't find by their email address.
+    // If the visits can't be checked, the question says it generally.
     const visits = await api.countCompletedVisits(a!.client_id).catch(() => null);
-    const question = noShowQuestion({ name: first, visits, regular: !!a!.health?.is_regular, depositPence: s.deposit_amount_pence });
+    const question = noShowQuestion({
+      name: first, visits, regular: !!a!.health?.is_regular, hasEmail: !!a!.client?.email, depositPence: s.deposit_amount_pence,
+    });
     if (!window.confirm(question)) return;
     if (await act.run(() => api.updateAppointment(a!.id, { status: 'no_show' }))) { toast('Marked as no-show'); reload(); }
   }
@@ -162,6 +168,8 @@ export function AppointmentView() {
   return (
     <div className="page stack od od-appt">
       <TopBar title={a.client?.full_name ?? 'Appointment'} back />
+      {/* It couldn't be brought up to date (no signal, say): what's below is from before. */}
+      <ErrorBox error={error} />
 
       <div className={`card od-hero od-hero-${a.status}`}>
         <div className="od-hero-main">
@@ -193,7 +201,7 @@ export function AppointmentView() {
           <div><dt>Price</dt><dd className="od-price">{money(a.price_pence)}</dd></div>
           <div><dt>Reference</dt><dd className="mono od-ref">{a.reference}</dd></div>
           <div><dt>Booked</dt><dd>{a.source === 'online' ? 'Online' : 'By you'}{DOT}<span className="od-nowrap">{fmtDayTime(a.created_at, tz)}</span></dd></div>
-          {a.is_new_client && <div><dt>Client</dt><dd>New client{formOrConsent(a) ? <>{DOT}<span className="od-nowrap">form on file</span></> : <span className="flag">{DOT}no consultation form</span>}</dd></div>}
+          {a.is_new_client && <div><dt>Client</dt><dd>New client{formOrConsent(a) ? <>{DOT}<span className="od-nowrap">{consentOnly(a.health ? formOnFile(a.health) : null) ? 'consent recorded' : 'form on file'}</span></> : <span className="flag">{DOT}no consultation form</span>}</dd></div>}
           {a.deposit_required_pence > 0 && (
             <div>
               <dt>Deposit</dt>
@@ -247,7 +255,7 @@ export function AppointmentView() {
 
       {a.client && (
         <div className="od-contact">
-          {phone && !lateId && (live && !checkPhone ? <WhatsAppButton a={a} s={s} label="WhatsApp" />
+          {phone && !lateId && (live && !unfinished && !checkPhone ? <WhatsAppButton a={a} s={s} label="WhatsApp" />
             : <a className="btn wa" href={whatsappLink(phone, `Hi ${first}, `)} target="_blank" rel="noreferrer"><Icon name="whatsapp" size={20} /> WhatsApp</a>)}
           {a.client.phone && <a className="btn" href={`tel:${a.client.phone.replace(/\s/g, '')}`}><Icon name="phone" size={20} /> Call</a>}
           <Link className="btn" to={`/clients/${a.client.id}`}><Glyph name="user" size={20} /> Client record</Link>
@@ -282,7 +290,7 @@ export function AppointmentView() {
         </div>
       )}
 
-      {a.status === 'pending_deposit' && (
+      {a.status === 'pending_deposit' && !unfinished && (
         <div className="card stack attention od-panel">
           <div className="od-panel-head">
             <span className="od-ic lemon" aria-hidden="true"><Glyph name="clock" /></span>
@@ -310,7 +318,7 @@ export function AppointmentView() {
         </div>
       )}
 
-      {live && s.client_self_service && (
+      {live && !unfinished && s.client_self_service && (
         <div className="card stack od-tool">
           <div className="od-panel-head">
             <span className="od-ic" aria-hidden="true"><Icon name="link" size={20} /></span>
@@ -368,10 +376,10 @@ export function AppointmentView() {
           </ul>
         ) : <div className="empty">{a.client?.email ? 'No emails yet.' : 'No email address saved for this client.'}</div>}
       </div>
-      {live && a.client?.email && <button className="btn ghost" disabled={act.busy} onClick={resend}>Re-send confirmation email</button>}
+      {live && !unfinished && a.client?.email && <button className="btn ghost" disabled={act.busy} onClick={resend}>Re-send confirmation email</button>}
 
       {sheet === 'deposit' && <DepositSheet a={a} onClose={() => setSheet(null)} onDone={() => { toast('Deposit recorded — client confirmed'); done(); }} />}
-      {/* The sheet stays open once it's done, to book the next visit; the screen behind it already says Done. */}
+      {/* For a visit today the sheet stays open once it's done, to book the next visit; the screen behind it already says Done. */}
       {sheet === 'checkout' && <CheckoutSheet a={a} onClose={() => setSheet(null)} onFinished={() => { reload(); reloadEmails(); }} />}
       {sheet === 'move' && <MoveSheet a={a} tz={tz} onClose={() => setSheet(null)} onDone={(msg) => { toast(msg); done(); }} />}
       {sheet === 'cancel' && (
@@ -399,9 +407,10 @@ function DateTile({ iso, tz }: { iso: string; tz: string }) {
 
 /**
  * The client's allergies, latest patch test and consultation form, near the top: what she needs
- * before she starts. Consent she recorded (a paper form, WhatsApp or email) counts as a form on
- * file. With none on file, or one over a year old, the form link to send: it works until a day
- * after the appointment. The full answers are on the client's record.
+ * before she starts. Consent she recorded (a paper form, WhatsApp or email) counts as on file;
+ * from WhatsApp or email it says "consent recorded", as no form was filled in. With none on file,
+ * or one over a year old, the form link to send: it works until a day after the appointment.
+ * The full answers are on the client's record.
  */
 function HealthStrip({ a, h, s, first, phone, checkPhone, formUrl, onCopy }: {
   a: Appointment; h: ApptHealth; s: Settings; first: string; phone: string | null | undefined; checkPhone: boolean;
@@ -527,8 +536,12 @@ function DepositSheet({ a, onClose, onDone }: { a: Appointment; onClose: () => v
 /**
  * Finish & take payment. Once it's marked as done the sheet stays open on the next visit
  * (NextVisit), while the screen behind it updates; Not now, Close or Escape closes it.
+ * A visit from another day (one from "Not finished yet") just closes with what was recorded:
+ * the client isn't there to agree a date, and the choices would count from that old day.
  */
 function CheckoutSheet({ a, onClose, onFinished }: { a: Appointment; onClose: () => void; onFinished: () => void }) {
+  const tz = useOwner().settings.timezone;
+  const toast = useToast();
   const depositPaid = a.deposit_paid_at ? a.deposit_required_pence : 0;
   const [amount, setAmount] = useState(((Math.max(0, a.price_pence - depositPaid)) / 100).toFixed(2));
   const [tip, setTip] = useState('');
@@ -541,8 +554,9 @@ function CheckoutSheet({ a, onClose, onFinished }: { a: Appointment; onClose: ()
     const t = tip ? parsePounds(tip) : 0;
     if (p === null || t === null) return setError(new Error('Check the amounts.'));
     if (await run(() => api.completeAppointment(a.id, p, method, t, note.trim() || null))) {
-      setRecorded({ amount: p, tip: t });
       onFinished();
+      if (dateInZone(a.starts_at, tz) !== todayInZone(tz)) { toast(doneLine(p, t)); onClose(); return; }
+      setRecorded({ amount: p, tip: t });
     }
   }
   if (recorded) {

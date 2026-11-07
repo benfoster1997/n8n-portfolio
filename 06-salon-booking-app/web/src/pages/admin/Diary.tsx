@@ -73,12 +73,16 @@ export function Diary() {
       </div>
       <div className="day-head dy-day-head">
         <h2>{fmtDayLong(day + 'T12:00:00Z', tz)}</h2>
-        <span className={`dy-hours${dayOff ? ' is-off' : hours?.is_open ? '' : ' is-closed'}`}>
-          <BrandIcon name="clock" size={15} />{dayOff ? 'Day off' : hours?.is_open ? `Open ${hours.open_time}–${hours.close_time}` : 'Closed'}
-        </span>
+        {/* her opening hours once they've loaded: never "Closed" for want of them */}
+        {data && (
+          <span className={`dy-hours${dayOff ? ' is-off' : hours?.is_open ? '' : ' is-closed'}`}>
+            <BrandIcon name="clock" size={15} />{dayOff ? 'Day off' : hours?.is_open ? `Open ${hours.open_time}–${hours.close_time}` : 'Closed'}
+          </span>
+        )}
       </div>
       <ErrorBox error={error} />
-      {loading && !data ? <Spinner /> : (
+      {/* Nothing has loaded (no signal, say): never "Nothing booked" made up from nothing */}
+      {loading && !data ? <Spinner /> : !data ? <button className="btn primary block" onClick={reload}>Try again</button> : (
         <div className="card tight dy-day">
           {items.length === 0 ? <div className="empty">Nothing booked.</div> : (
             <ul className="list">

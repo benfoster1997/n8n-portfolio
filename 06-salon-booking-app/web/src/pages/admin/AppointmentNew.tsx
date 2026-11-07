@@ -72,12 +72,15 @@ export function AppointmentNew() {
   }, [data, busy7, day, duration, s]);
 
   // Once the treatment and that day's free times are known, check the time the link gave is still free.
+  // If it is, everything's filled in: Add to diary is brought into view (above the tab bar) for the one more tap.
   const checkLinkTime = useRef(link.time);
+  const addRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     const t = checkLinkTime.current;
     if (!t || !data || !busy7 || (!service && serviceId !== 'custom')) return;
     checkLinkTime.current = null;
     if (!slots.some((d) => fmtTime(d, tz) === t)) { setTime(''); setGoneTime(t); }
+    else addRef.current?.scrollIntoView({ block: 'end' });
   }, [slots, data, busy7, service, serviceId, tz]);
   /** Her own choice of day, treatment or time replaces the link's. */
   const ownChoice = () => { checkLinkTime.current = null; setGoneTime(null); };
@@ -237,7 +240,7 @@ export function AppointmentNew() {
       </div>
 
       <ErrorBox error={error} />
-      <button className="btn primary block od-add" disabled={busy} onClick={save}><Icon name="plus" size={20} /> {busy ? 'Saving…' : 'Add to diary'}</button>
+      <button ref={addRef} className="btn primary block od-add" disabled={busy} onClick={save}><Icon name="plus" size={20} /> {busy ? 'Saving…' : 'Add to diary'}</button>
     </div>
   );
 }

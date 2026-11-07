@@ -12,7 +12,10 @@ async function shot(page: Page, name: string) {
   await page.screenshot({ path: `${SHOTS}/${name}.png`, fullPage: true });
 }
 
-interface DemoStore { tax_years: { start_year: number; extra_takings_pence: number; expenses_pence: number; updated_at: string | null }[] }
+interface DemoStore {
+  tax_years: { start_year: number; extra_takings_pence: number; expenses_pence: number; updated_at: string | null }[];
+  payments: { id: string; amount_pence: number; paid_on: string; kind: string; [k: string]: unknown }[];
+}
 const demo = (page: Page): Promise<DemoStore> => page.evaluate((key) => JSON.parse(localStorage.getItem(key)!), KEY);
 /** Change the demo's saved data; it's read when a page loads, so reload afterwards. */
 async function editDemo(page: Page, edit: (db: DemoStore) => void) {
@@ -145,4 +148,30 @@ test('a past month: “Put aside about £X of November’s £Y for tax”', asyn
   await expect(page.getByText('November 2026')).toBeVisible();
   await expect(page.locator('.od-putaside')).toContainText('Put aside about £49 of November’s £190 for tax.');
   await expect(page.locator('.od-putaside')).toContainText('That’s how much November adds to your rough tax estimate for 2026–27.');
+});
+
+test('Money → Month never calls a profit tax-free when it isn’t: only the tax years with takings that month, and never “£0”', async ({ page }) => {
+  // Wednesday 21 April 2027: the demo's £190 is all from 6 April on, so in 2027–28. 2026–27, which ended on
+  // 5 April, had £20,000 of profit (all taxed), but nothing was taken from 1 to 5 April.
+  await signIn(page, new Date('2027-04-21T12:00:00Z'));
+  await editDemo(page, (db) => { db.tax_years.push(figures(2026, 20_000, 0)); });
+  await page.goto('/money');
+  await expect(page.getByText('April 2027')).toBeVisible();
+  const line = page.locator('.od-putaside');
+  await expect(line).toContainText('Nothing to put aside for tax from the £190 taken so far this month: on your figures, your profit for 2027–28 is still tax-free.');
+  await expect(line).not.toContainText('2026–27 and');
+
+  // Monday 2 November 2026, after £20,000 taken another way: a £1.50 tip is November's only takings so far.
+  // 26p of each £1 is 39p, which isn't “nothing to put aside”.
+  await page.clock.setSystemTime(new Date('2026-11-02T12:00:00Z'));
+  await editDemo(page, (db) => {
+    db.tax_years = [figures(2026, 20_000, 0)];
+    const like = db.payments[0];
+    db.payments = db.payments.filter((p) => p.paid_on < '2026-11-01');
+    db.payments.push({ ...like, id: 'tip-150', amount_pence: 150, kind: 'tip', paid_on: '2026-11-02', description: 'Tip', note: null });
+  });
+  await page.goto('/money');
+  await expect(page.getByText('November 2026')).toBeVisible();
+  await expect(line).toContainText('Put aside about £1 of the £1.50 taken so far this month, for tax.');
+  await expect(line).not.toContainText('tax-free');
 });

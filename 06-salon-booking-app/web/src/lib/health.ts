@@ -1,8 +1,8 @@
 // A client's health information as the appointment screen sums it up: allergies, the
 // latest patch test, and whether a consultation form is on file. Consent she recorded
 // herself (Record consent: a paper form, a WhatsApp message or an email) counts as on
-// file, as well as the online form. The strip supports her judgement; the full answers
-// stay on the client's record.
+// file, as well as the online form; from a message it says "consent recorded", as no form
+// was filled in. The strip supports her judgement; the full answers stay on the client's record.
 import type { Appointment, ApptHealth, PatchTest } from './types';
 import { fmt } from './time';
 
@@ -60,16 +60,19 @@ export function formOnFile(h: Pick<ApptHealth, 'forms' | 'consent_at' | 'consent
   return h.consent_at ? { date: h.consent_at, how: null } : null;
 }
 
+/** Consent she recorded from a WhatsApp message or an email: the client agreed, but filled in no form. */
+export const consentOnly = (f: { how: string | null } | null): boolean => !!f && (f.how === 'by WhatsApp' || f.how === 'by email');
+
 /**
- * "on file, 12 Sep", "on file, 12 Sep (paper)" or "none on file", and whether it's over a
- * year older than the appointment, so worth a fresh one.
+ * "on file, 12 Sep", "on file, 12 Sep (paper)", "consent recorded, 12 Sep (by WhatsApp)" or
+ * "none on file", and whether it's over a year older than the appointment, so worth a fresh one.
  */
 export function formLine(h: Pick<ApptHealth, 'forms' | 'consent_at' | 'consent_note'>, tz: string, startsAt: string):
   { text: string; onFile: boolean; old: boolean } {
   const f = formOnFile(h);
   if (!f) return { text: 'none on file', onFile: false, old: false };
   const old = new Date(f.date).getTime() < new Date(startsAt).getTime() - FORM_RENEW_DAYS * 86400e3;
-  return { text: `on file, ${shortDate(f.date, tz, startsAt)}${f.how ? ` (${f.how})` : ''}`, onFile: true, old };
+  return { text: `${consentOnly(f) ? 'consent recorded' : 'on file'}, ${shortDate(f.date, tz, startsAt)}${f.how ? ` (${f.how})` : ''}`, onFile: true, old };
 }
 
 /** A form, or consent she recorded, is on file for the client (lists only know whether there's one). */
@@ -77,16 +80,17 @@ export const formOrConsent = (a: Pick<Appointment, 'has_form' | 'has_consent'>):
 
 /**
  * Today's list of anyone booked in the next 14 days with no form and no recorded consent,
- * new clients and regulars alike: each client once, at their soonest booking.
+ * new clients and regulars alike: each client once, at their soonest booking that isn't
+ * over yet (one that's over is under "Not finished yet" instead).
  */
-export function needingForms<T extends Pick<Appointment, 'client_id' | 'status' | 'starts_at' | 'has_form' | 'has_consent'>>(
+export function needingForms<T extends Pick<Appointment, 'client_id' | 'status' | 'starts_at' | 'ends_at' | 'has_form' | 'has_consent'>>(
   appts: T[], now = new Date(),
 ): T[] {
   const until = now.getTime() + FORM_AHEAD_DAYS * 86400e3;
   const seen = new Set<string>();
   return appts
     .filter((a) => (a.status === 'confirmed' || a.status === 'pending_deposit') && !formOrConsent(a)
-      && new Date(a.starts_at).getTime() < until)
+      && new Date(a.starts_at).getTime() < until && new Date(a.ends_at).getTime() > now.getTime())
     .sort((x, y) => x.starts_at.localeCompare(y.starts_at))
     .filter((a) => (seen.has(a.client_id) ? false : (seen.add(a.client_id), true)));
 }

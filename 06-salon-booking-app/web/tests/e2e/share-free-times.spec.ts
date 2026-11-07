@@ -151,7 +151,7 @@ test('with nothing free, or booking paused, it says so plainly', async ({ page }
   });
   await page.reload();
   sheet = await openSheet(page);
-  await expect(sheet.locator('.od-share-none')).toHaveText('None of your treatments can be booked online yet. Choose which can in Settings → Treatments.');
+  await expect(sheet.locator('.od-share-none')).toHaveText('None of your treatments can be booked online yet. Choose which can in Settings → Treatments & prices.');
 });
 
 test('the booking page opens on the treatment its link names; anything else opens the usual page', async ({ page }) => {

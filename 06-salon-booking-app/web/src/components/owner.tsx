@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState, ty
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { api } from '../api';
 import type { Session, Settings } from '../lib/types';
-import { friendlyError } from '../lib/text';
+import { friendlyError, isNetworkError } from '../lib/text';
 import { Icon, Spinner } from './ui';
 import { Sprig } from './brand';
 import { Login } from '../pages/admin/Login';
@@ -76,7 +76,8 @@ export function OwnerGate({ children }: { children: ReactNode }) {
           <button className="btn block" onClick={() => api.signOut()}>Sign out</button>
         </>}>
         <p className="gate-text">{friendlyError(state.error)}</p>
-        <p className="gate-note">If it keeps happening, sign out and sign in again.</p>
+        {/* Never "sign out" with no signal: she couldn't sign back in until it came back. */}
+        <p className="gate-note">{isNetworkError(state.error) ? 'It will open again once you have signal.' : 'If it keeps happening, sign out and sign in again.'}</p>
       </GateScreen>
     );
   }

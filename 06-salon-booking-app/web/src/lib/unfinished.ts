@@ -30,16 +30,23 @@ export function todayNote(todays: Pick<Appointment, 'status' | 'starts_at' | 'en
  * The question before marking a no-show, true for whoever it is. A no-show sends no email
  * and can't be undone. Whether they're asked for a deposit next time follows the booking
  * page's rule: only clients with no visit marked as done who aren't ticked as a regular.
- * visits is null when it couldn't be checked.
+ * The booking page finds a client by their email address alone, so one with no email on
+ * their record is a new client there. visits is null when it couldn't be checked.
  */
-export function noShowQuestion(o: { name: string; visits: number | null; regular: boolean; depositPence: number }): string {
+export function noShowQuestion(o: { name: string; visits: number | null; regular: boolean; hasEmail: boolean; depositPence: number }): string {
   const who = o.name || 'the client';
+  const Who = who.charAt(0).toUpperCase() + who.slice(1);
   const ask = `Mark ${who} as a no-show? It can’t be undone, and they aren’t emailed.`;
   if (o.depositPence <= 0) return ask;
   const deposit = `a ${money(o.depositPence)} deposit`;
-  if (o.visits === null) return `${ask} Anyone who hasn’t had a visit marked as done is asked for ${deposit} when they book online.`;
-  if (o.visits > 0) return `${ask} As ${who} has had a visit marked as done before, they won’t be asked for ${deposit} if they book online again.`;
-  if (o.regular) return `${ask} As ${who} is ticked as a regular, they won’t be asked for ${deposit} if they book online again.`;
-  const Who = who.charAt(0).toUpperCase() + who.slice(1);
+  if (!o.hasEmail) {
+    return `${ask} ${Who} has no email address on their record, so if they book online they’ll be asked for the ${money(o.depositPence)} deposit like a new client.`;
+  }
+  const again = 'if they book online again with the email address on their record';
+  if ((o.visits ?? 0) > 0) return `${ask} As ${who} has had a visit marked as done before, they won’t be asked for ${deposit} ${again}.`;
+  if (o.regular) return `${ask} As ${who} is ticked as a regular, they won’t be asked for ${deposit} ${again}.`;
+  if (o.visits === null) {
+    return `${ask} Anyone who hasn’t had a visit marked as done, and isn’t ticked as a regular, is asked for ${deposit} when they book online.`;
+  }
   return `${ask} ${Who} hasn’t had a visit marked as done, so they’ll still be asked for ${deposit} if they book online again.`;
 }

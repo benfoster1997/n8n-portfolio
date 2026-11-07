@@ -90,9 +90,10 @@ test('the appointment shows allergies, the latest patch test and the consultatio
 
 test('Today lists anyone without a form or recorded consent, regulars too; recording consent takes them off', async ({ page }) => {
   await signIn(page);
-  // Isla, Ruby and Amelia have had visits; Chloe is new to the app. Grace (paper consent) and Sophie (online form) aren't listed.
-  await expect(formCard(page).locator('.td-attn-count')).toHaveText('4');
-  await expect(formCard(page).locator('.appt-name')).toHaveText(['Isla Morgan', 'Chloe Bennett', 'Ruby Clarke', 'Amelia Hart']);
+  // Ruby and Amelia have had visits; Chloe is new to the app. Grace (paper consent) and Sophie (online form) aren't listed.
+  // Nor is Isla: her visit this morning is over (it's under Not finished yet), and she has nothing else booked.
+  await expect(formCard(page).locator('.td-attn-count')).toHaveText('3');
+  await expect(formCard(page).locator('.appt-name')).toHaveText(['Chloe Bennett', 'Ruby Clarke', 'Amelia Hart']);
   await shot(page, 'h03-today-no-form');
 
   // She has Chloe's paper form: Record consent on her record.
@@ -108,8 +109,26 @@ test('Today lists anyone without a form or recorded consent, regulars too; recor
   await expect(page.getByRole('button', { name: 'Copy link' })).toHaveCount(1); // only the change/cancel link's
 
   await page.getByRole('link', { name: 'Today', exact: true }).click();
-  await expect(formCard(page).locator('.td-attn-count')).toHaveText('3');
-  await expect(formCard(page).locator('.appt-name')).toHaveText(['Isla Morgan', 'Ruby Clarke', 'Amelia Hart']);
+  await expect(formCard(page).locator('.td-attn-count')).toHaveText('2');
+  await expect(formCard(page).locator('.appt-name')).toHaveText(['Ruby Clarke', 'Amelia Hart']);
+});
+
+test('consent recorded from a WhatsApp message counts, but says it’s consent, not a form', async ({ page }) => {
+  await signIn(page);
+  // Jess, a new client, agreed by WhatsApp that her health information can be kept.
+  await page.getByRole('link', { name: 'Clients' }).click();
+  await page.getByRole('link', { name: /Jess Collins/ }).click();
+  await page.getByRole('button', { name: 'Record consent' }).click();
+  const sheet = page.getByRole('dialog', { name: 'Record consent' });
+  await sheet.getByLabel('How they gave it').selectOption('WhatsApp message');
+  await sheet.getByRole('button', { name: 'Record consent' }).click();
+  await expect(page.getByText('Consent recorded')).toBeVisible();
+  await page.goto(`/appointments/${(await bookingOf(page, 'Jess Collins', 'pending_deposit')).id}`);
+  await expect(page.getByRole('heading', { name: 'Jess Collins' })).toBeVisible();
+  await expect(line(strip(page), 'Consultation form')).toHaveText(`consent recorded, ${short(0)} (by WhatsApp)`);
+  await expect(line(page.locator('.od-hero'), 'Client')).toHaveText('New client · consent recorded');
+  await expect(page.getByText('form on file')).toHaveCount(0);
+  await shot(page, 'h06-consent-by-whatsapp');
 });
 
 test('a long list of clients without a form shows five, then the rest on request', async ({ page }) => {
@@ -128,11 +147,11 @@ test('a long list of clients without a form shows five, then the rest on request
     });
   });
   await page.reload();
-  await expect(formCard(page).locator('.td-attn-count')).toHaveText('7');
+  await expect(formCard(page).locator('.td-attn-count')).toHaveText('6');
   await expect(formCard(page).locator('.appt-name')).toHaveCount(5);
-  await formCard(page).getByRole('button', { name: 'Show 2 more' }).click();
+  await formCard(page).getByRole('button', { name: 'Show 1 more' }).click();
   await expect(formCard(page).locator('.appt-name')).toHaveText(
-    ['Isla Morgan', 'Chloe Bennett', 'Ruby Clarke', 'Amelia Hart', 'Poppy Lane', 'Mia Stone', 'Ella Wood']);
+    ['Chloe Bennett', 'Ruby Clarke', 'Amelia Hart', 'Poppy Lane', 'Mia Stone', 'Ella Wood']);
   await expect(formCard(page).getByRole('button', { name: /more/ })).toHaveCount(0);
 });
 
