@@ -149,7 +149,7 @@ function BookingFlow({ info, source }: { info: BookingInfo; source: string | nul
   // "How did you hear about me?" (first-timers only, optional), with the few words for A friend and Other kept apart.
   const [heard, setHeard] = useState<HeardFrom | null>(() => answerFromLink(source));
   const [heardWords, setHeardWords] = useState<Record<'friend' | 'other', string>>({ friend: '', other: '' });
-  // "Message me about short-notice spaces and offers": unticked until they tick it.
+  // "WhatsApp me about short-notice spaces and offers": optional, and unticked until they tick it.
   const [offersOk, setOffersOk] = useState(false);
   // "Did you mean …?" for an email address that looks mistyped, worked out when they leave the field.
   const [emailHint, setEmailHint] = useState<string | null>(null);
@@ -336,14 +336,16 @@ function BookingFlow({ info, source }: { info: BookingInfo; source: string | nul
             </fieldset>
           </div>
           {firstVisit && (
-            // Optional, and only asked of first-timers. Tapping the chosen answer again clears it.
+            // Optional, and only asked of first-timers. One answer or none: tapping the chosen one again clears it,
+            // so an answer picked from the link they came through can be taken away. So the chips are toggle
+            // buttons (aria-pressed) in the fieldset's group, not radios, which never clear.
             <fieldset className="pub-group pub-heard">
               <legend className="group-head">
                 <GroupIcon name="chat" /><span>How did you hear about me? <span className="pub-optional">(optional)</span></span>
               </legend>
-              <div className="pub-chips" role="radiogroup" aria-label="How did you hear about me?">
+              <div className="pub-chips">
                 {HEARD_FROM.map(({ value, label }) => (
-                  <button key={value} type="button" role="radio" aria-checked={heard === value}
+                  <button key={value} type="button" aria-pressed={heard === value}
                     className={heard === value ? 'pub-chip on' : 'pub-chip'} onClick={() => setHeard(heard === value ? null : value)}>
                     {label}
                   </button>
@@ -373,10 +375,13 @@ function BookingFlow({ info, source }: { info: BookingInfo; source: string | nul
               </p>
             </section>
           )}
+          {/* In their words, like the ticks below it, but marked optional: those are needed to book, this never is.
+              WhatsApp, as that's how her short-notice list sends, and STOP, as every one of those messages says. */}
           <div className="pub-group pub-offers">
             <label className="check">
               <input type="checkbox" checked={offersOk} onChange={(e) => setOffersOk(e.target.checked)} />
-              <span>Message me about <span className="pub-nowrap">short-notice</span> spaces and offers (you can say stop any time)</span>
+              <span><span className="pub-optional">Optional:</span> WhatsApp me about <span className="pub-nowrap">short-notice</span> spaces
+                and offers. I can reply STOP any time.</span>
             </label>
           </div>
           {policy && (

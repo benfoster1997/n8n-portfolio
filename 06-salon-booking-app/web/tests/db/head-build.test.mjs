@@ -88,7 +88,7 @@ test('a real build reads the business details once, from public_booking_info, wi
     '    <meta name="apple-mobile-web-app-title" content="Bookings" />',
     '    <title>Demo Nail Studio · Book online</title>',
     '    <meta name="description" content="Gel, BIAB, Nail art · Exampletown" />',
-    '    <link rel="canonical" href="https://book.example.com/book" />',
+    '    <meta property="og:type" content="website" />',
   ].join('\n')), html);
   assert.ok(html.includes('    <meta property="og:image" content="https://book.example.com/og/booking-card.jpg" />\n'));
   assert.ok(html.includes('    <meta name="twitter:card" content="summary_large_image" />\n    <link rel="manifest" href="/manifest.webmanifest" />'));
@@ -180,22 +180,24 @@ test('a database that never answers is given up on after 5 seconds', async () =>
   assert.match(warnings[0], /didn’t answer within 5 seconds/);
 });
 
-test('the site address is VITE_SITE_URL, else Netlify’s URL, and only https', async () => {
-  const canonical = (html) => /<link rel="canonical" href="([^"]+)" \/>/.exec(html)?.[1] ?? null;
+test('the site address (for the preview picture) is VITE_SITE_URL, else Netlify’s URL, and only https', async () => {
+  const picture = (html) => /<meta property="og:image" content="([^"]+)" \/>/.exec(html)?.[1] ?? null;
   const own = await build({ VITE_DEMO: '1', VITE_SITE_URL: 'https://book.example.com/', URL: 'https://netlify-site.example.org' });
-  assert.equal(canonical(own.html), 'https://book.example.com/book');
+  assert.equal(picture(own.html), 'https://book.example.com/og/booking-card.jpg');
   assert.deepEqual(own.warnings, []);
   const netlify = await build({ VITE_DEMO: '1', URL: 'https://netlify-site.example.org' });
-  assert.equal(canonical(netlify.html), 'https://netlify-site.example.org/book');
+  assert.equal(picture(netlify.html), 'https://netlify-site.example.org/og/booking-card.jpg');
+  // Never one address for every link: a shared link keeps its ?treatment= and ?from= (see buildHead).
+  for (const { html } of [own, netlify]) assert.ok(!/og:url|rel="canonical"/.test(html));
 
   // http isn't used (Netlify's address is, when there is one), and she's told why.
   const http = await build({ VITE_DEMO: '1', VITE_SITE_URL: 'http://book.example.com', URL: 'https://netlify-site.example.org' });
-  assert.equal(canonical(http.html), 'https://netlify-site.example.org/book');
+  assert.equal(picture(http.html), 'https://netlify-site.example.org/og/booking-card.jpg');
   assert.equal(http.warnings.length, 1);
   assert.match(http.warnings[0], /VITE_SITE_URL/);
   const none = await build({ VITE_DEMO: '1', VITE_SITE_URL: 'http://book.example.com' });
-  assert.equal(canonical(none.html), null);
-  assert.ok(!/og:url|og:image/.test(none.html));
+  assert.equal(picture(none.html), null);
+  assert.ok(!/og:image/.test(none.html));
 });
 
 test('the Google verification tag goes in only with a valid code', async () => {

@@ -3,10 +3,10 @@
 // card, the celebration picture, the loading/problem states, the "Message me"
 // links and Share with a friend.
 // Styles are in styles/public.css. Decorative SVG is aria-hidden throughout.
-import { forwardRef, useId, useState, type ReactNode } from 'react';
+import { forwardRef, useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { Blossom, BrandIcon, Heart, Lemon, LemonSlice, PolishBottle, ScriptTitle, Sprig } from '../brand';
 import { Icon } from '../ui';
-import { shareOrCopy } from '../../lib/share';
+import { shareOrCopy, type ShareOutcome } from '../../lib/share';
 import { LINK_FROM } from '../../lib/source';
 import { fmt, minutesLabel } from '../../lib/time';
 import { dmLinks, money } from '../../lib/text';
@@ -342,19 +342,43 @@ export const friendLink = (origin: string) => `${origin.replace(/\/+$/, '')}/boo
 /**
  * "Share with a friend": the phone's share sheet with her booking link, or the link copied where
  * there isn't one. Only her business name and the link go: no words written for the client, so
- * anything they add is their own.
+ * anything they add is their own. Where it can be neither shared nor copied, as in some apps' own
+ * browsers (Instagram's, say), the link is shown on the page to copy, with Send on WhatsApp: never
+ * a pop-up box, which those browsers may not show, so the tap would seem to do nothing.
  */
 export function ShareWithFriend({ business }: { business: string }) {
-  const [copied, setCopied] = useState(false);
+  const [outcome, setOutcome] = useState<{ result: ShareOutcome; link: string } | null>(null);
   async function share() {
-    setCopied((await shareOrCopy({ title: business, url: friendLink(window.location.origin) })) === 'copied');
+    const link = friendLink(window.location.origin);
+    setOutcome({ result: await shareOrCopy({ title: business, url: link }, undefined, () => {}), link });
   }
   return (
     <div className="pub-share">
       <button type="button" className="btn block pub-share-btn" onClick={share}>
         Share with a friend<Heart size={17} className="pub-share-heart" />
       </button>
-      <p className="pub-share-note" role="status">{copied ? 'Link copied' : ''}</p>
+      <p className="pub-share-note" role="status">{outcome?.result === 'copied' ? 'Link copied' : ''}</p>
+      {outcome?.result === 'prompt' && <ShareByHand link={outcome.link} />}
+    </div>
+  );
+}
+
+/** The link to copy by hand (picked out ready, as it opens), or send on WhatsApp. */
+function ShareByHand({ link }: { link: string }) {
+  const box = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    box.current?.focus();
+    box.current?.select();
+  }, []);
+  return (
+    <div className="stack pub-share-hand">
+      <label className="field">
+        <span>Press and hold the link to copy it</span>
+        <input ref={box} type="text" readOnly value={link} onFocus={(e) => e.currentTarget.select()} />
+      </label>
+      <a className="btn wa block" href={`https://wa.me/?text=${encodeURIComponent(link)}`} target="_blank" rel="noreferrer">
+        <Icon name="whatsapp" size={20} /> Send on WhatsApp
+      </a>
     </div>
   );
 }

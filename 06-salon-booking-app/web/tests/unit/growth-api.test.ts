@@ -118,7 +118,10 @@ describe('the owner’s new lists, in the live app', () => {
     expect(calls[0].url.pathname).toBe('/rest/v1/appointments');
     expect(q.get('select')).toBe('id,client_id,status,created_at,link_source,heard_from,heard_from_detail,client:clients(full_name)');
     expect(q.getAll('created_at')).toEqual(['gte.2026-11-01T00:00:00.000Z', 'lt.2026-12-01T00:00:00.000Z']);
-    expect(q.get('or')).toBe('(and(source.eq.online,first_visit_said.is.true),and(source.eq.owner,is_new_client.is.true))');
+    // An online booking with no answer (made before this version, or before the database update) counts by
+    // the database's own rule, so the months before the update aren't empty.
+    expect(q.get('or')).toBe('(and(source.eq.online,first_visit_said.is.true),'
+      + 'and(source.eq.online,first_visit_said.is.null,is_new_client.is.true),and(source.eq.owner,is_new_client.is.true))');
     expect(q.get('order')).toBe('created_at.asc,id.asc');
     expect(rows).toEqual([
       { id: 'a1', client_id: 'c1', status: 'completed', created_at: '2026-11-02T10:00:00.000Z', link_source: 'instagram', heard_from: null,
@@ -218,11 +221,11 @@ describe('the demo, the same way', () => {
   });
   const wide = () => [new Date(Date.now() - 60 * 86400e3).toISOString(), new Date(Date.now() + 60 * 86400e3).toISOString()] as const;
 
-  it('has invented handles to message, and no review link yet', async () => {
+  it('has no social handles (any that looked real could be a stranger’s, who’d get its Message me taps), and no review link yet', async () => {
     const s = await demo.getSettings();
-    expect([s.instagram_handle, s.facebook_handle, s.review_link, s.wa_template_review]).toEqual(['demo.nails', 'demonails', null, null]);
+    expect([s.instagram_handle, s.facebook_handle, s.review_link, s.wa_template_review]).toEqual([null, null, null, null]);
     const info = await demo.getBookingInfo();
-    expect([info.instagram_handle, info.facebook_handle]).toEqual(['demo.nails', 'demonails']);
+    expect([info.instagram_handle, info.facebook_handle, info.contact_email]).toEqual([null, null, 'owner@example.com']);
   });
 
   it('knows where a few clients came from, and who’s on the short-notice list', async () => {
@@ -264,7 +267,50 @@ describe('the demo, the same way', () => {
     expect(s.review_link).toBe('https://g.page/r/demo-studio/review');
   });
 
-  it('a demo saved before this version gets the new fields, and the handles once', async () => {
+  it('New clients counts an online booking with no answer by the database’s rule, as made before this version', async () => {
+    const info = await demo.getBookingInfo();
+    const service = info.services[0];
+    const busy = await demo.getBusyTimes(new Date(), new Date(Date.now() + 60 * 86400e3));
+    const slots: Date[] = [];
+    for (let d = 30; slots.length < 3 && d < 41; d++) {
+      const first = availableSlots(addDays(todayInZone(info.timezone), d), service.duration_min, info, busy)[0];
+      if (first) slots.push(first);
+    }
+    const before = Date.now();
+    const book = (full_name: string, email: string, phone: string, at: Date, extras?: BookingRequest['extras']) =>
+      demo.createBooking({ ...REQUEST, service_id: service.id, starts_at: at.toISOString(), full_name, email, phone, extras });
+    // Someone new with no answer (the app before this version sent none), someone new who said they'd
+    // been before, and Ruby, who has, with no answer.
+    await book('Lou Example', 'lou@example.com', '07700 900661', slots[0]);
+    await book('Mia Example', 'mia@example.com', '07700 900662', slots[1], { first_visit: false });
+    await book('Ruby Clarke', 'ruby@example.com', '07700 900106', slots[2]);
+    const rows = await demo.listNewClientBookings(new Date(before).toISOString(), new Date(Date.now() + 1000).toISOString());
+    expect(rows.map((r) => r.full_name)).toEqual(['Lou Example']);
+  });
+
+  it('an existing client’s tick counts only with the mobile on their record, as in the database', async () => {
+    const info = await demo.getBookingInfo();
+    const service = info.services[0];
+    const busy = await demo.getBusyTimes(new Date(), new Date(Date.now() + 50 * 86400e3));
+    // The first free time on each of two days, so the second booking can't clash with the first.
+    const slots: Date[] = [];
+    for (let d = 41; slots.length < 2 && d < 55; d++) {
+      const first = availableSlots(addDays(todayInZone(info.timezone), d), service.duration_min, info, busy)[0];
+      if (first) slots.push(first);
+    }
+    const book = (phone: string, at: Date) => demo.createBooking({ ...REQUEST, service_id: service.id, starts_at: at.toISOString(),
+      full_name: 'Someone Else', email: 'Ruby@Example.com', phone, extras: { marketing_ok: true } });
+    const ruby = async () => (await demo.listClients()).find((c) => c.full_name === 'Ruby Clarke')!;
+    // Someone else's mobile: not recorded, so she isn't on the list.
+    await book('07700 900999', slots[0]);
+    expect((await ruby()).marketing_ok_at).toBeNull();
+    // Her own, typed another way: recorded.
+    await book('+44 7700 900106', slots[1]);
+    expect(await ruby()).toMatchObject({ marketing_ok_note: 'Ticked on the booking page' });
+    expect((await demo.listShortNoticeClients()).map((c) => c.full_name)).toContain('Ruby Clarke');
+  });
+
+  it('a demo saved before this version gets the new fields, and keeps the handles saved in it', async () => {
     const saved = new Map<string, string>();
     vi.stubGlobal('localStorage', {
       getItem: (k: string) => saved.get(k) ?? null, setItem: (k: string, v: string) => { saved.set(k, v); }, removeItem: (k: string) => saved.delete(k),
@@ -273,7 +319,7 @@ describe('the demo, the same way', () => {
     const [key] = [...saved.keys()];
     const old = JSON.parse(saved.get(key)!);
     delete old.settings.review_link; delete old.settings.wa_template_review;
-    old.settings.instagram_handle = null; old.settings.facebook_handle = null;
+    old.settings.instagram_handle = 'sam.example.studio'; old.settings.facebook_handle = null;
     for (const c of old.clients) { delete c.marketing_ok_at; delete c.marketing_ok_note; delete c.review_asked_at; }
     for (const a of old.appointments) { delete a.link_source; delete a.heard_from; delete a.heard_from_detail; delete a.first_visit_said; }
     saved.set(key, JSON.stringify(old));
@@ -281,15 +327,10 @@ describe('the demo, the same way', () => {
     const upgraded = demoApi();
     await upgraded.signIn('owner@example.com', '');
     const s = await upgraded.getSettings();
-    expect([s.instagram_handle, s.facebook_handle, s.review_link, s.wa_template_review]).toEqual(['demo.nails', 'demonails', null, null]);
+    expect([s.instagram_handle, s.facebook_handle, s.review_link, s.wa_template_review]).toEqual(['sam.example.studio', null, null, null]);
     for (const c of await upgraded.listClients()) expect([c.marketing_ok_at, c.marketing_ok_note, c.review_asked_at]).toEqual([null, null, null]);
     for (const a of await upgraded.listAppointments(...wide())) {
       expect([a.link_source, a.heard_from, a.heard_from_detail, a.first_visit_said]).toEqual([null, null, null, null]);
     }
-    // Handles cleared on purpose in a demo from this version stay cleared.
-    await upgraded.updateSettings({ instagram_handle: null, facebook_handle: null });
-    const again = demoApi();
-    await again.signIn('owner@example.com', '');
-    expect((await again.getSettings()).instagram_handle).toBeNull();
   });
 });

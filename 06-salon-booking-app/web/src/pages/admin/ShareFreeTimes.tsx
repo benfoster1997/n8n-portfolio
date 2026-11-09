@@ -121,7 +121,13 @@ function ShortNoticeList({ clients, error, message, tz }: {
   // Who she has opened WhatsApp for, while the sheet is open.
   const [opened, setOpened] = useState<string[]>([]);
   if (!clients) {
-    if (isNeedsUpdate(error)) return <p className="sub od-sn-none">Run the database update (2026-11-growth.sql) to see your short-notice list here.</p>;
+    if (isNeedsUpdate(error)) {
+      return (
+        <p className="sub od-sn-none">
+          Your short-notice list will show here once the app’s database update has been run: ask whoever set up the app (see SETUP.md).
+        </p>
+      );
+    }
     return error ? <ErrorBox error={error} /> : null;
   }
   return (

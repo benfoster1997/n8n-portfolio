@@ -395,15 +395,18 @@ A new install doesn't need step 1: `schema.sql` already has all of it. An instal
 2. **Check her business name** in **Settings → Business details** (and her area, and the tagline and
    strapline in **Settings → Booking page**). The booking page's title in Google, and the preview card
    shown when the link is shared, are filled in from these **when the app is built**. If she changes
-   them later, previews catch up with the next app update (or **Netlify → Deploys → Trigger deploy**).
+   them later, previews catch up with the next app update (or **Netlify → Deploys → Trigger deploy**):
+   when she saves a new name, **Business details** tells her to ask you for that.
 3. **Then the new version goes live**: merge it into `main`, and Netlify publishes it in one deploy.
 
 ### What's new
 
 - **A preview card, and a page Google can read.** Her booking link shared on WhatsApp, Instagram,
   Facebook or iMessage shows her name, a line about her and a picture, and Google can now load the
-  page properly. While the business name is still *My Nail Studio*, the title and preview just say
-  *Book an appointment*, and **Today** and **Business details** remind her to change it.
+  page properly. While the business name is still *My Nail Studio* (in any capitals), the title and
+  preview just say *Book an appointment*, and **Today** and **Business details** remind her to change
+  it. The page names no single address for every link (no `og:url` or canonical link), so a shared
+  `…/book?treatment=…&from=…` link opens just as it was shared, Facebook and Messenger included.
 - **Your links.** **Settings → Booking page → Your links** has a different link for each place she
   shares it (Instagram bio, Facebook, Google Business Profile, WhatsApp Business, printed cards), each
   with **Copy**: see [step 7](#7-share-the-booking-link). Links from **Share free times** are marked too.
@@ -416,19 +419,24 @@ A new install doesn't need step 1: `schema.sql` already has all of it. An instal
   record say *A friend: Sam*, and tapping the name finds Sam in **Clients**, so she can say thank you.
   After booking, and on their own booking page, clients can **Share with a friend**.
 - **Money → New clients.** On **Money → Month**: how many new clients booked and came, how they found
-  her, the links they used, and last month's total.
+  her, the links they used, and last month's total. Online bookings made before this version (with
+  no answer to *Is this your first visit?*) count when the database counted them as a new client.
 - **Google reviews.** Her review link goes in **Settings → Booking page → Google reviews**: in Google
   Maps, open her Business Profile, tap **Ask for reviews** (or **Get more reviews**) and copy the link
   (it usually starts `https://g.page/r/`). **Test it** opens it. The wording is **Settings → WhatsApp
-  messages → Review request**. After **Mark as done**, and on a finished appointment, **Send on
-  WhatsApp** opens it ready to send (**Copy message** with no mobile), and the app notes when she
-  asked. Google's rules: ask every client the same way, once they've said it's OK, and never offer
-  anything in return.
-- **Short-notice list.** The booking page has an unticked box: *Message me about short-notice spaces
-  and offers*. **Today → Share free times** lists the clients who ticked it, or said yes in person
-  (ticked on their client record), with a WhatsApp button each, so she can tell them about a gap. Only
-  people who said yes are on it, and every message ends *Reply STOP if you'd rather not get these
-  messages.* If someone replies STOP, untick them on their record.
+  messages → Review request**. After **Mark as done** (or on the appointment, later the same day),
+  **Send on WhatsApp** opens it ready to send (**Copy message** with no mobile), and the app notes when
+  she asked. For a visit from another day it only says when she asked, or to ask at their next visit:
+  the client isn't there to agree. Google's rules: ask every client the same way, and never offer
+  anything in return. Send it only once they've agreed to get the link.
+- **Short-notice list.** The booking page has an optional, unticked box: *WhatsApp me about
+  short-notice spaces and offers. I can reply STOP any time.* **Today → Share free times** lists the
+  clients who ticked it, or said yes in person (ticked on their client record), and have a mobile, with
+  a WhatsApp button each, so she can tell them about a gap. Only people who said yes are on it, and
+  every message ends *Reply STOP if you'd rather not get these messages.* A tick on the booking page
+  only counts for an existing client when the mobile typed is the one on their record, as that's where
+  the messages go. If someone replies STOP, untick them on their record: it keeps a note of when, and
+  of the yes it replaces.
 - **Message me buttons.** Where the booking page can't book someone (booking paused, no free times, a
   booking that couldn't go through), it shows **Message me on Instagram**, **Message me on Facebook**
   or **Email** instead of a dead end, from her Settings, never her phone number. Under the free times:
@@ -440,7 +448,8 @@ A new install doesn't need step 1: `schema.sql` already has all of it. An instal
 
 - Paste her booking link into a WhatsApp chat with yourself to see the preview card.
 - If Facebook shows an old preview, open Meta's [Sharing Debugger](https://developers.facebook.com/tools/debug/),
-  paste the link, then press **Scrape Again**.
+  paste the link, then press **Scrape Again**. A link from **Share free times** pasted there should keep its
+  `?treatment=…&from=free-times` as its link.
 - Optional, to see how Google finds the page: in [Google Search Console](https://search.google.com/search-console),
   **Add property → URL prefix** with the app's address, choose **HTML tag** and copy it. In Netlify,
   **Project configuration → Environment variables → Add a variable**: `VITE_GOOGLE_SITE_VERIFICATION`, with
@@ -462,9 +471,9 @@ To use different words in Google and link previews from those in Settings, see `
 | Check allergies before she starts | The appointment: allergies in red, the latest patch test and the consultation form are at the top. Today and the Diary show only an **Allergy** tag, never the details. |
 | Send WhatsApp reminders (appointments in the next 3 days) | **Today → Send N WhatsApp reminders**: tap each one, WhatsApp opens with the message written, press send |
 | Post her free times on Instagram or WhatsApp | **Today → Your booking link → Share free times**: pick the treatment (her most-booked is first) and **This week** or **Next 2 weeks**. It writes a message listing up to 8 times clients can book online, with a link that opens her booking page on that treatment. **Share** or **Copy** it into a Story, a Status or a reply. Only send it to people who've asked: sending it to clients who haven't counts as marketing, and her privacy notice promises clients she won't do that without asking. **Your short-notice list**, under the message, has the clients who said yes, with a WhatsApp button each. |
-| A client replies STOP to a short-notice message | Their client record → untick **Short-notice spaces and offers**. |
+| A client replies STOP to a short-notice message | Their client record → untick **Short-notice spaces and offers**. The record notes when they stopped, and when they'd said yes. |
 | See where new clients come from | **Money → Month → New clients**. Each appointment says how that client found her (**Found you**), and their record says how they first did. |
-| Ask a client for a Google review | After **Mark as done**, or on a finished appointment: **Send on WhatsApp**, once they've said it's OK. Her review link goes in **Settings → Booking page** first. |
+| Ask a client for a Google review | After **Mark as done** (or on the appointment, later the same day): **Send on WhatsApp**, once they've agreed to get the link. Her review link goes in **Settings → Booking page** first. |
 | See what clients have changed or cancelled themselves | **Today → Changed by clients** (she's also emailed each time). Late ones are marked **Late**. |
 | Follow up a late cancellation | The appointment → **Late cancellation** → WhatsApp the client, then **Record payment received** when the money arrives |
 | Move a booking herself | The appointment → **Change time**. Leave *Email … their new time* ticked and the client is told. |
@@ -560,7 +569,7 @@ So nobody is surprised later:
 | Forgot the password | On the sign-in screen, tap **Forgotten password?** |
 | **Settings → Booking page** won't save ("Could not find the … column") | The app is newer than the database. Run [`supabase/schema.sql`](supabase/schema.sql) again in the SQL Editor (it keeps all her data and settings), then save again. |
 | Saving the tax estimate's figures says the database update hasn't been run | Run the update once: see [Tax to put aside](#set-up-before-the-tax-estimate-was-added-run-the-update-once). |
-| Saving the review link or wording says the database update hasn't been run, or **New clients** says to run it | Run the update: see [Where clients come from](#set-up-before-this-was-added-run-the-update-first). Everything else works until then. |
+| Saving the review link or wording says the database update hasn't been run, or **New clients** or the short-notice list says it will show once it has | Run the update: see [Where clients come from](#set-up-before-this-was-added-run-the-update-first). Everything else works until then. |
 | A shared link's preview, or Google, shows an old name or just *Book an appointment* | They're filled in from Settings when the app is built: check the business name, then **Netlify → Deploys → Trigger deploy**. For Facebook, use the Sharing Debugger too (see [After it's live](#after-its-live)). |
 | Clients are told "Lots of bookings are coming in right now" | One of the brakes on online bookings has been reached (see [What this app does not do](#what-this-app-does-not-do)). If it lasts more than a day, it's the 15 waiting for a deposit: on **Today**, mark the ones that have paid under **Deposits waiting**, and deal with **Not finished yet**. If old bookings that have passed still seem to count, run the update once: see [Appointments that were never finished](#set-up-before-old-unpaid-bookings-stopped-counting-run-the-update-once). |
 | Changed the web address | Update **Settings → Business details → This app's web address**, and Supabase → Authentication → URL Configuration. |

@@ -3,8 +3,9 @@ import { expect, test, type Page } from '@playwright/test';
 // The public pages' side of where clients come from: the link they came through and "How did you
 // hear about me?" sent with the booking, the short-notice box, the email typo hint, "Message me"
 // wherever the page can't book them in, and Share with a friend. Each test gets a fresh browser,
-// so the demo starts from its seeded data: her handles demo.nails (Instagram) and demonails
-// (Facebook), and owner@example.com. The owner's screens are tested elsewhere.
+// so the demo starts from its seeded data, with owner@example.com and no social handles (any that
+// looked real could be a stranger's): the tests that need handles give her demo.nails (Instagram)
+// and demonails (Facebook) with withHandles(), and never open them. The owner's screens are tested elsewhere.
 const KEY = 'salon-demo-v4';
 const SHOTS = process.env.SHOTS_DIR;
 async function shot(page: Page, name: string) {
@@ -87,7 +88,7 @@ async function newest(page: Page, name: string) {
   return { appt, client: db.clients.find((c) => c.id === appt.client_id)! };
 }
 const heardGroup = (page: Page) => page.getByRole('group', { name: 'How did you hear about me? (optional)' });
-const offers = (page: Page) => page.getByLabel(/Message me about short-notice spaces and offers/);
+const offers = (page: Page) => page.getByLabel(/WhatsApp me about short-notice spaces and offers/);
 const shareButton = (page: Page) => page.getByRole('button', { name: 'Share with a friend' });
 
 /** A phone with a share sheet: keep what it's given. */
@@ -101,6 +102,12 @@ const shared = (page: Page) => page.evaluate(() => (window as unknown as { share
 const IG = 'https://ig.me/m/demo.nails';
 const FB = 'https://m.me/demonails';
 const MAIL = 'mailto:owner@example.com?subject=Booking%20enquiry';
+const HANDLES = { instagram_handle: 'demo.nails', facebook_handle: 'demonails' };
+/** Her Instagram and Facebook handles, for the tests of the Message me buttons (the demo has none). */
+async function withHandles(page: Page) {
+  await seed(page);
+  await editDemo(page, (db) => { Object.assign(db.settings, HANDLES); });
+}
 
 test('from her printed card, a first-timer says a friend sent them and asks about short-notice spaces', async ({ page }) => {
   await toDetails(page, '/book?from=card');
@@ -109,31 +116,36 @@ test('from her printed card, a first-timer says a friend sent them and asks abou
   await expect(heardGroup(page)).toHaveCount(0);
   await page.getByRole('radio', { name: 'Yes, first time' }).click();
   const group = heardGroup(page);
-  await expect(group.getByRole('radio')).toHaveText(['Instagram', 'Facebook', 'Google', 'A friend', 'Saw a card or poster', 'Other']);
+  await expect(group.getByRole('button')).toHaveText(['Instagram', 'Facebook', 'Google', 'A friend', 'Saw a card or poster', 'Other']);
+  // Toggle buttons, one pressed at most: radios would never clear, and this answer can be taken away.
+  await expect(group.getByRole('radio')).toHaveCount(0);
   // Her card's link picks its answer to begin with.
-  await expect(group.getByRole('radio', { checked: true })).toHaveText(['Saw a card or poster']);
+  await expect(group.getByRole('button', { pressed: true })).toHaveText(['Saw a card or poster']);
 
   // A friend, and who; tapping it again clears it, and the name is still there if they pick it again.
-  const friend = group.getByRole('radio', { name: 'A friend' });
+  const friend = group.getByRole('button', { name: 'A friend' });
   await friend.click();
-  await expect(group.getByRole('radio', { checked: true })).toHaveText(['A friend']);
+  await expect(group.getByRole('button', { pressed: true })).toHaveText(['A friend']);
   const who = group.getByLabel('Who recommended you? (optional, first name is fine)');
   await expect(who).toHaveAttribute('maxlength', '60');
   await expect(who).toHaveAttribute('autocomplete', 'off');
   await who.fill('Sam');
   await friend.click();
-  await expect(group.getByRole('radio', { checked: true })).toHaveCount(0);
+  await expect(group.getByRole('button', { pressed: true })).toHaveCount(0);
   await expect(who).toHaveCount(0);
   await friend.click();
   await expect(who).toHaveValue('Sam');
   // Other asks where, instead.
-  await group.getByRole('radio', { name: 'Other' }).click();
+  await group.getByRole('button', { name: 'Other' }).click();
   await expect(group.getByLabel('Where? (optional)')).toBeVisible();
   await expect(who).toHaveCount(0);
   await friend.click();
   await expect(who).toHaveValue('Sam');
 
-  // The short-notice box starts unticked; they tick it.
+  // The short-notice box: marked optional, in their words, saying how the messages come and how to stop them.
+  // It starts unticked; they tick it.
+  await expect(page.locator('.pub-offers')).toHaveText(
+    'Optional: WhatsApp me about short-notice spaces and offers. I can reply STOP any time.');
   await expect(offers(page)).not.toBeChecked();
   await offers(page).check();
   await healthCheck(page, 'Amy Example');
@@ -156,7 +168,7 @@ test('a returning client is never asked how they found me, and the box stays unt
   await expect(page.getByText('How did you hear about me?')).toHaveCount(0);
   // A change of mind and back: from a friend's share, A friend is picked to begin with, then it's gone again.
   await page.getByRole('radio', { name: 'Yes, first time' }).click();
-  await expect(heardGroup(page).getByRole('radio', { checked: true })).toHaveText(['A friend']);
+  await expect(heardGroup(page).getByRole('button', { pressed: true })).toHaveText(['A friend']);
   await page.getByRole('radio', { name: 'I’ve been before' }).click();
   await expect(heardGroup(page)).toHaveCount(0);
   await expect(offers(page)).not.toBeChecked();
@@ -231,7 +243,7 @@ test('an email address that looks mistyped gets a suggestion, and only Use this 
 });
 
 test('booking paused: Message me on Instagram or Facebook, or Email, from her own handles', async ({ page }) => {
-  await seed(page);
+  await withHandles(page);
   await editDemo(page, (db) => { db.settings.booking_enabled = false; });
   await page.goto('/book');
   await expect(page.getByText('Online booking is paused')).toBeVisible();
@@ -257,6 +269,7 @@ test('booking paused: Message me on Instagram or Facebook, or Email, from her ow
 });
 
 test('under the free times, a line says how to ask for another; with none free, the notice has the buttons', async ({ page }) => {
+  await withHandles(page);
   await page.goto('/book');
   await page.getByRole('button', { name: /Gel polish — hands/ }).click();
   const line = page.locator('.pub-suits');
@@ -273,7 +286,7 @@ test('under the free times, a line says how to ask for another; with none free, 
 
   // Nothing free in the next 60 days: the notice has the buttons, and there's no line.
   await editDemo(page, (db) => {
-    Object.assign(db.settings, { instagram_handle: 'demo.nails', facebook_handle: 'demonails' });
+    Object.assign(db.settings, HANDLES);
     db.time_off.push({ id: 'away', starts_at: new Date(Date.now() - 86400e3).toISOString(),
       ends_at: new Date(Date.now() + 70 * 86400e3).toISOString(), note: 'Away' });
   });
@@ -288,6 +301,7 @@ test('under the free times, a line says how to ask for another; with none free, 
 });
 
 test('a booking that can’t go through offers the Message me buttons; with no signal it says to check first instead', async ({ page, context }) => {
+  await withHandles(page);
   await toDetails(page);
   await yourDetails(page, 'Ruby Clarke', 'ruby@example.com', '07700 900106');
   await page.getByRole('radio', { name: 'I’ve been before' }).click();
@@ -347,6 +361,36 @@ test('without a share sheet, Share with a friend copies the link and says so', a
   await shot(page, 'wf06-link-copied');
 });
 
+test('with no share sheet and copying refused, as in some apps’ own browsers, the link is shown to copy, with Send on WhatsApp', async ({ page }) => {
+  // Instagram's browser, say: no share sheet, the clipboard refuses, and a pop-up box would never show.
+  await page.addInitScript(() => {
+    const w = window as unknown as { prompted: number };
+    w.prompted = 0;
+    Object.defineProperty(navigator, 'share', { value: undefined, configurable: true });
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText: async () => { throw new DOMException('Write permission denied.', 'NotAllowedError'); } }, configurable: true,
+    });
+    window.prompt = () => { w.prompted += 1; return null; };
+  });
+  await bookAsRuby(page);
+  await shareButton(page).click();
+  const link = `${origin(page)}/book?from=friend`;
+  const box = page.getByLabel('Press and hold the link to copy it');
+  await expect(box).toHaveValue(link);
+  await expect(box).toHaveAttribute('readonly', '');
+  // Picked out, ready to copy.
+  await expect(box).toBeFocused();
+  expect(await box.evaluate((el: HTMLInputElement) => [el.selectionStart, el.selectionEnd])).toEqual([0, link.length]);
+  const wa = page.getByRole('link', { name: 'Send on WhatsApp' });
+  await expect(wa).toHaveAttribute('href', `https://wa.me/?text=${encodeURIComponent(link)}`);
+  await expect(wa).toHaveAttribute('target', '_blank');
+  await expect(page.getByText('Link copied')).toHaveCount(0);
+  expect(await page.evaluate(() => (window as unknown as { prompted: number }).prompted)).toBe(0);
+  // Nothing sideways to scroll, however long the address.
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await shot(page, 'wf06b-share-by-hand');
+});
+
 test('a client’s own booking page offers Share with a friend under the ticket, unless it was cancelled', async ({ page }) => {
   await withShareSheet(page);
   await seed(page);
@@ -377,10 +421,18 @@ test('the privacy notice says how finding me, short-notice messages and review r
   const what = page.getByRole('region', { name: 'What is kept, why, and on what basis' });
   const item = (title: string) => what.locator('li', { has: page.locator('b', { hasText: title }) });
   await expect(item('How you found Demo Nail Studio')).toContainText('if you choose to tell me when you book');
+  // Only the answer is optional: the link or site they came from is kept with every online booking.
+  await expect(item('How you found Demo Nail Studio')).toContainText('Telling me is optional. Which of my links or which website '
+    + 'brought you to the booking page is noted automatically.');
   await expect(item('How you found Demo Nail Studio')).toContainText('Basis: legitimate interests.');
   await expect(item('Short-notice spaces and offers')).toContainText('only if you tick the box when you book, or tell me you’d like them');
+  // The way they're sent, as the box says.
+  await expect(item('Short-notice spaces and offers')).toContainText('I may WhatsApp you about short-notice spaces or offers.');
   await expect(item('Short-notice spaces and offers')).toContainText('Reply STOP, or tell me, any time and I’ll stop.');
   await expect(item('Short-notice spaces and offers')).toContainText('Basis: consent.');
+  // No promise of "one": she can ask again at a later visit.
+  await expect(item('A review request')).toContainText('I may send you a message with a link to leave a Google review.');
+  await expect(item('A review request')).not.toContainText('one WhatsApp');
   await expect(item('A review request')).toContainText('Nothing is offered for a review, and you’re free to ignore it.');
   // The promise stands: nothing used for marketing without asking first.
   await expect(page.getByText('Your information is never sold, or used for marketing without asking you first.')).toBeVisible();

@@ -1447,6 +1447,8 @@
 .od-review-asked.card { padding-top: 10px; padding-bottom: 10px; }
 .od-review-when { display: inline-flex; align-items: center; gap: 8px; color: var(--ok); font-weight: 750; font-size: 0.94rem; }
 .od-review-when svg { flex: none; }
+/* a visit from another day that she didn't ask about: a plain reminder, not a done thing */
+.od-review-later .od-review-when { color: var(--muted); font-weight: 650; }
 .od-review-again { margin-right: -10px; }
 .od-review-none { margin: 0; }
 .od-review-none a { color: var(--accent-text); font-weight: 750; }
@@ -1482,9 +1484,9 @@
 .od-link-copy { flex: none; }
 .od-link-copy svg { color: var(--accent); }
 .od-review-test { align-self: flex-start; margin-top: -6px; }
-.od-update-needed, .od-name-note { margin: 0; }
-/* the yellow note sits with the business name above it */
-.od-name-note { margin-top: -6px; }
+.od-update-needed, .od-name-note, .od-renamed-note { margin: 0; }
+/* the notes sit with the business name above them */
+.od-name-note, .od-renamed-note { margin-top: -6px; }
 
 /* Settings → WhatsApp messages: the review request's rules, under its box */
 .od-template-warn { margin: 10px 0 0; }

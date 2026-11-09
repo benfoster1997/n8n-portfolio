@@ -334,6 +334,30 @@ test('with no review link saved, it says where to add one; with no mobile, Copy 
   await expect(page.locator('.od-review-card')).toContainText('Asked for a review on 4 Nov');
 });
 
+test('a finished visit from another day has nothing to send: it says when she asked, or to ask at their next visit', async ({ page }) => {
+  await signIn(page);
+  await editDemo(page, (db) => { db.settings.review_link = REVIEW_LINK; });
+  // Amelia's infill two days ago, marked as done then: she isn't there to ask if it's OK.
+  const amelia = await booking(page, 'Amelia Hart', '2026-11-02', '12:00');
+  await page.goto(`/appointments/${amelia.id}`);
+  await expect(page.getByRole('heading', { name: 'Amelia Hart' })).toBeVisible();
+  const card = page.locator('.od-review-card');
+  await expect(card).toHaveText('Not asked for a Google review yet: you can ask at their next visit');
+  await expect(card.getByRole('button')).toHaveCount(0);
+  await expect(page.getByRole('link', { name: 'Send on WhatsApp' })).toHaveCount(0);
+  await shot(page, 'g10c-review-card-another-day', card);
+  // Asked on the day: when, and no Ask again.
+  await editDemo(page, (db) => { db.clients.find((c) => c.full_name === 'Amelia Hart')!.review_asked_at = iso('2026-11-02', '13:00'); });
+  await page.reload();
+  await expect(card).toHaveText('Asked for a review on 2 Nov');
+  await expect(card.getByRole('button')).toHaveCount(0);
+  // With no review link saved, nothing about reviews there at all.
+  await editDemo(page, (db) => { db.settings.review_link = null; });
+  await page.reload();
+  await expect(page.getByRole('heading', { name: 'Amelia Hart' })).toBeVisible();
+  await expect(page.locator('.od-review-card, .od-review-none')).toHaveCount(0);
+});
+
 test('the short-notice list: who said yes, one WhatsApp each ending with how to stop them', async ({ page }) => {
   await signIn(page);
   await page.getByRole('button', { name: 'Share free times' }).click();
@@ -365,9 +389,13 @@ test('the short-notice list: who said yes, one WhatsApp each ending with how to 
   await shot(page, 'g12-client-short-notice', page.locator('.od-offers'));
   await offers.uncheck();
   await expect(page.getByRole('status').filter({ hasText: 'Taken off your short-notice list' })).toBeVisible();
-  await expect(page.locator('.od-offers')).toContainText('Not asked yet');
+  // Her yes isn't wiped: the record says when she stopped, and the yes it replaces.
+  const stopped = 'Stopped 4 Nov 2026 (yes from 4 Nov 2026, ticked on the booking page)';
+  await expect(page.locator('.od-offers')).toContainText(stopped);
+  await expect(page.locator('.od-offers')).toContainText('Tick this if they say yes in person.');
   await expect(offers).not.toBeChecked();
-  expect(await client(page, 'Sophie Turner')).toMatchObject({ marketing_ok_at: null, marketing_ok_note: null });
+  expect(await client(page, 'Sophie Turner')).toMatchObject({ marketing_ok_at: null, marketing_ok_note: stopped });
+  await shot(page, 'g12b-client-stopped', page.locator('.od-offers'));
 
   // Nobody on the list now.
   await page.goto('/');
@@ -385,6 +413,22 @@ test('the short-notice list: who said yes, one WhatsApp each ending with how to 
   await page.getByRole('button', { name: 'Share free times' }).click();
   await expect(sheet.getByRole('region', { name: 'Your short-notice list (1)' }).locator('.od-sn-row'))
     .toHaveText([/^Grace PatelSince 4 Nov · Said yes in person/]);
+
+  // Ruby, with no mobile saved, says yes: noted, but she's only on the list once her mobile is added.
+  await editDemo(page, (db) => {
+    const ruby = db.clients.find((c) => c.full_name === 'Ruby Clarke')! as DemoClient & { phone: string | null };
+    ruby.phone = null;
+    ruby.phone_e164 = null;
+  });
+  await page.goto(`/clients/${(await client(page, 'Ruby Clarke')).id}`);
+  await page.getByRole('checkbox', { name: /Short-notice spaces and offers/ }).check();
+  await expect(page.getByRole('status').filter({ hasText: 'Saved. They’ll be on your short-notice list once you add their mobile' }))
+    .toBeVisible();
+  await expect(page.locator('.od-offers')).toContainText('Yes, since 4 Nov (said yes in person)');
+  await expect(page.locator('.od-offers')).toContainText('Add their mobile (Edit) to put them on your short-notice list.');
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Share free times' }).click();
+  await expect(sheet.getByRole('region', { name: 'Your short-notice list (1)' }).locator('.od-sn-row')).toHaveText([/^Grace Patel/]);
 });
 
 test('while the business name is still the default, Today and Business details say so; any other name, nothing', async ({ page }) => {
@@ -404,12 +448,26 @@ test('while the business name is still the default, Today and Business details s
   const note = page.locator('.od-name-note');
   await expect(note).toHaveText('Your booking page still says My Nail Studio. Put your own business name here.');
   await shot(page, 'g14-business-default-name', page.locator('.od-set-card').first());
+  // Any capitals or spacing of it count too, as they do for the page head.
+  await page.getByLabel('Business name').fill('my nail  studio');
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Saved' })).toBeVisible();
+  await expect(note).toBeVisible();
   await page.getByLabel('Business name').fill('Nails by Jess');
   await page.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Saved' })).toBeVisible();
   await expect(note).toHaveCount(0);
+  // Google and link previews only change once the app is next built: she's told who to ask.
+  await expect(page.locator('.od-renamed-note')).toHaveText('Your booking page shows the new name now. Google and link previews show it '
+    + 'after the next app update: ask whoever set up the app to redeploy it.');
+  await shot(page, 'g14b-business-renamed', page.locator('.od-set-card').first());
   await page.goto('/');
   await expect(setup).toHaveText(['Save your booking link']);
+  // Saving again without changing the name says nothing more.
+  await page.goto('/settings/business');
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Saved' })).toBeVisible();
+  await expect(page.locator('.od-renamed-note')).toHaveCount(0);
 });
 
 test('the review request is her own wording when she changes it, and back to the default when she resets it', async ({ page }) => {
@@ -417,8 +475,8 @@ test('the review request is her own wording when she changes it, and back to the
   await page.goto('/settings/messages');
   const box = page.getByLabel('Review request');
   await expect(box).toHaveValue(/a quick Google review would really help me:\n\{review_link\}/);
-  await expect(page.getByText('Ask every client the same way, and only send it once they’ve said it’s OK. Never offer anything for a review, '
-    + 'and don’t only ask the clients you think loved it: Google’s rules forbid both.')).toBeVisible();
+  await expect(page.getByText('Ask every client the same way, and only send it once they’ve agreed to get the link. Never offer anything '
+    + 'for a review, and don’t only ask the clients you think loved it: Google’s rules forbid both.')).toBeVisible();
   await shot(page, 'g15-review-request-wording', page.locator('.od-template').last());
   // Without the link in it: a warning.
   await box.fill('Hi {first_name}, thank you! {business}');

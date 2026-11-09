@@ -10,7 +10,8 @@ import { fmt, fmtDay, fmtDayTime, todayInZone } from '../../lib/time';
 import { firstName, friendlyError, money, whatsappLink } from '../../lib/text';
 import { latestBooking, newAppointmentLink, sameTreatment } from '../../lib/nextVisit';
 import {
-  clientSearchLink, firstFoundYou, foundYouThrough, friendName, reviewAskedText, SAID_YES_IN_PERSON, shortNoticeLine, type FoundYou,
+  clientSearchLink, firstFoundYou, foundYouThrough, friendName, reviewAskedText, SAID_YES_IN_PERSON, shortNoticeLine, stoppedNote,
+  type FoundYou,
 } from '../../lib/growth';
 import type { Client, ClientPhoto, ConsultationForm, PatchTest } from '../../lib/types';
 import { Avatar, ClientSheet, Glyph } from './Clients';
@@ -55,16 +56,21 @@ export function ClientView() {
   // How they found her: their first answer, else the first link they booked through.
   const found = firstFoundYou(data!.appts);
 
-  /** Their yes to short-notice spaces and offers: one given in person, or stopping them (they replied STOP, say). */
+  /**
+   * Their yes to short-notice spaces and offers: one given in person, or stopping them (they replied STOP, say).
+   * Stopping keeps a note of when, and of the yes it replaces, so there's still a record they once said yes.
+   * The list only has clients with a mobile, so without one she's told it counts once she adds it.
+   */
   async function setOffers(yes: boolean) {
     const patch: Pick<Client, 'marketing_ok_at' | 'marketing_ok_note'> = yes
       ? { marketing_ok_at: new Date().toISOString(), marketing_ok_note: SAID_YES_IN_PERSON }
-      : { marketing_ok_at: null, marketing_ok_note: null };
+      : { marketing_ok_at: null, marketing_ok_note: stoppedNote(c!, tz) };
     setOffersTicked(yes);
     let saved: Client | undefined;
     if (await offers.run(async () => { saved = await api.updateClient(c!.id, patch); })) {
       setData({ ...data!, client: saved! });
-      toast(yes ? 'Added to your short-notice list' : 'Taken off your short-notice list');
+      toast(!yes ? 'Taken off your short-notice list'
+        : saved!.phone_e164 ? 'Added to your short-notice list' : 'Saved. They’ll be on your short-notice list once you add their mobile');
     }
     setOffersTicked(null);
   }
@@ -142,7 +148,8 @@ export function ClientView() {
         <input type="checkbox" checked={offersTicked ?? !!c.marketing_ok_at} disabled={offers.busy} onChange={(e) => setOffers(e.target.checked)} />
         <span>Short-notice spaces and offers<br />
           <span className="od-offers-state">{shortNoticeLine(c, tz)}</span><br />
-          <span className="sub">{c.marketing_ok_at ? 'If they reply STOP, switch this off.' : 'Tick this if they say yes in person.'}</span></span>
+          <span className="sub">{!c.marketing_ok_at ? 'Tick this if they say yes in person.'
+            : c.phone_e164 ? 'If they reply STOP, switch this off.' : 'Add their mobile (Edit) to put them on your short-notice list.'}</span></span>
       </label>
       <ErrorBox error={offers.error} />
 

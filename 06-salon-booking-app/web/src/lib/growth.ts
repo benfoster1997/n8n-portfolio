@@ -4,7 +4,7 @@
 // screens show. The booking page's side, and the rules for what's kept, are in lib/source.
 import type { Appointment, Client, HeardFrom } from './types';
 import { HEARD_FROM_DETAIL_MAX, isHeardFrom, LINK_FROM, linkLabel, takesDetail, type NewClientsSummary } from './source';
-import { DEFAULT_BUSINESS_NAME } from './text';
+import { businessName, clean } from './head';
 import { fmt } from './time';
 
 // ---------------------------------------------------------------------------------- her links
@@ -156,12 +156,39 @@ export const reviewAskedText = (iso: string, tz: string, now = new Date()) => `A
 /** The note kept when she records a yes a client gave her in person (the booking page notes "Ticked on the booking page"). */
 export const SAID_YES_IN_PERSON = 'Said yes in person';
 
-/** Their record's short-notice line: "Yes, since 12 Nov (ticked on the booking page)", or "Not asked yet". */
-export function shortNoticeLine(c: Pick<Client, 'marketing_ok_at' | 'marketing_ok_note'>, tz: string, now = new Date()): string {
-  if (!c.marketing_ok_at) return 'Not asked yet';
-  const note = c.marketing_ok_note?.trim();
-  return `Yes, since ${shortDate(c.marketing_ok_at, tz, now)}${note ? ` (${note[0].toLowerCase()}${note.slice(1)})` : ''}`;
+const lowerFirst = (s: string) => (s ? s[0].toLowerCase() + s.slice(1) : s);
+/** How long a note can be (clients.marketing_ok_note). */
+const NOTE_MAX = 100;
+const STOPPED = 'Stopped ';
+
+/**
+ * The note kept when she takes a client off her short-notice list (they replied STOP, say), in place of
+ * their yes, so there's still a record of it: "Stopped 12 Dec 2026 (yes from 8 Nov 2026, ticked on the
+ * booking page)". With the year, as it's read long after. A yes ticked on the booking page later still
+ * counts: that only needs marketing_ok_at to be empty.
+ */
+export function stoppedNote(c: Pick<Client, 'marketing_ok_at' | 'marketing_ok_note'>, tz: string, now = new Date()): string {
+  const day = (d: string | Date) => fmt(d, 'd MMM yyyy', tz);
+  const how = c.marketing_ok_note?.trim();
+  const yes = c.marketing_ok_at ? `yes from ${day(c.marketing_ok_at)}` : null;
+  const full = `${STOPPED}${day(now)}${yes ? ` (${yes}${how ? `, ${lowerFirst(how)}` : ''})` : ''}`;
+  // Her own note of how they said yes might not fit: the dates always do.
+  return full.length <= NOTE_MAX ? full : `${STOPPED}${day(now)}${yes ? ` (${yes})` : ''}`;
 }
 
-/** Her business name is still the one a new install starts with, so her booking page says "My Nail Studio". */
-export const isDefaultBusinessName = (name: string | null | undefined) => (name ?? '').trim() === DEFAULT_BUSINESS_NAME;
+/**
+ * Their record's short-notice line: "Yes, since 12 Nov (ticked on the booking page)"; when she's taken
+ * them off the list, when, and the yes it replaced (stoppedNote); otherwise just "No".
+ */
+export function shortNoticeLine(c: Pick<Client, 'marketing_ok_at' | 'marketing_ok_note'>, tz: string, now = new Date()): string {
+  const note = c.marketing_ok_note?.trim();
+  if (!c.marketing_ok_at) return note?.startsWith(STOPPED) ? note : 'No';
+  return `Yes, since ${shortDate(c.marketing_ok_at, tz, now)}${note ? ` (${lowerFirst(note)})` : ''}`;
+}
+
+/**
+ * Her business name is still the one a new install starts with, so her booking page says "My Nail Studio",
+ * and Google and link previews just "Book an appointment". The same rule as the page head (businessName in
+ * lib/head): any capitals or spacing of it count.
+ */
+export const isDefaultBusinessName = (name: string | null | undefined) => clean(name) !== null && businessName(name) === null;

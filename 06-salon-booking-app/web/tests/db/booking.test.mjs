@@ -2074,9 +2074,9 @@ test('the short-notice box: the first tick is recorded and never cleared, and no
   // Everything but the box. updated_at moves on whenever the record changes, as it does for the health form.
   const rest = ({ marketing_ok_at: _a, marketing_ok_note: _n, updated_at: _u, ...row }) => row;
 
-  // Booked with her email, a different name and mobile, and the box ticked.
-  const someone = { p_full_name: 'Someone Else', p_email: 'amy@example.com', p_phone: '07700 900999' };
-  await bookWith(svc, await londonAt(3, '09:00'), { marketing_ok: true }, someone);
+  // Booked with her email and the mobile on her record (typed another way), under another name, and the box ticked.
+  const herMobile = { p_full_name: 'Amy E', p_email: 'Amy@Example.com', p_phone: '+44 (0)7700 900111' };
+  await bookWith(svc, await londonAt(3, '09:00'), { marketing_ok: true }, herMobile);
   const once = await client('amy@example.com');
   assert.ok(once.marketing_ok_at instanceof Date);
   assert.equal(once.marketing_ok_note, 'Ticked on the booking page');
@@ -2084,8 +2084,8 @@ test('the short-notice box: the first tick is recorded and never cleared, and no
 
   // Ticked again it keeps the first date; unticked, or anything but true, it's never cleared.
   await ageBookings();
-  await bookWith(svc, await londonAt(3, '10:00'), { marketing_ok: true }, someone);
-  await bookWith(svc, await londonAt(3, '11:00'), { marketing_ok: false }, someone);
+  await bookWith(svc, await londonAt(3, '10:00'), { marketing_ok: true }, herMobile);
+  await bookWith(svc, await londonAt(3, '11:00'), { marketing_ok: false }, herMobile);
   const later = await client('amy@example.com');
   assert.deepEqual([later.marketing_ok_at, later.marketing_ok_note], [once.marketing_ok_at, 'Ticked on the booking page']);
   assert.deepEqual(rest(later), rest(amy));
@@ -2110,6 +2110,28 @@ test('the short-notice box: the first tick is recorded and never cleared, and no
     { email: 'kim@example.com', marketing_ok_note: null },
     { email: 'lou@example.com', marketing_ok_note: 'Ticked on the booking page' },
   ]);
+});
+
+test('the short-notice box isn’t recorded for an existing client when the mobile typed isn’t the one on their record', async () => {
+  const svc = await addService();
+  const client = async (email) => (await db.query(`select * from public.clients where email = $1`, [email])).rows[0];
+  const rosa = (await db.query(`insert into public.clients (full_name, email, phone) values ('Rosa Example', 'rosa@example.com', '07700 900777')
+                                returning *`)).rows[0];
+  const mia = (await db.query(`insert into public.clients (full_name, email) values ('Mia Example', 'mia@example.com') returning *`)).rows[0];
+
+  // Her mum books for her with Rosa's email, her own name and mobile, and ticks the box: those messages
+  // would go to Rosa's mobile, so nothing is recorded. The booking itself goes through, as it always did.
+  const r = await bookWith(svc, await londonAt(4, '09:00'), { marketing_ok: true, first_visit: true },
+    { p_full_name: 'Someone Else', p_email: 'rosa@example.com', p_phone: '07700 900999' });
+  assert.deepEqual(await client('rosa@example.com'), rosa);
+  const a = await appt(r.reference);
+  assert.deepEqual([a.status, a.booking_phone, a.first_visit_said], ['pending_deposit', '07700 900999', true]);
+
+  // No mobile on the record to match: the same.
+  await bookWith(svc, await londonAt(4, '10:00'), { marketing_ok: true }, { p_full_name: 'Mia Example', p_email: 'mia@example.com',
+    p_phone: '07700 900888' });
+  assert.deepEqual(await client('mia@example.com'), mia);
+  assert.equal((await db.query(`select count(*)::int as n from public.clients where marketing_ok_at is not null`)).rows[0].n, 0);
 });
 
 test('answers that aren’t an object, or the wrong shapes, are left out and the booking is made as usual', async () => {

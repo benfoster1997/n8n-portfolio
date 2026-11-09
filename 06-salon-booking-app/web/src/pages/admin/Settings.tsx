@@ -156,14 +156,22 @@ const txt = (v: string | null | undefined) => v ?? '';
 export function BusinessSettings() {
   const f = useSettingsForm(['business_name', 'legal_name', 'booking_intro', 'location_note', 'address', 'owner_email', 'owner_phone', 'public_site_url', 'booking_enabled']);
   const d = f.draft;
+  const { settings } = useOwner();
   // Still the name a new install starts with, so that's what her booking page says.
-  const defaultName = isDefaultBusinessName(useOwner().settings.business_name);
+  const defaultName = isDefaultBusinessName(settings.business_name);
+  // Saved with a new name: the booking page has it straight away, but Google and link previews only once
+  // the app is next built (the page head, lib/head), so she's told.
+  const [renamed, setRenamed] = useState(false);
   async function submit() {
     if (!d.business_name.trim()) return f.setError(new Error('Enter your business name.'));
     if (d.owner_email && !isPlausibleEmail(d.owner_email)) return f.setError(new Error('Check your email address.'));
     if (d.public_site_url && !/^(https:\/\/[^\s/]+|http:\/\/(localhost|127\.0\.0\.1)(:\d+)?)/i.test(d.public_site_url.trim()))
       return f.setError(new Error('The web address must start with https:// — tap “Use …” below to fill it in.'));
-    await f.save({ ...d, business_name: d.business_name.trim(), public_site_url: d.public_site_url ? d.public_site_url.trim().replace(/\/$/, '') : null });
+    const name = d.business_name.trim();
+    const changed = name !== settings.business_name.trim();
+    if (await f.save({ ...d, business_name: name, public_site_url: d.public_site_url ? d.public_site_url.trim().replace(/\/$/, '') : null })) {
+      if (changed) setRenamed(true);
+    }
   }
   return (
     <Page title="Business details">
@@ -171,6 +179,12 @@ export function BusinessSettings() {
         <Field label="Business name"><input type="text" value={d.business_name} maxLength={80} onChange={(e) => f.set('business_name', e.target.value)} /></Field>
         {defaultName && (
           <p className="notice warn od-name-note">Your booking page still says {DEFAULT_BUSINESS_NAME}. Put your own business name here.</p>
+        )}
+        {renamed && !defaultName && (
+          <p className="notice od-renamed-note" role="status">
+            Your booking page shows the new name now. Google and link previews show it after the next app update: ask whoever set
+            up the app to redeploy it.
+          </p>
         )}
         <Field label="Your legal name" hint="Shown in the privacy notice as the person responsible for client data.">
           <input type="text" autoComplete="name" value={txt(d.legal_name)} maxLength={100} onChange={(e) => f.set('legal_name', e.target.value)} />
@@ -670,8 +684,8 @@ export function MessageSettings() {
             <p className="notice warn od-template-warn">This wording has no {'{review_link}'} in it, so it won’t send your link.</p>
           )}
           <p className="od-template-rules">
-            Ask every client the same way, and only send it once they’ve said it’s OK. Never offer anything for a review, and don’t only
-            ask the clients you think loved it: Google’s rules forbid both.
+            Ask every client the same way, and only send it once they’ve agreed to get the link. Never offer anything for a review, and
+            don’t only ask the clients you think loved it: Google’s rules forbid both.
           </p>
         </>)}
       {f.left.includes('wa_template_review') && <UpdateNeeded what="Your review request wording" />}

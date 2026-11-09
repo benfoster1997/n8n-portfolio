@@ -300,7 +300,7 @@ export function AppointmentView() {
         </div>
       )}
 
-      {a.status === 'completed' && <ReviewAsk a={a} s={s} review={review} card />}
+      {a.status === 'completed' && <ReviewAsk a={a} s={s} review={review} today={dateInZone(a.starts_at, tz) === todayInZone(tz)} card />}
 
       {lateId && (
         <div className="card stack attention od-panel">
@@ -743,7 +743,8 @@ function NextVisit({ a, recorded, review, onClose }: {
           </li>
         </ul>
       )}
-      <ReviewAsk a={a} s={s} review={review} />
+      {/* Only ever a visit from today: one from another day just closes once it's marked as done. */}
+      <ReviewAsk a={a} s={s} review={review} today />
       <button className="btn block" onClick={onClose}>Not now</button>
     </div>
   );

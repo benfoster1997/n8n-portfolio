@@ -3,21 +3,20 @@ import sharp from 'sharp';
 
 // What Google and link previews (WhatsApp, Instagram, Facebook, iMessage) read: the page as it comes
 // from the server, before any script runs. The tests build the demo with VITE_SITE_URL set to the
-// test server (playwright.config.ts), so the head has its canonical link and picture, and the
-// generic words: the demo never asks a database.
+// test server (playwright.config.ts), so the head has its preview picture, and the generic words:
+// the demo never asks a database.
 
-test('the booking page’s own HTML has one title, a canonical link and the preview picture', async ({ request, baseURL }) => {
+test('the booking page’s own HTML has one title and the preview picture, and names no one address for every link', async ({ request }) => {
   const res = await request.get('/book');
   expect(res.ok()).toBe(true);
   const html = await res.text();
-  // A shared link with ?from= on the end gets the same page.
-  expect(await (await request.get('/book?from=card')).text()).toBe(html);
+  // A shared link with ?treatment= and ?from= on the end gets the same page…
+  expect(await (await request.get('/book?treatment=biab-infill&from=free-times')).text()).toBe(html);
   expect(html.match(/<title[\s>]/g)).toHaveLength(1);
   expect(html).toContain('<title>Book an appointment</title>');
   expect(html).toContain('<meta name="description" content="See free times and book your appointment online." />');
-  expect(html.match(/<link rel="canonical"/g)).toHaveLength(1);
-  expect(html).toContain(`<link rel="canonical" href="${baseURL}/book" />`);
-  expect(html).toContain(`<meta property="og:url" content="${baseURL}/book" />`);
+  // …and nothing in it says the page is plain /book, so Facebook and Messenger keep the link as it was shared.
+  expect(html).not.toMatch(/og:url|rel="canonical"/);
   expect(html).not.toContain('%VITE_');
   expect(html).not.toContain('booking-head');
   // The home-screen tags are still there.

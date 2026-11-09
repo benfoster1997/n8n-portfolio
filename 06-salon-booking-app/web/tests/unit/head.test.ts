@@ -23,12 +23,10 @@ describe('buildHead (the booking page’s head, written into index.html when the
     expect(buildHead(EVERY).split('\n')).toEqual([
       '<title>Demo Nail Studio · Book online</title>',
       '<meta name="description" content="Gel, BIAB and nail art in Exampletown. See my free times and book online." />',
-      '<link rel="canonical" href="https://book.example.com/book" />',
       '<meta property="og:type" content="website" />',
       '<meta property="og:site_name" content="Demo Nail Studio" />',
       '<meta property="og:title" content="Demo Nail Studio · Book online" />',
       '<meta property="og:description" content="Gel, BIAB and nail art in Exampletown. See my free times and book online." />',
-      '<meta property="og:url" content="https://book.example.com/book" />',
       '<meta property="og:image" content="https://book.example.com/og/booking-card.jpg" />',
       '<meta property="og:image:type" content="image/jpeg" />',
       '<meta property="og:image:width" content="1200" />',
@@ -40,6 +38,12 @@ describe('buildHead (the booking page’s head, written into index.html when the
     ]);
   });
 
+  it('never names one address for every link (no og:url, no canonical link), so a shared link keeps its ?treatment= and ?from=', () => {
+    for (const head of [buildHead(EVERY), buildHead({ siteUrl: SITE }), buildHead({})]) {
+      expect(head).not.toMatch(/og:url|rel="canonical"/);
+    }
+  });
+
   it('makes the description from the Settings words when there is no description of her own', () => {
     const head = buildHead({ ...EVERY, description: null });
     const words = 'Gel, BIAB, Nail art · Exampletown — full address in your confirmation email';
@@ -47,7 +51,7 @@ describe('buildHead (the booking page’s head, written into index.html when the
     expect(line(head, 'og:description')).toBe(`<meta property="og:description" content="${words}" />`);
   });
 
-  it('falls back to generic words with nothing set, with no canonical link or picture without a site address', () => {
+  it('falls back to generic words with nothing set, with no picture without a site address', () => {
     const head = buildHead({});
     expect(head.split('\n')).toEqual([
       `<title>${FALLBACK_TITLE}</title>`,
@@ -59,9 +63,9 @@ describe('buildHead (the booking page’s head, written into index.html when the
       '<meta name="twitter:card" content="summary_large_image" />',
     ]);
     expect(head).not.toContain('%VITE_');
-    expect(head).not.toMatch(/canonical|og:url|og:image|og:site_name|undefined|null/);
-    // With every value but the site address, still no links that need it.
-    expect(buildHead({ ...EVERY, siteUrl: null })).not.toMatch(/canonical|og:url|og:image/);
+    expect(head).not.toMatch(/og:image|og:site_name|undefined|null/);
+    // With every value but the site address, still no picture, which needs it.
+    expect(buildHead({ ...EVERY, siteUrl: null })).not.toMatch(/og:image/);
   });
 
   it('counts blank or spaces-only values as unset', () => {
@@ -196,8 +200,9 @@ describe('siteAddress (VITE_SITE_URL, or Netlify’s own address)', () => {
   });
 
   it('is checked inside buildHead too', () => {
-    expect(buildHead({ siteUrl: 'http://book.example.com' })).not.toMatch(/canonical|og:image/);
-    expect(line(buildHead({ siteUrl: 'https://book.example.com/' }), 'canonical')).toBe('<link rel="canonical" href="https://book.example.com/book" />');
+    expect(buildHead({ siteUrl: 'http://book.example.com' })).not.toMatch(/og:image/);
+    expect(line(buildHead({ siteUrl: 'https://book.example.com/' }), 'og:image"'))
+      .toBe('<meta property="og:image" content="https://book.example.com/og/booking-card.jpg" />');
   });
 });
 

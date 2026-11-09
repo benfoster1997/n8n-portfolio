@@ -103,10 +103,40 @@ describe('suggestEmail: “Did you mean …?” for a mistyped address', () => {
     }
   });
 
-  it('only one letter for short domains', () => {
+  it('never “corrects” another country’s address, however close it looks', () => {
+    for (const real of ['yahoo.co.in', 'yahoo.co.nz', 'yahoo.co.jp', 'yahoo.ca', 'hotmail.ca', 'hotmail.co.za', 'live.co.za',
+      'hotmail.fr', 'hotmail.co.jp', 'live.co.nz', 'yahoo.com.au', 'hotmail.com.au', 'outlook.ie', 'yahoo.cn', 'gmx.de']) {
+      expect(suggestEmail(`sam@${real}`), real).toBeNull();
+    }
+  });
+
+  it('puts a mistyped ending right, even with the name right: .con, .cm, .co, .om, .ocm, .couk, .co.ik, a dot too many or none', () => {
+    expect(suggestEmail('sam@gmail.om')).toBe('sam@gmail.com');
+    expect(suggestEmail('sam@gmail.ocm')).toBe('sam@gmail.com');
+    expect(suggestEmail('sam@gmail.com.')).toBe('sam@gmail.com');
+    expect(suggestEmail('sam@gmailcom')).toBe('sam@gmail.com');
+    expect(suggestEmail('amy@hotmail.couk')).toBe('amy@hotmail.co.uk');
+    expect(suggestEmail('amy@hotmail.co.ik')).toBe('amy@hotmail.co.uk');
+    expect(suggestEmail('amy@hotmail.cp.uk')).toBe('amy@hotmail.co.uk');
+  });
+
+  it('a real address other than the usual ones, mistyped, is put right as itself', () => {
+    expect(suggestEmail('sam@email.co')).toBe('sam@email.com');
+    expect(suggestEmail('sam@live.co')).toBe('sam@live.com');
+    expect(suggestEmail('sam@emial.com')).toBe('sam@email.com');
+    expect(suggestEmail('sam@ntlworld.co')).toBe('sam@ntlworld.com');
+  });
+
+  it('only one letter for short domains, and a short name is never changed: only its ending', () => {
     expect(suggestEmail('sam@aol.co')).toBe('sam@aol.com');
+    expect(suggestEmail('sam@aol.cm')).toBe('sam@aol.com');
     expect(suggestEmail('sam@aim.com')).toBeNull(); // two from aol.com
     expect(suggestEmail('sam@mee.cm')).toBeNull(); // two from me.com
+    // One letter from me.com, aol.com or live.co.uk, but often someone's real address.
+    for (const real of ['my.com', 'mw.com', 'ao.com', 'aon.com', 'lime.co.uk', 'olive.co.uk']) expect(suggestEmail(`sam@${real}`), real).toBeNull();
+    // A name typed short: one letter put right at most, none for three letters or fewer.
+    expect(suggestEmail('sam@gmai.com')).toBe('sam@gmail.com');
+    for (const short of ['ail.com', 'gma.com', 'yah.com']) expect(suggestEmail(`sam@${short}`), short).toBeNull();
   });
 
   it('nothing to go on is null', () => {

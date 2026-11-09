@@ -296,29 +296,47 @@ export function isReviewLink(url: string | null | undefined): { ok: boolean; war
   return { ok: true, warn: !GOOGLE_HOSTS.test(host) };
 }
 
-// The addresses most clients use, and real ones close to them that must never be "corrected".
+// The addresses most clients use, and other real ones close to them: those are never "corrected"
+// into one of the first, and a mistyped one is put right as itself (email.co → email.com, not gmail.com).
 const EMAIL_DOMAINS = ['gmail.com', 'googlemail.com', 'hotmail.com', 'hotmail.co.uk', 'outlook.com', 'live.co.uk',
   'icloud.com', 'me.com', 'yahoo.com', 'yahoo.co.uk', 'btinternet.com', 'aol.com'];
 const REAL_LOOKALIKES = new Set(['mail.com', 'email.com', 'gmx.com', 'gmx.co.uk', 'mac.com', 'live.com', 'sky.com',
   'ntlworld.com', 'ymail.com']);
+const KNOWN_DOMAINS = [...EMAIL_DOMAINS, ...REAL_LOOKALIKES];
+/** The endings those have. Any other well-formed one (yahoo.co.in, hotmail.ca, live.co.za) is someone's real address. */
+const KNOWN_ENDINGS = ['com', 'co.uk'];
+/**
+ * A provider's name shorter than this (me, aol, live, gmx…) is never changed, only its ending: one letter
+ * away from one of those is often someone else's real domain. A name typed shorter than it gets one letter
+ * put right at most (gmai → gmail), and one of three letters or fewer none.
+ */
+const SHORTEST_NAME_CORRECTED = 5;
+const lettersToCorrect = (typed: string) => (typed.length >= SHORTEST_NAME_CORRECTED ? 2 : typed.length === SHORTEST_NAME_CORRECTED - 1 ? 1 : 0);
 
-/** How many letters to add, remove or change to turn a into b. */
-function editDistance(a: string, b: string): number {
-  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+/** "yahoo.co.uk" → { name: "yahoo", ending: "co.uk" }. No dot: all name. */
+function splitDomain(domain: string): { name: string; ending: string | null } {
+  const dot = domain.indexOf('.');
+  return dot < 0 ? { name: domain, ending: null } : { name: domain.slice(0, dot), ending: domain.slice(dot + 1) };
+}
+
+/** How many letters to add, remove or change to turn a into b; with `swaps`, two letters the wrong way round count as one. */
+function editDistance(a: string, b: string, swaps = false): number {
+  const d = Array.from({ length: a.length + 1 }, (_, i) => Array.from({ length: b.length + 1 }, (_, j) => (i ? (j ? 0 : i) : j)));
   for (let i = 1; i <= a.length; i++) {
-    const cur = [i];
     for (let j = 1; j <= b.length; j++) {
-      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      if (swaps && i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) d[i][j] = Math.min(d[i][j], d[i - 2][j - 2] + 1);
     }
-    prev = cur;
   }
-  return prev[b.length];
+  return d[a.length][b.length];
 }
 
 /**
  * "Did you mean sam@gmail.com?": the address with its domain corrected when it's one letter
- * away from a common one (two for the longer ones, such as gmial.com), else null. Never for
- * a domain that's right, or a real one that happens to be close (mail.com, gmx.com, live.com…).
+ * away from a common one (two for the longer ones, such as gmial.com), else null. Only the
+ * provider's name (gmial.com) or a mistyped ending (.con, .cm, .co, .couk) is ever put right:
+ * never a domain that's right, a real one that happens to be close (mail.com, gmx.com,
+ * live.com…), or one with another country's ending (yahoo.co.in, hotmail.ca, live.co.za).
  */
 export function suggestEmail(email: string | null | undefined): string | null {
   const t = (email ?? '').trim();
@@ -326,11 +344,20 @@ export function suggestEmail(email: string | null | undefined): string | null {
   if (at < 1 || t.indexOf('@') !== at) return null;
   const domain = t.slice(at + 1).toLowerCase();
   if (!domain || EMAIL_DOMAINS.includes(domain) || REAL_LOOKALIKES.has(domain)) return null;
-  let best: { domain: string; d: number } | null = null;
-  for (const known of EMAIL_DOMAINS) {
-    const d = editDistance(domain, known);
-    if (d <= (known.length >= 9 ? 2 : 1) && (!best || d < best.d)) best = { domain: known, d };
+  const { name, ending } = splitDomain(domain);
+  // The domains it could be: how many letters away each is, and how many is close enough.
+  let near: { domain: string; d: number; most: number }[] = [];
+  if (ending !== null && KNOWN_ENDINGS.includes(ending)) {
+    // The ending is right, so only a longer provider's name can be wrong: gmial.com, hotmial.co.uk.
+    near = KNOWN_DOMAINS.map((known) => ({ known, k: splitDomain(known) }))
+      .filter(({ k }) => k.ending === ending && k.name.length >= SHORTEST_NAME_CORRECTED)
+      .map(({ known, k }) => ({ domain: known, d: editDistance(name, k.name), most: lettersToCorrect(name) }));
+  } else if (ending === null || KNOWN_ENDINGS.some((e) => editDistance(ending, e, true) === 1)) {
+    // A mistyped ending (or none, as in gmailcom): the whole domain is compared.
+    near = KNOWN_DOMAINS.map((known) => ({ domain: known, d: editDistance(domain, known), most: known.length >= 9 ? 2 : 1 }));
   }
+  let best: { domain: string; d: number } | null = null;
+  for (const n of near) if (n.d <= n.most && (!best || n.d < best.d)) best = n;
   return best ? `${t.slice(0, at)}@${best.domain}` : null;
 }
 

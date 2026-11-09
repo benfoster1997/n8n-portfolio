@@ -241,11 +241,11 @@ begin
   end if;
 
   -- The only thing the booking page may set on a client's record, even an existing
-  -- one: that they ticked "message me about short-notice spaces and offers". It only
-  -- records the first tick, never clears it and touches nothing else. So the most
-  -- someone booking with another person's email can do is put that person on her
-  -- short-notice list, and every one of those messages says how to stop them.
-  if v_mkt then
+  -- one: that they ticked "WhatsApp me about short-notice spaces and offers". Those
+  -- messages go to the mobile on the record, so for an existing client the tick only
+  -- counts when the mobile typed is that one: booking with someone else's email can't
+  -- sign them up. It only records the first tick, never clears it and touches nothing else.
+  if v_mkt and (v_created or v_phone is not distinct from v_client.phone_e164) then
     begin
       update public.clients set marketing_ok_at = now(), marketing_ok_note = 'Ticked on the booking page'
        where id = v_client.id and marketing_ok_at is null;

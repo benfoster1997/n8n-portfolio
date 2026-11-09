@@ -275,7 +275,7 @@ function NewClientsCard({ month, today, tz }: { month: string; today: string; tz
 
 /**
  * The New clients card for what has loaded (exported for the tests). Before the database update there's
- * nothing to count yet: one line says what to run, instead of an error. Nothing while it loads.
+ * nothing to count yet: one line says who to ask, instead of an error. Nothing while it loads.
  */
 export function NewClientsView({ month, today, tz, data, error }: {
   /** "2026-11" */
@@ -307,7 +307,9 @@ export function NewClientsView({ month, today, tz, data, error }: {
           <p className="od-newclients-before">{text.before}</p>
         </div>
       ) : isNeedsUpdate(error) ? (
-        <p className="sub od-newclients-update">Run the database update (2026-11-growth.sql) to see where new clients come from.</p>
+        <p className="sub od-newclients-update">
+          New clients will show here once the app’s database update has been run: ask whoever set up the app (see SETUP.md).
+        </p>
       ) : <ErrorBox error={error} />}
     </section>
   );

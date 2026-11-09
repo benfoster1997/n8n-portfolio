@@ -135,7 +135,7 @@ export function AppointmentNew() {
       const answer = foundYouPatch(found);
       if (isNew && answer.heard_from) {
         await api.updateAppointment(a.id, answer).catch((e) => toast(isNeedsUpdate(e)
-          ? 'Added. How they found you needs the database update (2026-11-growth.sql) first.'
+          ? 'Added. How they found you can be saved once the app’s database update has been run.'
           : 'Added, but how they found you wasn’t saved: add it on the appointment.'));
       }
       // The appointment screen offers WhatsApp for the confirmation when there's no email address.

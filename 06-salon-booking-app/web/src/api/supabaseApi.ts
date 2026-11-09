@@ -441,8 +441,10 @@ export function supabaseApi(url: string, anonKey: string): Api {
       const rows = await fetchAll<Row>(() => sb.from('appointments')
         .select('id, client_id, status, created_at, link_source, heard_from, heard_from_detail, client:clients(full_name)')
         .gte('created_at', fromIso).lt('created_at', toIso)
-        // Online, when they said it was their first visit; her own bookings, for a new client.
-        .or('and(source.eq.online,first_visit_said.is.true),and(source.eq.owner,is_new_client.is.true)')
+        // Online, when they said it was their first visit, or by the database's own rule (is_new_client) when
+        // there's no answer: booked before this version, or before the database update. Her own bookings, for a new client.
+        .or('and(source.eq.online,first_visit_said.is.true),and(source.eq.online,first_visit_said.is.null,is_new_client.is.true),'
+          + 'and(source.eq.owner,is_new_client.is.true)')
         .order('created_at').order('id'), checkGrowth);
       return rows.map(({ client, ...a }) => ({ ...a, created_at: iso(a.created_at)!, full_name: client?.full_name ?? null }));
     },

@@ -5,10 +5,11 @@ import { describe, expect, it, vi } from 'vitest';
 import schema from '../../../supabase/schema.sql?raw';
 import {
   clientSearchLink, firstFoundYou, foundYouPatch, foundYouThrough, friendName, isDefaultBusinessName, lastMonthText, linkWord,
-  newClientsText, OWN_LINKS, ownLink, reviewAskedText, SAID_YES_IN_PERSON, shortDate, shortNoticeLine, siteBase, upperFirst,
+  newClientsText, OWN_LINKS, ownLink, reviewAskedText, SAID_YES_IN_PERSON, shortDate, shortNoticeLine, siteBase, stoppedNote, upperFirst,
   type FoundYou,
 } from '../../src/lib/growth';
 import { cleanLinkSource, LINK_FROM, linkLabel, summariseNewClients } from '../../src/lib/source';
+import { bookingTitle, FALLBACK_TITLE } from '../../src/lib/head';
 import { treatmentLink } from '../../src/lib/freeTimes';
 import { NeedsUpdateError } from '../../src/api/api';
 import { FoundYouFields, ReviewAsk } from '../../src/components/appts';
@@ -201,18 +202,42 @@ describe('the short lines on her screens', () => {
       .toBe('Yes, since 4 Nov (ticked on the booking page)');
     expect(shortNoticeLine({ marketing_ok_at: at, marketing_ok_note: SAID_YES_IN_PERSON }, TZ, NOW)).toBe('Yes, since 4 Nov (said yes in person)');
     expect(shortNoticeLine({ marketing_ok_at: at, marketing_ok_note: null }, TZ, NOW)).toBe('Yes, since 4 Nov');
-    expect(shortNoticeLine({ marketing_ok_at: null, marketing_ok_note: null }, TZ, NOW)).toBe('Not asked yet');
+    // No yes recorded: just No (everyone booking online sees the box, so "not asked" wouldn't be right).
+    expect(shortNoticeLine({ marketing_ok_at: null, marketing_ok_note: null }, TZ, NOW)).toBe('No');
     // Her note fits the database's.
     const max = Number(schema.match(/marketing_ok_note\s+text check \(length\(marketing_ok_note\) <= (\d+)\)/)![1]);
     expect(SAID_YES_IN_PERSON.length).toBeLessThanOrEqual(max);
   });
 
-  it('the business name a new install starts with, and only that', () => {
-    expect(isDefaultBusinessName('My Nail Studio')).toBe(true);
-    expect(isDefaultBusinessName(' My Nail Studio ')).toBe(true);
-    for (const name of ['Demo Nail Studio', 'My Nail Studio by Sam', 'my nail studio', '', null, undefined]) {
-      expect(isDefaultBusinessName(name)).toBe(false);
+  it('taken off the list: a note of when, and of the yes it replaces, with the years, that the line then shows', () => {
+    const max = Number(schema.match(/marketing_ok_note\s+text check \(length\(marketing_ok_note\) <= (\d+)\)/)![1]);
+    const yes = { marketing_ok_at: '2026-11-04T03:00:00.000Z', marketing_ok_note: 'Ticked on the booking page' };
+    const note = stoppedNote(yes, TZ, NOW);
+    expect(note).toBe('Stopped 9 Nov 2026 (yes from 4 Nov 2026, ticked on the booking page)');
+    expect(shortNoticeLine({ marketing_ok_at: null, marketing_ok_note: note }, TZ, NOW)).toBe(note);
+    expect(stoppedNote({ marketing_ok_at: '2025-12-31T23:30:00.000Z', marketing_ok_note: SAID_YES_IN_PERSON }, TZ, NOW))
+      .toBe('Stopped 9 Nov 2026 (yes from 31 Dec 2025, said yes in person)');
+    expect(stoppedNote({ marketing_ok_at: yes.marketing_ok_at, marketing_ok_note: null }, TZ, NOW)).toBe('Stopped 9 Nov 2026 (yes from 4 Nov 2026)');
+    // A long note of her own is left out rather than make it too long for the database; the dates always fit.
+    const long = stoppedNote({ marketing_ok_at: yes.marketing_ok_at, marketing_ok_note: 'x'.repeat(max) }, TZ, NOW);
+    expect(long).toBe('Stopped 9 Nov 2026 (yes from 4 Nov 2026)');
+    for (const n of [note, long]) expect(n.length).toBeLessThanOrEqual(max);
+    // Any other note with no yes isn't shown as if it were one.
+    expect(shortNoticeLine({ marketing_ok_at: null, marketing_ok_note: 'Ticked on the booking page' }, TZ, NOW)).toBe('No');
+  });
+
+  it('the business name a new install starts with, in any capitals or spacing, as the page head reads it', () => {
+    for (const name of ['My Nail Studio', ' My Nail Studio ', 'my nail studio', 'MY NAIL STUDIO', 'My  Nail\nStudio']) {
+      expect(isDefaultBusinessName(name)).toBe(true);
+      // The same rule as the page head: whenever there's a reminder, Google and previews say "Book an appointment", and back.
+      expect(bookingTitle(name)).toBe(FALLBACK_TITLE);
     }
+    for (const name of ['Demo Nail Studio', 'My Nail Studio by Sam', 'Nails by Jess']) {
+      expect(isDefaultBusinessName(name)).toBe(false);
+      expect(bookingTitle(name)).not.toBe(FALLBACK_TITLE);
+    }
+    // Blank isn't "still says My Nail Studio" (and can't be saved).
+    for (const name of ['', '   ', null, undefined]) expect(isDefaultBusinessName(name)).toBe(false);
   });
 });
 
@@ -272,9 +297,10 @@ describe('Money → Month: the New clients card', () => {
     expect(html).not.toContain('role="alert"');
   });
 
-  it('before the database update: one line saying what to run, not an error', () => {
+  it('before the database update: one line saying who to ask, not an error', () => {
     const html = view(null, new NeedsUpdateError());
-    expect(textOf(html)).toBe('New clients Run the database update (2026-11-growth.sql) to see where new clients come from.');
+    expect(textOf(html)).toBe('New clients New clients will show here once the app’s database update has been run: '
+      + 'ask whoever set up the app (see SETUP.md).');
     expect(html).not.toContain('role="alert"');
   });
 
@@ -296,8 +322,8 @@ describe('asking for a Google review', () => {
     booking_name: 'Amy Example', service_name: 'Gel polish', starts_at: '2026-11-09T10:00:00.000Z', price_pence: 2500,
     deposit_required_pence: 0, reference: 'K3Q7XP', public_token: 'tok', late_fee_pence: null, status: 'completed',
   } as unknown as Appointment);
-  const ask = (s: Settings, askedAt: string | null | undefined, a = appt()) =>
-    draw(createElement(ReviewAsk, { a, s, review: { askedAt, onAsk: () => {} } }));
+  const ask = (s: Settings, askedAt: string | null | undefined, a = appt(), today = true) =>
+    draw(createElement(ReviewAsk, { a, s, review: { askedAt, onAsk: () => {} }, today }));
 
   it('offers her review message on WhatsApp, with her link in it', () => {
     const html = ask(settings(), null);
@@ -323,6 +349,18 @@ describe('asking for a Google review', () => {
     const html = ask(settings({ review_link: null }), null);
     expect(textOf(html)).toBe('To ask clients for a Google review here, add your review link in Settings → Booking page.');
     expect(html).toContain('href="/settings/booking-page"');
+  });
+
+  it('for a visit from another day, nothing to send: when she asked, or to ask at their next visit', () => {
+    const past = ask(settings(), null, appt(), false);
+    expect(textOf(past)).toBe('Not asked for a Google review yet: you can ask at their next visit');
+    expect(past).not.toMatch(/wa\.me|<button/);
+    const asked = ask(settings(), '2026-11-03T12:00:00.000Z', appt(), false);
+    expect(textOf(asked)).toMatch(/^Asked for a review on 3 Nov( 20\d\d)?$/);
+    expect(asked).not.toContain('Ask again');
+    // No link saved: nothing to say there.
+    expect(ask(settings({ review_link: null }), null, appt(), false)).toBe('');
+    expect(ask(settings(), undefined, appt(), false)).toBe('');
   });
 });
 

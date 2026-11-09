@@ -789,6 +789,9 @@
 .pub-share-heart { color: var(--pink); }
 .pub-share-note { margin: 8px 0 0; font-size: 0.9rem; font-weight: 700; text-align: center; color: var(--ok); }
 .pub-share-note:empty { margin: 0; }
+/* no share sheet and no clipboard (some apps' own browsers): the link itself, to copy by hand */
+.pub-share-hand { gap: 10px; margin-top: 12px; }
+.pub-share-hand input { font-weight: 650; color: var(--accent-text); text-overflow: ellipsis; }
 
 .celebrate {
   position: relative;

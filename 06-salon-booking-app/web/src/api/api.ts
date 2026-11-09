@@ -141,8 +141,9 @@ export interface Api {
   // --- owner: where clients come from, and short-notice spaces ----------------
   /**
    * Bookings by new clients made (created_at) from `fromIso` up to, not including, `toIso`, oldest first:
-   * online ones whose client said it was their first visit, and her own bookings for a new client
-   * (is_new_client). For Money → New clients: count them with summariseNewClients() in lib/source.
+   * online ones whose client said it was their first visit (or, with no answer, as booked before this
+   * version, that the database counted as a new client: is_new_client), and her own bookings for a new
+   * client (is_new_client). For Money → New clients: count them with summariseNewClients() in lib/source.
    * Fails with NeedsUpdateError until the database update has been run.
    */
   listNewClientBookings(fromIso: string, toIso: string): Promise<NewClientBooking[]>;

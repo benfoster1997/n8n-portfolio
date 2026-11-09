@@ -24,7 +24,7 @@ export interface HeadValues {
   strapline?: string | null;
   tagline?: string | null;
   location?: string | null;
-  /** Where the app lives, e.g. "https://book.example.com". With none, there is no canonical link or picture. */
+  /** Where the app lives, e.g. "https://book.example.com", for the preview picture. With none, there is no picture. */
   siteUrl?: string | null;
   /** The code from Google Search Console's "HTML tag" check (VITE_GOOGLE_SITE_VERIFICATION). */
   verification?: string | null;
@@ -119,7 +119,15 @@ export function verificationCode(raw: string | null | undefined): string | null 
   return /^[A-Za-z0-9_-]{1,200}$/.test(v) ? v : null;
 }
 
-/** The tags that replace <!-- booking-head --> in index.html, one per line. */
+/**
+ * The tags that replace <!-- booking-head --> in index.html, one per line.
+ *
+ * Deliberately no og:url and no canonical link. Every address serves this same page, so either would
+ * say plain /book is the page for all of them, and Facebook and Messenger take that (og:url, else the
+ * canonical link) as the address of a shared link. A shared …/book?treatment=biab-infill&from=free-times
+ * could then open the treatment list, and Money would lose where the visit came from. Without them,
+ * each link is kept as it was shared.
+ */
 export function buildHead(v: HeadValues): string {
   const name = businessName(v.name);
   const title = bookingTitle(v.name);
@@ -130,13 +138,11 @@ export function buildHead(v: HeadValues): string {
   const tags: (string | null)[] = [
     `<title>${escapeHtml(title)}</title>`,
     meta('name', 'description', description),
-    // Only with a real address: a preview card needs absolute links, and a wrong canonical is worse than none.
-    site && `<link rel="canonical" href="${escapeHtml(`${site}/book`)}" />`,
     meta('property', 'og:type', 'website'),
     name && meta('property', 'og:site_name', name),
     meta('property', 'og:title', title),
     meta('property', 'og:description', description),
-    site && meta('property', 'og:url', `${site}/book`),
+    // Only with a real address: a preview card needs an absolute link to its picture.
     site && meta('property', 'og:image', `${site}${CARD_IMAGE}`),
     site && meta('property', 'og:image:type', 'image/jpeg'),
     site && meta('property', 'og:image:width', '1200'),

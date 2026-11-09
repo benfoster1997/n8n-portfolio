@@ -172,10 +172,14 @@ export function Star({ size = 18 }: { size?: number }) {
  * Once a visit is done: ask the client for a Google review on WhatsApp, in her review wording with her
  * link filled in. It only asks, the same way every time, and offers nothing for it (Google's rules).
  * Once asked, it says when, with Ask again. No mobile: Copy message. No review link saved: one line
- * saying where to add it.
+ * saying where to add it. Only on the day of the visit, while she can ask them in person if it's OK
+ * (the same rule as the next visit after Mark as done): for a visit from another day it says when she
+ * asked, or to ask at their next visit.
  */
-export function ReviewAsk({ a, s, review, card = false }: {
+export function ReviewAsk({ a, s, review, today, card = false }: {
   a: Appointment; s: Settings; review: ReviewAskState;
+  /** The visit is today's, in her time zone. */
+  today: boolean;
   /** In a card of its own (on the appointment), rather than under the next visit in the sheet. */
   card?: boolean;
 }) {
@@ -184,6 +188,7 @@ export function ReviewAsk({ a, s, review, card = false }: {
   const headId = useId();
   const cls = `od-review${card ? ' card stack od-review-card' : ''}`;
   if (!s.review_link?.trim()) {
+    if (!today) return null;
     return (
       <p className="sub od-review-none">
         To ask clients for a Google review here, add your review link in <Link to="/settings/booking-page">Settings → Booking page</Link>.
@@ -191,6 +196,16 @@ export function ReviewAsk({ a, s, review, card = false }: {
     );
   }
   if (review.askedAt === undefined) return null;
+  if (!today) {
+    return (
+      <div className={`${cls} od-review-asked${review.askedAt ? '' : ' od-review-later'}`}>
+        <span className="od-review-when">
+          <Star size={17} /> {review.askedAt ? reviewAskedText(review.askedAt, s.timezone)
+            : 'Not asked for a Google review yet: you can ask at their next visit'}
+        </span>
+      </div>
+    );
+  }
   if (review.askedAt && !again) {
     return (
       <div className={`${cls} od-review-asked`}>

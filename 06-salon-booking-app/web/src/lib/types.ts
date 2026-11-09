@@ -404,7 +404,8 @@ export interface BookingRequest {
 
 /**
  * One booking by a new client, for Money → New clients (listNewClientBookings): booked online by someone
- * who said it was their first visit, or a booking she made for a new client. Count them with summariseNewClients.
+ * who said it was their first visit (or, booked before they were asked, a new client by the database's
+ * rule), or a booking she made for a new client. Count them with summariseNewClients.
  */
 export interface NewClientBooking {
   id: string;

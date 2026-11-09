@@ -2,7 +2,7 @@ import { defineConfig, devices } from '@playwright/test';
 
 // Browser tests run the built app in demo mode (invented data, no Supabase)
 // on an iPhone-sized screen. E2E_PORT lets two runs share a machine. VITE_SITE_URL
-// gives the page head its canonical link and preview picture, on the test server.
+// gives the page head its preview picture, on the test server.
 const chrome = process.env.CHROME_PATH || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
 const port = Number(process.env.E2E_PORT || 4173);
 

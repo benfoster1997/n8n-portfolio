@@ -1,6 +1,6 @@
 // Sharing a link from a tap: the phone's share sheet where there is one (WhatsApp,
 // Messages, Instagram…), otherwise the link is copied, and as a last resort it's shown
-// ready to copy. Used for "Share with a friend" and the owner's links.
+// ready to copy (a box, unless the caller shows it itself, as Share with a friend does).
 import { isAbort } from './files';
 
 /** The parts of `navigator` used here, so the tests can stand in for a phone (as ShareNavigator in lib/files). */

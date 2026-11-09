@@ -93,9 +93,10 @@ function demoSettings(): Settings {
     strapline: 'Gel, BIAB, Nail art',
     extras_menu: DEMO_EXTRAS_MENU,
     safety_note: 'Tools are cleaned between every client, and I use PPE for all nail work.',
-    // Invented handles, so the demo's social and "Message me" links have somewhere to go.
-    instagram_handle: 'demo.nails',
-    facebook_handle: 'demonails',
+    // None: any handle that looks real could belong to a real stranger, who'd get the demo's "Message me"
+    // taps. So the demo's Message me buttons are just Email (owner@example.com); the tests set handles.
+    instagram_handle: null,
+    facebook_handle: null,
     email_secret_hash: null,
     email_last_poll_at: null,
   };
@@ -214,7 +215,7 @@ function seed(): Store {
 
   sophie.health_consent_at = newBooking.created_at;
   sophie.health_consent_note = 'Online consultation form';
-  // She ticked "message me about short-notice spaces and offers" when she booked.
+  // She ticked "WhatsApp me about short-notice spaces and offers" when she booked.
   sophie.marketing_ok_at = newBooking.created_at;
   sophie.marketing_ok_note = 'Ticked on the booking page';
   return {
@@ -252,11 +253,6 @@ function load(): Store {
 function upgrade(s: Store): Store {
   const defaults = demoSettings();
   const settings = s.settings as unknown as Record<string, unknown>;
-  // Saved before where-clients-come-from: the social handles were empty in the demo then.
-  if (!('review_link' in settings)) {
-    if (!settings.instagram_handle) settings.instagram_handle = defaults.instagram_handle;
-    if (!settings.facebook_handle) settings.facebook_handle = defaults.facebook_handle;
-  }
   for (const [k, v] of Object.entries(defaults)) if (!(k in settings)) settings[k] = v;
   if (!Array.isArray(s.tax_years)) s.tax_years = [];
   for (const c of s.clients) {
@@ -414,8 +410,9 @@ export function demoApi(): Api {
         c.health_consent_at = nowIso();
         c.health_consent_note = 'Online consultation form';
       }
-      // The one thing a booking may set on a client's record: the first tick of the short-notice box.
-      if (extras.marketing_ok && !c.marketing_ok_at) {
+      // The one thing a booking may set on a client's record: the first tick of the short-notice box. As in the
+      // database, for an existing client only with the mobile on their record, where those messages go.
+      if (extras.marketing_ok && !c.marketing_ok_at && (created || phone === c.phone_e164)) {
         c.marketing_ok_at = nowIso();
         c.marketing_ok_note = 'Ticked on the booking page';
       }
@@ -802,8 +799,9 @@ export function demoApi(): Api {
       return delay(db.appointments
         .filter((a) => {
           const at = new Date(a.created_at).getTime();
-          return at >= from && at < to
-            && ((a.source === 'online' && a.first_visit_said === true) || (a.source === 'owner' && a.is_new_client));
+          // As the live app asks: with no answer to "Is this your first visit?", the database's own rule.
+          const online = a.first_visit_said === true || (a.first_visit_said === null && a.is_new_client);
+          return at >= from && at < to && (a.source === 'online' ? online : a.is_new_client);
         })
         .sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id))
         .map((a): NewClientBooking => ({
