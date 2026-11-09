@@ -66,6 +66,9 @@ export function OwnerGate({ children }: { children: ReactNode }) {
     return () => { live = false; off(); };
   }, [resolve]);
 
+  // Her own app (sign-in included) keeps its own name: the page's built-in title is the booking page's.
+  useEffect(() => { document.title = 'Bookings'; }, []);
+
   if (state.kind === 'loading') return <Spinner />;
   if (state.kind === 'signed-out') return <Login />;
   if (state.kind === 'error') {
