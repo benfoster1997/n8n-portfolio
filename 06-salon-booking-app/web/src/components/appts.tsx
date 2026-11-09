@@ -1,10 +1,13 @@
+import { useId, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import type { Appointment, ClientChange, Settings } from '../lib/types';
 import { fmtDayTime, fmtTime, minutesLabel } from '../lib/time';
-import { fillTemplate, money, templateFor, whatsappLink } from '../lib/text';
+import { fillTemplate, firstName, money, templateFor, whatsappLink } from '../lib/text';
 import { formOrConsent } from '../lib/health';
 import { isUnfinished } from '../lib/unfinished';
-import { Icon, LateChip, StatusChip, statusLabel } from './ui';
+import { HEARD_FROM, HEARD_FROM_DETAIL_MAX, isHeardFrom, takesDetail } from '../lib/source';
+import { reviewAskedText, type FoundYouAnswer } from '../lib/growth';
+import { Field, Icon, LateChip, StatusChip, statusLabel, useToast } from './ui';
 
 /** Where an appointment sits against the clock, for the timeline dot: done, happening now, or still to come. */
 export function apptPhase(a: Pick<Appointment, 'status' | 'starts_at' | 'ends_at'>, now = Date.now()): 'cancelled' | 'past' | 'now' | 'future' {
@@ -117,5 +120,108 @@ export function WhatsAppButton({ a, s, kind, label, onSent, small }: {
       target="_blank" rel="noreferrer" onClick={() => onSent?.()}>
       <Icon name="whatsapp" size={20} /> {label ?? 'WhatsApp'}
     </a>
+  );
+}
+
+/**
+ * "How did they find you?": the six answers the booking page offers (or Not known), and with A friend
+ * or Other a few words, such as who recommended them. On New appointment, and an appointment's Found you.
+ */
+export function FoundYouFields({ value, onChange, label = 'How did they find you?', hint }: {
+  value: FoundYouAnswer; onChange: (v: FoundYouAnswer) => void; label?: string; hint?: ReactNode;
+}) {
+  const friend = value.heard_from === 'friend';
+  return (
+    <>
+      <Field label={label} hint={hint}>
+        <select value={value.heard_from ?? ''}
+          onChange={(e) => onChange({ ...value, heard_from: isHeardFrom(e.target.value) ? e.target.value : null })}>
+          <option value="">Not known</option>
+          {HEARD_FROM.map((h) => <option key={h.value} value={h.value}>{h.label}</option>)}
+        </select>
+      </Field>
+      {takesDetail(value.heard_from) && (
+        <Field label={friend ? 'Who recommended them? (optional)' : 'A few words (optional)'}>
+          <input type="text" value={value.detail} maxLength={HEARD_FROM_DETAIL_MAX} autoComplete="off"
+            placeholder={friend ? 'e.g. Sam' : 'e.g. a wedding fair'} onChange={(e) => onChange({ ...value, detail: e.target.value })} />
+        </Field>
+      )}
+    </>
+  );
+}
+
+/** What ReviewAsk needs from the screen it's on (the appointment, which keeps it for the sheet and the card alike). */
+export interface ReviewAskState {
+  /** When she last asked this client for a review (their record): null for never, undefined while that's loading. */
+  askedAt: string | null | undefined;
+  /** She has just asked: note it on their record. */
+  onAsk: () => void;
+}
+
+/** A star, for Google reviews (decorative). */
+export function Star({ size = 18 }: { size?: number }) {
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth={1.8}
+      strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+      <path d="M12 3.6l2.6 5.3 5.8.8-4.2 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.2-4.1 5.8-.8z" />
+    </svg>
+  );
+}
+
+/**
+ * Once a visit is done: ask the client for a Google review on WhatsApp, in her review wording with her
+ * link filled in. It only asks, the same way every time, and offers nothing for it (Google's rules).
+ * Once asked, it says when, with Ask again. No mobile: Copy message. No review link saved: one line
+ * saying where to add it.
+ */
+export function ReviewAsk({ a, s, review, card = false }: {
+  a: Appointment; s: Settings; review: ReviewAskState;
+  /** In a card of its own (on the appointment), rather than under the next visit in the sheet. */
+  card?: boolean;
+}) {
+  const [again, setAgain] = useState(false);
+  const toast = useToast();
+  const headId = useId();
+  const cls = `od-review${card ? ' card stack od-review-card' : ''}`;
+  if (!s.review_link?.trim()) {
+    return (
+      <p className="sub od-review-none">
+        To ask clients for a Google review here, add your review link in <Link to="/settings/booking-page">Settings → Booking page</Link>.
+      </p>
+    );
+  }
+  if (review.askedAt === undefined) return null;
+  if (review.askedAt && !again) {
+    return (
+      <div className={`${cls} od-review-asked`}>
+        <span className="od-review-when"><Star size={17} /> {reviewAskedText(review.askedAt, s.timezone)}</span>
+        <button type="button" className="btn ghost small od-review-again" onClick={() => setAgain(true)}>Ask again</button>
+      </div>
+    );
+  }
+  const first = firstName(a.client?.full_name ?? a.booking_name);
+  const message = fillTemplate(templateFor('review', s), a, s);
+  const phone = a.client?.phone_e164;
+  // Noted once the tap has opened WhatsApp (this button is then replaced by when she asked).
+  const asked = () => { window.setTimeout(() => { setAgain(false); review.onAsk(); }, 0); };
+  async function copy() {
+    try { await navigator.clipboard.writeText(message); toast('Message copied'); } catch { window.prompt('Copy this:', message); }
+    asked();
+  }
+  return (
+    <section className={cls} aria-labelledby={headId}>
+      <div className="od-review-head">
+        <span className="od-ic small lemon" aria-hidden="true"><Star /></span>
+        <h3 id={headId}>Ask {first || 'them'} for a Google review</h3>
+      </div>
+      <p className="sub od-review-note">Ask if it’s OK to send your link, then tap.</p>
+      {phone ? (
+        <a className="btn wa block" href={whatsappLink(phone, message)} target="_blank" rel="noreferrer" onClick={asked}>
+          <Icon name="whatsapp" size={20} /> Send on WhatsApp
+        </a>
+      ) : (
+        <button type="button" className="btn block" onClick={copy}><Icon name="copy" size={20} /> Copy message</button>
+      )}
+    </section>
   );
 }

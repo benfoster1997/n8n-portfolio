@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useParams } from 'react-router-dom';
-import { api } from '../../api';
-import { WhatsAppButton } from '../../components/appts';
+import { api, isNeedsUpdate } from '../../api';
+import { FoundYouFields, ReviewAsk, WhatsAppButton, type ReviewAskState } from '../../components/appts';
 import { useOwner } from '../../components/owner';
 import {
   ErrorBox, Field, Icon, LateChip, Seg, Sheet, Spinner, StatusChip, TopBar, useAction, useLoad, useRefreshOnReturn, useToast,
@@ -15,6 +15,8 @@ import { isUnfinished, noShowQuestion } from '../../lib/unfinished';
 import {
   doneLine, newAppointmentLink, nextVisitDays, nextVisitOptions, nextVisitQuestion, sameTreatment, type Treatment,
 } from '../../lib/nextVisit';
+import { foundYouLabel, HEARD_FROM_LABEL, linkLabel } from '../../lib/source';
+import { clientSearchLink, foundYouPatch, friendName, upperFirst, type FoundYouAnswer } from '../../lib/growth';
 import { Glyph } from './Clients';
 import type { Appointment, ApptHealth, CancelledBy, ClientChange, EmailKind, PayMethod, Settings } from '../../lib/types';
 
@@ -58,9 +60,16 @@ export function AppointmentView() {
     return { id: lateId, received: lateChargePayments(a, await api.listPayments(dateInZone(a.cancelled_at ?? a.starts_at, tz), todayInZone(tz))) };
   }, [lateId]);
   const lateReceived = late?.received;
-  const [sheet, setSheet] = useState<null | 'deposit' | 'checkout' | 'move' | 'cancel' | 'late'>(null);
+  const [sheet, setSheet] = useState<null | 'deposit' | 'checkout' | 'move' | 'cancel' | 'late' | 'found'>(null);
   const [notes, setNotes] = useState<string | null>(null);
   const act = useAction();
+  // Once the visit is done: when she last asked this client for a Google review (their record), for the
+  // review ask here and in the Next visit sheet alike, and when she has just asked. With no review link
+  // saved there's no ask, just a line saying where to add one, so nothing to look up.
+  const doneFor = a?.status === 'completed' && s.review_link ? a.client_id : null;
+  const { data: reviewed, error: reviewError } = useLoad(async () => (
+    doneFor ? { client: doneFor, at: (await api.getClient(doneFor))?.review_asked_at ?? null } : null), [doneFor]);
+  const [askedNow, setAskedNow] = useState<{ client: string; at: string } | null>(null);
   // Left open: up to date again when she comes back to the app (a client may have changed or cancelled it),
   // but never while a sheet is open, her notes are unsaved or something is still saving. Money received for a
   // late cancellation is only recorded on this screen, which reloads it then, so it isn't reloaded here: its
@@ -98,6 +107,21 @@ export function AppointmentView() {
   // A mobile typed with this booking that isn't the one on the client record: nothing carrying
   // their private link goes by WhatsApp until she has checked which is right.
   const checkPhone = !!a.booking_phone;
+  // How the client found her: their answer, or the link they booked through (lib/source).
+  const found = foundYouLabel(a.link_source, a.heard_from, a.heard_from_detail);
+  const clientId = a.client_id;
+  const review: ReviewAskState = {
+    askedAt: askedNow?.client === clientId ? askedNow.at
+      : reviewed?.client === clientId ? reviewed.at : reviewError ? null : undefined,
+    onAsk: () => {
+      const at = new Date().toISOString();
+      setAskedNow({ client: clientId, at });
+      // In the background, as she's off to WhatsApp. Before the database update there's nowhere to keep it.
+      api.updateClient(clientId, { review_asked_at: at }).catch((e) => {
+        if (!isNeedsUpdate(e)) toast('Couldn’t save that you asked for a review');
+      });
+    },
+  };
 
   async function saveNotes() {
     if (notes === null) return;
@@ -201,6 +225,17 @@ export function AppointmentView() {
           <div><dt>Price</dt><dd className="od-price">{money(a.price_pence)}</dd></div>
           <div><dt>Reference</dt><dd className="mono od-ref">{a.reference}</dd></div>
           <div><dt>Booked</dt><dd>{a.source === 'online' ? 'Online' : 'By you'}{DOT}<span className="od-nowrap">{fmtDayTime(a.created_at, tz)}</span></dd></div>
+          {found && (
+            <div className="od-found">
+              <dt>Found you</dt>
+              <dd>
+                <FoundYouValue a={a} />{' '}
+                <button type="button" className="od-found-edit" onClick={() => setSheet('found')}>
+                  Edit<span className="visually-hidden"> how they found you</span>
+                </button>
+              </dd>
+            </div>
+          )}
           {a.is_new_client && <div><dt>Client</dt><dd>New client{formOrConsent(a) ? <>{DOT}<span className="od-nowrap">{consentOnly(a.health ? formOnFile(a.health) : null) ? 'consent recorded' : 'form on file'}</span></> : <span className="flag">{DOT}no consultation form</span>}</dd></div>}
           {a.deposit_required_pence > 0 && (
             <div>
@@ -209,6 +244,9 @@ export function AppointmentView() {
             </div>
           )}
         </dl>
+        {!found && (
+          <button type="button" className="od-text-link od-found-add" onClick={() => setSheet('found')}>Add how they found you</button>
+        )}
         {a.client_notes && <div className="od-quote"><b>Client’s note:</b> {a.client_notes}</div>}
         {a.cancellation_policy_agreed && (
           <details className="od-agreed">
@@ -261,6 +299,8 @@ export function AppointmentView() {
           <Link className="btn" to={`/clients/${a.client.id}`}><Glyph name="user" size={20} /> Client record</Link>
         </div>
       )}
+
+      {a.status === 'completed' && <ReviewAsk a={a} s={s} review={review} card />}
 
       {lateId && (
         <div className="card stack attention od-panel">
@@ -380,7 +420,10 @@ export function AppointmentView() {
 
       {sheet === 'deposit' && <DepositSheet a={a} onClose={() => setSheet(null)} onDone={() => { toast('Deposit recorded — client confirmed'); done(); }} />}
       {/* For a visit today the sheet stays open once it's done, to book the next visit; the screen behind it already says Done. */}
-      {sheet === 'checkout' && <CheckoutSheet a={a} onClose={() => setSheet(null)} onFinished={() => { reload(); reloadEmails(); }} />}
+      {sheet === 'checkout' && <CheckoutSheet a={a} review={review} onClose={() => setSheet(null)} onFinished={() => { reload(); reloadEmails(); }} />}
+      {sheet === 'found' && (
+        <FoundYouSheet a={a} onClose={() => setSheet(null)} onSaved={(saved) => { setData(saved); setSheet(null); toast('Saved'); }} />
+      )}
       {sheet === 'move' && <MoveSheet a={a} tz={tz} onClose={() => setSheet(null)} onDone={(msg) => { toast(msg); done(); }} />}
       {sheet === 'cancel' && (
         <CancelSheet a={a} onClose={() => setSheet(null)} onDone={() => { toast('Appointment cancelled'); done(); }}
@@ -451,6 +494,38 @@ function HealthStrip({ a, h, s, first, phone, checkPhone, formUrl, onCopy }: {
 
 /** " · " that never starts a line: a line can break only after the dot. */
 const DOT = '\u00a0· ';
+
+/** How the client found her, on the receipt: "A friend: Sam" (Sam opens Clients, looking for her), "Your Instagram link". */
+function FoundYouValue({ a }: { a: Appointment }) {
+  const friend = friendName(a);
+  if (friend) return <>{HEARD_FROM_LABEL.friend}: <Link className="od-found-name" to={clientSearchLink(friend)}>{friend}</Link></>;
+  return <>{upperFirst(foundYouLabel(a.link_source, a.heard_from, a.heard_from_detail) ?? '')}</>;
+}
+
+/**
+ * Set or correct how the client found her: the same six answers as the booking page, and the words
+ * with A friend or Other. Her answer counts before the link they booked through (which stays as it was).
+ */
+function FoundYouSheet({ a, onClose, onSaved }: { a: Appointment; onClose: () => void; onSaved: (saved: Appointment) => void }) {
+  const [v, setV] = useState<FoundYouAnswer>({ heard_from: a.heard_from, detail: a.heard_from_detail ?? '' });
+  const { busy, error, run } = useAction();
+  const first = firstName(a.client?.full_name ?? a.booking_name);
+  async function save() {
+    let saved: Appointment | undefined;
+    if (await run(async () => { saved = await api.updateAppointment(a.id, foundYouPatch(v)); })) onSaved(saved!);
+  }
+  return (
+    <Sheet title="How they found you" onClose={onClose}>
+      <div className="stack">
+        {a.link_source && <p className="sub od-sheet-note">They booked through {linkLabel(a.link_source)}.</p>}
+        <FoundYouFields value={v} onChange={setV} label={first ? `How did ${first} find you?` : undefined}
+          hint="Money adds these up, so you can see what brings new clients." />
+        <ErrorBox error={error} />
+        <button className="btn primary block" disabled={busy} onClick={save}>{busy ? 'Saving…' : 'Save'}</button>
+      </div>
+    </Sheet>
+  );
+}
 
 /** The change link, split so it wraps after the host and at the token's hyphens rather than mid-word. */
 function ChangeUrl({ url }: { url: string }) {
@@ -538,8 +613,9 @@ function DepositSheet({ a, onClose, onDone }: { a: Appointment; onClose: () => v
  * (NextVisit), while the screen behind it updates; Not now, Close or Escape closes it.
  * A visit from another day (one from "Not finished yet") just closes with what was recorded:
  * the client isn't there to agree a date, and the choices would count from that old day.
+ * `review`: the Google review ask under the next visit, kept by the appointment screen.
  */
-function CheckoutSheet({ a, onClose, onFinished }: { a: Appointment; onClose: () => void; onFinished: () => void }) {
+function CheckoutSheet({ a, review, onClose, onFinished }: { a: Appointment; review: ReviewAskState; onClose: () => void; onFinished: () => void }) {
   const tz = useOwner().settings.timezone;
   const toast = useToast();
   const depositPaid = a.deposit_paid_at ? a.deposit_required_pence : 0;
@@ -562,7 +638,7 @@ function CheckoutSheet({ a, onClose, onFinished }: { a: Appointment; onClose: ()
   if (recorded) {
     return (
       <Sheet title="Next visit" onClose={onClose}>
-        <NextVisit a={a} recorded={recorded} onClose={onClose} />
+        <NextVisit a={a} recorded={recorded} review={review} onClose={onClose} />
       </Sheet>
     );
   }
@@ -592,9 +668,12 @@ function CheckoutSheet({ a, onClose, onFinished }: { a: Appointment; onClose: ()
 /**
  * After "Mark as done": what was recorded, then the same treatment in 2, 3 or 4 weeks, each with
  * the date and time it would book (the same weekday and time if that's free, otherwise the
- * nearest free time), and Pick a date. A tap opens New appointment filled in.
+ * nearest free time), and Pick a date. A tap opens New appointment filled in. Then asking for a
+ * Google review (ReviewAsk), while they're still there to say it's OK.
  */
-function NextVisit({ a, recorded, onClose }: { a: Appointment; recorded: { amount: number; tip: number }; onClose: () => void }) {
+function NextVisit({ a, recorded, review, onClose }: {
+  a: Appointment; recorded: { amount: number; tip: number }; review: ReviewAskState; onClose: () => void;
+}) {
   const { settings: s } = useOwner();
   const tz = s.timezone;
   const box = useRef<HTMLDivElement>(null);
@@ -664,6 +743,7 @@ function NextVisit({ a, recorded, onClose }: { a: Appointment; recorded: { amoun
           </li>
         </ul>
       )}
+      <ReviewAsk a={a} s={s} review={review} />
       <button className="btn block" onClick={onClose}>Not now</button>
     </div>
   );

@@ -288,6 +288,8 @@
 
 .td-notice { margin-top: 12px; }
 .td-setup .list-row { min-height: 54px; }
+/* a long one (the default business name) wraps into even lines, never leaving a word on its own */
+.td-setup .list-row > .grow { text-wrap: balance; }
 .td-setup-dot {
   flex: none;
   width: 10px;
@@ -475,7 +477,8 @@
 .td-link-url svg { flex: none; margin-top: 2px; }
 .td-link-url span { min-width: 0; overflow-wrap: anywhere; }
 .td-link-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 14px; }
-.td-link-hint { margin: 12px 0 0; font-size: 0.85rem; color: var(--muted); }
+.td-link-hint { margin: 12px 0 0; font-size: 0.85rem; color: var(--muted); text-wrap: pretty; }
+.td-link-hint a { color: var(--accent-text); font-weight: 750; text-underline-offset: 2px; }
 
 @media (max-width: 359px) {
   .td-tiles { gap: 6px; grid-template-columns: 1.22fr 1fr 1fr; }

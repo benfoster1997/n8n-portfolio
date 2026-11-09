@@ -115,9 +115,14 @@ export function treatmentParam(s: Named, services: Named[]): string {
   return slug && alike === 1 ? slug : s.id;
 }
 
-/** Her booking link, opening straight on this treatment's free times: ".../book?treatment=biab-infill". */
-export function treatmentLink(bookingUrl: string, s: Named, services: Named[]): string {
-  return `${bookingUrl}?treatment=${encodeURIComponent(treatmentParam(s, services))}`;
+/**
+ * Her booking link, opening straight on this treatment's free times: ".../book?treatment=biab-infill".
+ * With `from`, it also says where it was shared (".../book?treatment=biab-infill&from=free-times"), so
+ * Money can tell which links bring new clients (LINK_FROM in lib/source).
+ */
+export function treatmentLink(bookingUrl: string, s: Named, services: Named[], from?: string): string {
+  const link = `${bookingUrl}?treatment=${encodeURIComponent(treatmentParam(s, services))}`;
+  return from ? `${link}&from=${encodeURIComponent(from)}` : link;
 }
 
 /** The treatment a booking link names (by id or by name), if clients can book it online; otherwise null. */

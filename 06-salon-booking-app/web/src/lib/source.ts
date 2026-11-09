@@ -43,6 +43,8 @@ const LINK_LABEL = new Map<string, string>([
   ['card', 'your printed card'],
   ['free-times', 'a free-times post'],
   ['friend', 'a client sharing your link'],
+  // Her WhatsApp Business link (Settings → Booking page → Your links).
+  ['whatsapp', 'your WhatsApp link'],
 ]);
 
 /** "Instagram!!" → "instagram": a link's source as the database keeps it (lower case, a–z, 0–9 and -, up to 30), or null. */
