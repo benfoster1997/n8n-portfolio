@@ -3,13 +3,10 @@
 // run the page's scripts and every path serves the same index.html, so this is written into it when
 // the app is built (vite.config.ts), from the business details in Settings or the VITE_PUBLIC_*
 // overrides. Pure: no network, no globals, so the tests can check every line of it.
-
-/**
- * The name a new database starts with (supabase/schema.sql). It counts as unset, so the page never
- * advertises it: until she types her own, the head says "Book an appointment". Defined here too
- * (not imported) so the build config needs nothing but this file and env.ts.
- */
-const DEFAULT_BUSINESS_NAME = 'My Nail Studio';
+//
+// The name a new database starts with (DEFAULT_BUSINESS_NAME, supabase/schema.sql) counts as unset,
+// so the page never advertises it: until she types her own, the head says "Book an appointment".
+import { DEFAULT_BUSINESS_NAME } from './text';
 
 export const FALLBACK_TITLE = 'Book an appointment';
 export const FALLBACK_DESCRIPTION = 'See free times and book your appointment online.';
