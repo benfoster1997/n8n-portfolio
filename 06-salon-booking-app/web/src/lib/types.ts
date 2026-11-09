@@ -7,6 +7,8 @@ export type EmailKind =
   | 'booking_received' | 'deposit_received' | 'reminder' | 'cancelled' | 'changed'
   | 'owner_new_booking' | 'owner_changed' | 'owner_cancelled';
 export type CancelledBy = 'client' | 'owner' | 'system';
+/** "How did you hear about me?": the six answers the database keeps (labels: HEARD_FROM in lib/source). */
+export type HeardFrom = 'instagram' | 'facebook' | 'google' | 'friend' | 'card' | 'other';
 
 export interface Settings {
   business_name: string;
@@ -31,6 +33,14 @@ export interface Settings {
   wa_template_reminder: string | null;
   wa_template_deposit: string | null;
   wa_template_confirmed: string | null;
+  /**
+   * The WhatsApp thank-you after Mark as done that asks for a Google review (null: DEFAULT_TEMPLATES.review).
+   * This and review_link are null in the live app until supabase/updates/2026-11-growth.sql has been run,
+   * and saving them fails with NeedsUpdateError (api/api.ts).
+   */
+  wa_template_review: string | null;
+  /** Her Google review link, for the message's {review_link}: https, no spaces (check it with isReviewLink). Owner-side only. */
+  review_link: string | null;
   booking_enabled: boolean;
   legal_name: string | null;
   auto_cancel_unpaid: boolean;
@@ -82,6 +92,16 @@ export interface Client {
   /** When the client gave explicit consent to health information being kept. */
   health_consent_at: string | null;
   health_consent_note: string | null;
+  /**
+   * When the client said she may message them about short-notice spaces and offers (null: they haven't).
+   * These three are null in the live app until supabase/updates/2026-11-growth.sql has been run,
+   * and saving them fails with NeedsUpdateError (api/api.ts).
+   */
+  marketing_ok_at: string | null;
+  /** How they said so: "Ticked on the booking page", or her own note. Up to 100 characters. */
+  marketing_ok_note: string | null;
+  /** When she last asked them for a Google review. */
+  review_asked_at: string | null;
   created_at: string;
 }
 
@@ -127,6 +147,18 @@ export interface Appointment {
   late_fee_pence: number | null;
   /** The mobile typed with an online booking when it differs from the client's record, for the owner to check. */
   booking_phone: string | null;
+  /**
+   * Where an online booking came from: the link's ?from= or the site that sent them ('instagram', 'card',
+   * 'free-times', …; see readSource and foundYouLabel in lib/source). These four are null in the live
+   * app until supabase/updates/2026-11-growth.sql has been run, and saving one fails with NeedsUpdateError.
+   */
+  link_source: string | null;
+  /** "How did you hear about me?" (optional, asked of first-timers), or noted by the owner. */
+  heard_from: HeardFrom | null;
+  /** A few words with A friend or Other, such as the friend's name. Up to 60 characters, never a link. */
+  heard_from_detail: string | null;
+  /** The client's own answer to "Is this your first visit?" when booking online. Deposits follow is_new_client, never this. */
+  first_visit_said: boolean | null;
   created_at: string;
   client?: ClientLite;
   /** True when the client has at least one consultation form on file. */
@@ -337,6 +369,23 @@ export interface BusyRange {
   ends_at: string;
 }
 
+/**
+ * The booking page's optional answers (public_create_booking's p_extras). The database tidies them and
+ * leaves out anything odd, so they can never stop a booking. Blank ones aren't sent at all.
+ */
+export interface BookingExtras {
+  /** Where the link came from: readSource() in lib/source. */
+  link_source?: string | null;
+  /** "How did you hear about me?" */
+  heard_from?: HeardFrom | null;
+  /** A few words with A friend or Other, such as the friend's name (kept to 60 characters; never a link). */
+  heard_from_detail?: string | null;
+  /** Their answer to "Is this your first visit?" (false is an answer too). */
+  first_visit?: boolean | null;
+  /** Ticked "message me about short-notice spaces and offers" (unticked to begin with). */
+  marketing_ok?: boolean;
+}
+
 export interface BookingRequest {
   service_id: string;
   starts_at: string;
@@ -349,6 +398,37 @@ export interface BookingRequest {
   signed_name: string | null;
   /** Ticked "I agree to the cancellation policy". */
   policy_accepted: boolean;
+  /** The optional answers. Still books if the database update for them hasn't been run (they're left out). */
+  extras?: BookingExtras;
+}
+
+/**
+ * One booking by a new client, for Money → New clients (listNewClientBookings): booked online by someone
+ * who said it was their first visit, or a booking she made for a new client. Count them with summariseNewClients.
+ */
+export interface NewClientBooking {
+  id: string;
+  client_id: string;
+  status: ApptStatus;
+  /** When it was booked. */
+  created_at: string;
+  link_source: string | null;
+  heard_from: HeardFrom | null;
+  heard_from_detail: string | null;
+  /** The client's name now, from their record. */
+  full_name: string | null;
+}
+
+/** A client who's happy to hear about short-notice spaces and offers, and has a mobile (listShortNoticeClients). */
+export interface ShortNoticeClient {
+  id: string;
+  full_name: string;
+  /** For whatsappLink(): only clients with a mobile are listed. */
+  phone_e164: string;
+  /** When they said yes. */
+  marketing_ok_at: string;
+  /** How: "Ticked on the booking page", or her own note. */
+  marketing_ok_note: string | null;
 }
 
 export interface NewAppointment {

@@ -58,6 +58,12 @@ create table if not exists public.settings (
   wa_template_reminder   text check (length(wa_template_reminder) <= 1000),
   wa_template_deposit    text check (length(wa_template_deposit) <= 1000),
   wa_template_confirmed  text check (length(wa_template_confirmed) <= 1000),
+  -- The WhatsApp thank-you after Mark as done that asks for a Google review, and
+  -- her review link for its {review_link}. Only ever used in the owner's app. The
+  -- link: https://, then 1 to 290 characters and no spaces (counted with length(),
+  -- as PostgreSQL's patterns can't count past 255).
+  wa_template_review     text check (length(wa_template_review) <= 1000),
+  review_link            text check (review_link ~ '^https://[^[:space:]]+$' and length(review_link) <= 298),
   booking_enabled        boolean not null default true,
   -- The owner's legal name, for the privacy notice (a trading name is not a legal person).
   legal_name             text check (length(legal_name) <= 100),
@@ -140,6 +146,12 @@ create table if not exists public.clients (
   -- (set automatically by the consultation form; the owner can record paper/in-person consent).
   health_consent_at   timestamptz,
   health_consent_note text check (length(health_consent_note) <= 200),
+  -- When the client said she may message them about short-notice spaces and offers,
+  -- and how ("Ticked on the booking page", or noted by the owner). Empty means no.
+  marketing_ok_at     timestamptz,
+  marketing_ok_note   text check (length(marketing_ok_note) <= 100),
+  -- When she last asked them for a Google review, so nobody is asked twice.
+  review_asked_at     timestamptz,
   created_at  timestamptz not null default now(),
   updated_at  timestamptz not null default now()
 );
@@ -209,6 +221,16 @@ create table if not exists public.appointments (
   -- The mobile typed with an online booking, when it differs from the client's
   -- record (the record is never changed from the booking page). The owner checks it.
   booking_phone          text check (length(booking_phone) <= 30),
+  -- Where an online booking came from: the booking link's ?from= (or the site that
+  -- sent them), e.g. 'instagram', 'card' or 'free-times'. Tidied by public_create_booking.
+  link_source            text check (link_source ~ '^[a-z0-9-]{1,30}$'),
+  -- "How did you hear about me?" (optional, asked of first-timers, or noted by the
+  -- owner), with a few words for A friend or Other, such as the friend's name.
+  heard_from             text check (heard_from in ('instagram', 'facebook', 'google', 'friend', 'card', 'other')),
+  heard_from_detail      text check (length(heard_from_detail) <= 60),
+  -- The client's own answer to "Is this your first visit?" when booking online. The
+  -- deposit still follows is_new_client (the database's rule), never this.
+  first_visit_said       boolean,
   created_at             timestamptz not null default now(),
   updated_at             timestamptz not null default now(),
   check (ends_at > starts_at),
@@ -368,6 +390,20 @@ alter table public.settings add column if not exists instagram_handle text
   check (instagram_handle ~ '^[A-Za-z0-9._]{1,30}$');
 alter table public.settings add column if not exists facebook_handle text
   check (facebook_handle ~ '^[A-Za-z0-9.]{5,50}$');
+-- Where clients come from, reviews and short-notice spaces (an install made with an
+-- older schema.sql can add these with supabase/updates/2026-11-growth.sql instead).
+alter table public.appointments add column if not exists link_source text
+  check (link_source ~ '^[a-z0-9-]{1,30}$');
+alter table public.appointments add column if not exists heard_from text
+  check (heard_from in ('instagram', 'facebook', 'google', 'friend', 'card', 'other'));
+alter table public.appointments add column if not exists heard_from_detail text check (length(heard_from_detail) <= 60);
+alter table public.appointments add column if not exists first_visit_said boolean;
+alter table public.clients add column if not exists marketing_ok_at timestamptz;
+alter table public.clients add column if not exists marketing_ok_note text check (length(marketing_ok_note) <= 100);
+alter table public.clients add column if not exists review_asked_at timestamptz;
+alter table public.settings add column if not exists review_link text
+  check (review_link ~ '^https://[^[:space:]]+$' and length(review_link) <= 298);
+alter table public.settings add column if not exists wa_template_review text check (length(wa_template_review) <= 1000);
 alter table public.email_outbox drop constraint if exists email_outbox_kind_check;
 alter table public.email_outbox add constraint email_outbox_kind_check
   check (kind in ('booking_received', 'deposit_received', 'reminder', 'cancelled', 'changed',
@@ -632,8 +668,15 @@ begin
   end if;
 end $$;
 
+-- Earlier versions: before clients agreed to the cancellation policy (nine inputs), and
+-- before p_extras (ten). Only ever one, so the API never has two to choose between.
 drop function if exists public.public_create_booking(uuid, timestamptz, text, text, text, text, jsonb, boolean, text);
+drop function if exists public.public_create_booking(uuid, timestamptz, text, text, text, text, jsonb, boolean, text, boolean);
 
+-- p_extras: the booking page's optional answers, in one object so that a new one
+-- never needs another change to this list: link_source (where the link came from),
+-- heard_from and heard_from_detail ("How did you hear about me?"), first_visit
+-- (their answer to "Is this your first visit?") and marketing_ok (the short-notice box).
 create or replace function public.public_create_booking(
   p_service_id     uuid,
   p_starts_at      timestamptz,
@@ -644,7 +687,8 @@ create or replace function public.public_create_booking(
   p_consultation   jsonb   default null,
   p_health_consent boolean default false,
   p_signed_name    text    default null,
-  p_policy_accepted boolean default false
+  p_policy_accepted boolean default false,
+  p_extras         jsonb   default null
 )
 returns jsonb language plpgsql volatile security definer set search_path = public as $$
 declare
@@ -660,6 +704,12 @@ declare
   v_created boolean;
   v_ip      text := nullif(btrim(split_part(coalesce(
                  nullif(current_setting('request.headers', true), '')::json ->> 'x-forwarded-for', ''), ',', 1)), '');
+  -- From p_extras, once tidied.
+  v_link    text;
+  v_heard   text;
+  v_detail  text;
+  v_first   boolean;
+  v_mkt     boolean := false;
 begin
   select * into s from public.settings where id = 1;
   if not s.booking_enabled then raise exception 'booking_disabled'; end if;
@@ -700,7 +750,8 @@ begin
 
   perform public.check_bookable_time(p_starts_at, v_service.duration_min);
 
-  -- Match an existing client by email only, and never change an existing record from here.
+  -- Match an existing client by email only, and never change an existing record from
+  -- here (apart from noting the short-notice box, below).
   select * into v_client from public.clients where lower(email) = v_email limit 1;
   v_created := not found;
   if v_created then
@@ -730,11 +781,37 @@ begin
 
   v_deposit := case when v_is_new then s.deposit_amount_pence else 0 end;
 
+  -- The optional answers (p_extras). Each is kept only in the shape it should have,
+  -- and on any problem they're all left out: they can never stop a booking.
+  begin
+    if jsonb_typeof(p_extras) = 'object' then
+      -- "?from=Instagram!!" → 'instagram'.
+      if jsonb_typeof(p_extras -> 'link_source') = 'string' then
+        v_link := nullif(left(regexp_replace(lower(p_extras ->> 'link_source'), '[^a-z0-9-]+', '', 'g'), 30), '');
+      end if;
+      if p_extras ->> 'heard_from' in ('instagram', 'facebook', 'google', 'friend', 'card', 'other') then
+        v_heard := p_extras ->> 'heard_from';
+      end if;
+      -- A few words on one line, such as a friend's name: never a link, an address or markup.
+      if v_heard in ('friend', 'other') and jsonb_typeof(p_extras -> 'heard_from_detail') = 'string' then
+        v_detail := btrim(regexp_replace(p_extras ->> 'heard_from_detail', '[[:space:][:cntrl:]]+', ' ', 'g'));
+        v_detail := case when v_detail !~* '[@<>]|://|www\.' then nullif(btrim(left(v_detail, 60)), '') end;
+      end if;
+      if jsonb_typeof(p_extras -> 'first_visit') = 'boolean' then
+        v_first := (p_extras -> 'first_visit')::boolean;
+      end if;
+      v_mkt := coalesce(p_extras -> 'marketing_ok' = 'true'::jsonb, false);
+    end if;
+  exception when others then
+    v_link := null; v_heard := null; v_detail := null; v_first := null; v_mkt := false;
+  end;
+
   begin
     insert into public.appointments (
       client_id, service_id, service_name, price_pence, duration_min, starts_at, ends_at, busy_until,
       status, source, booking_name, is_new_client, deposit_required_pence, deposit_due_at,
-      reference, client_notes, cancellation_policy_agreed, booking_phone)
+      reference, client_notes, cancellation_policy_agreed, booking_phone,
+      link_source, heard_from, heard_from_detail, first_visit_said)
     values (
       v_client.id, v_service.id, v_service.name, v_service.price_pence, v_service.duration_min,
       p_starts_at, p_starts_at, p_starts_at,             -- ends_at / busy_until recomputed by trigger
@@ -744,7 +821,8 @@ begin
       '', nullif(btrim(coalesce(p_notes, '')), ''), nullif(btrim(coalesce(s.cancellation_policy, '')), ''),
       -- A returning client who typed a different mobile: kept for the owner to
       -- check, so reminders and links never go to a number nobody has confirmed.
-      case when not v_created and v_phone is distinct from v_client.phone_e164 then btrim(p_phone) end)
+      case when not v_created and v_phone is distinct from v_client.phone_e164 then btrim(p_phone) end,
+      v_link, v_heard, v_detail, v_first)
     returning * into v_appt;
   exception when exclusion_violation then
     raise exception 'slot_taken';
@@ -760,6 +838,19 @@ begin
     values (v_client.id, v_appt.id, p_consultation, true, left(btrim(p_signed_name), 100), public.current_consent_version());
     update public.clients set health_consent_at = now(), health_consent_note = 'Online consultation form'
      where id = v_client.id;
+  end if;
+
+  -- The only thing the booking page may set on a client's record, even an existing
+  -- one: that they ticked "message me about short-notice spaces and offers". It only
+  -- records the first tick, never clears it and touches nothing else. So the most
+  -- someone booking with another person's email can do is put that person on her
+  -- short-notice list, and every one of those messages says how to stop them.
+  if v_mkt then
+    begin
+      update public.clients set marketing_ok_at = now(), marketing_ok_note = 'Ticked on the booking page'
+       where id = v_client.id and marketing_ok_at is null;
+    exception when others then null;    -- an extra: never a reason for the booking to fail
+    end;
   end if;
 
   if v_ip is not null then
@@ -1533,7 +1624,7 @@ alter default privileges in schema public revoke execute on functions from publi
 grant execute on function public.public_owner_exists()                       to anon, authenticated;
 grant execute on function public.public_booking_info()                       to anon, authenticated;
 grant execute on function public.public_busy_times(timestamptz, timestamptz) to anon, authenticated;
-grant execute on function public.public_create_booking(uuid, timestamptz, text, text, text, text, jsonb, boolean, text, boolean)
+grant execute on function public.public_create_booking(uuid, timestamptz, text, text, text, text, jsonb, boolean, text, boolean, jsonb)
                                                                               to anon, authenticated;
 grant execute on function public.public_get_form(uuid)                       to anon, authenticated;
 grant execute on function public.public_submit_form(uuid, jsonb, boolean, text) to anon, authenticated;

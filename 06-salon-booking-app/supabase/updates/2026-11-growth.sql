@@ -1,0 +1,287 @@
+-- =============================================================================
+-- Update, November 2026: where clients come from, Google reviews and
+-- short-notice spaces
+--
+-- For an app set up with an older schema.sql (anything set up before this
+-- version). Run it once, BEFORE the new version of the app goes live (before
+-- it's merged into main, which Netlify publishes):
+--
+--   1. Open this file on GitHub, press the ••• menu at the top right of the
+--      file, and choose Copy raw file.
+--   2. Supabase → SQL Editor → New query → paste → Run.
+--   3. If a box called "Potential issues detected" warns about a destructive
+--      operation, choose Run this query. It swaps the booking function for the
+--      new version, and deletes no data.
+--
+-- It should say "Success. No rows returned". It's safe to run twice: the second
+-- time it changes nothing.
+--
+-- What it adds:
+--   * Bookings: where an online booking came from (the booking link's ?from=, or
+--     the site that sent them), the optional "How did you hear about me?" answer
+--     (with a friend's name, say), and the client's own answer to "Is this your
+--     first visit?".
+--   * Clients: when a client said they'd like messages about short-notice spaces
+--     and offers (and how), and when they were last asked for a Google review.
+--   * Settings: her Google review link, and her own wording for the review message.
+--   * The booking function (public_create_booking): one more input, optional, for
+--     those answers. It tidies them, and leaves out anything odd, so they can never
+--     stop a booking going through. Everything else about booking stays the same.
+--
+-- The app that's live now keeps working the moment this has run: the new columns
+-- can all be empty, and the booking function's new input has a default, so the
+-- bookings the live app sends go through exactly as before.
+--
+-- If it stops with "Nothing has been changed: your booking function isn't the
+-- version this update expects", run 2026-11-unpaid-limit.sql first, then this one
+-- (if that has been run already, the function has been changed some other way: ask
+-- whoever set up the app). If it stops with "lock timeout", the app was busy for a
+-- moment: nothing has been changed, so run it again.
+--
+-- A new install doesn't need it: schema.sql already includes all of this.
+-- =============================================================================
+
+-- Never wait long behind the live app: better to stop and be run again.
+set local lock_timeout = '5s';
+
+-- Change nothing unless the booking function is the version this replaces (from
+-- 2026-11-unpaid-limit.sql), or this update has been run before.
+do $$
+declare
+  v_old regprocedure := to_regprocedure('public.public_create_booking(uuid,timestamptz,text,text,text,text,jsonb,boolean,text,boolean)');
+begin
+  if to_regprocedure('public.public_create_booking(uuid,timestamptz,text,text,text,text,jsonb,boolean,text,boolean,jsonb)') is not null then
+    return;   -- run before: carry on, and nothing below changes anything a second time
+  end if;
+  if v_old is null
+     or (select md5(replace(prosrc, E'\r', '')) from pg_proc where oid = v_old) is distinct from '79e9ec32cedf0130f0adcd462d784c09' then
+    raise exception 'Nothing has been changed: your booking function isn''t the version this update expects. If you haven''t run 2026-11-unpaid-limit.sql yet, run that first, then this one.';
+  end if;
+end $$;
+
+-- The new columns, as in schema.sql. All of them can be empty.
+alter table public.appointments add column if not exists link_source text
+  check (link_source ~ '^[a-z0-9-]{1,30}$');
+alter table public.appointments add column if not exists heard_from text
+  check (heard_from in ('instagram', 'facebook', 'google', 'friend', 'card', 'other'));
+alter table public.appointments add column if not exists heard_from_detail text check (length(heard_from_detail) <= 60);
+alter table public.appointments add column if not exists first_visit_said boolean;
+alter table public.clients add column if not exists marketing_ok_at timestamptz;
+alter table public.clients add column if not exists marketing_ok_note text check (length(marketing_ok_note) <= 100);
+alter table public.clients add column if not exists review_asked_at timestamptz;
+alter table public.settings add column if not exists review_link text
+  check (review_link ~ '^https://[^[:space:]]+$' and length(review_link) <= 298);
+alter table public.settings add column if not exists wa_template_review text check (length(wa_template_review) <= 1000);
+
+-- The booking function with its new optional input, p_extras, replacing the old one
+-- (dropped first, so there's only ever one for the app to call).
+drop function if exists public.public_create_booking(uuid, timestamptz, text, text, text, text, jsonb, boolean, text, boolean);
+
+create or replace function public.public_create_booking(
+  p_service_id     uuid,
+  p_starts_at      timestamptz,
+  p_full_name      text,
+  p_email          text,
+  p_phone          text,
+  p_notes          text    default null,
+  p_consultation   jsonb   default null,
+  p_health_consent boolean default false,
+  p_signed_name    text    default null,
+  p_policy_accepted boolean default false,
+  p_extras         jsonb   default null
+)
+returns jsonb language plpgsql volatile security definer set search_path = public as $$
+declare
+  s         public.settings;
+  v_service public.services;
+  v_client  public.clients;
+  v_appt    public.appointments;
+  v_name    text := btrim(coalesce(p_full_name, ''));
+  v_email   text := lower(btrim(coalesce(p_email, '')));
+  v_phone   text := public.normalize_uk_phone(p_phone);
+  v_is_new  boolean;
+  v_deposit int;
+  v_created boolean;
+  v_ip      text := nullif(btrim(split_part(coalesce(
+                 nullif(current_setting('request.headers', true), '')::json ->> 'x-forwarded-for', ''), ',', 1)), '');
+  -- From p_extras, once tidied.
+  v_link    text;
+  v_heard   text;
+  v_detail  text;
+  v_first   boolean;
+  v_mkt     boolean := false;
+begin
+  select * into s from public.settings where id = 1;
+  if not s.booking_enabled then raise exception 'booking_disabled'; end if;
+
+  -- Flood brake. A one-person diary never sees more than a handful of online
+  -- bookings an hour; anything beyond that is a script filling the diary or
+  -- using the confirmation emails to spam strangers through the owner's Gmail.
+  -- Bookings waiting for a deposit count only until they start: an old one
+  -- nobody finished, marked as a no-show or cancelled mustn't turn clients away.
+  if (select count(*) from public.appointments where source = 'online' and created_at > now() - interval '1 hour') >= 6
+     or (select count(*) from public.appointments where source = 'online' and created_at > now() - interval '1 day') >= 25
+     or (select count(*) from public.appointments where source = 'online' and status = 'pending_deposit'
+                                                   and starts_at > now()) >= 15
+     or (v_ip is not null and (select count(*) from public.booking_attempts
+                                where ip = v_ip and at > now() - interval '1 hour') >= 3) then
+    raise exception 'busy_try_later';
+  end if;
+
+  -- Names only: no links, email addresses or markup to smuggle into emails.
+  if length(v_name) < 2 or length(v_name) > 100
+     or v_name ~ '[0-9@/:<>{}\[\][:cntrl:]]'
+     or v_name ~* '(www\.|https?|\.(com|net|org|co|uk|io|ru|xyz|info|biz|top|link|site)\M)' then
+    raise exception 'invalid_name';
+  end if;
+  if length(v_email) > 254 or v_email !~ '^[^@[:space:]?&#%]+@[^@[:space:]?&#%]+\.[^@[:space:]?&#%]+$' then
+    raise exception 'invalid_email';
+  end if;
+  if v_phone is null or length(v_phone) not between 10 and 15 or length(btrim(p_phone)) > 30 then raise exception 'invalid_phone'; end if;
+  if length(coalesce(p_notes, '')) > 1000 then raise exception 'invalid_notes'; end if;
+  -- Clients must agree to the cancellation policy (when there is one) before booking.
+  if coalesce(btrim(s.cancellation_policy), '') <> '' and not coalesce(p_policy_accepted, false) then
+    raise exception 'policy_required';
+  end if;
+
+  select * into v_service from public.services
+   where id = p_service_id and is_active and online_bookable;
+  if not found then raise exception 'invalid_service'; end if;
+
+  perform public.check_bookable_time(p_starts_at, v_service.duration_min);
+
+  -- Match an existing client by email only, and never change an existing record from
+  -- here (apart from noting the short-notice box, below).
+  select * into v_client from public.clients where lower(email) = v_email limit 1;
+  v_created := not found;
+  if v_created then
+    begin
+      insert into public.clients (full_name, email, phone)
+      values (v_name, v_email, btrim(p_phone))
+      returning * into v_client;
+    exception when unique_violation then
+      select * into v_client from public.clients where lower(email) = v_email;
+      v_created := false;
+    end;
+  end if;
+  perform 1 from public.clients where id = v_client.id for update;  -- serialise the per-client brake
+
+  -- "New" means: has never had a completed appointment (and isn't a regular the
+  -- owner moved across from another system). Someone who booked before but
+  -- never turned up still pays a deposit.
+  v_is_new := not (v_client.is_regular or exists (select 1 from public.appointments
+                                                  where client_id = v_client.id and status = 'completed'));
+
+  -- A light brake on spam: three upcoming online bookings per client at most.
+  if (select count(*) from public.appointments
+       where client_id = v_client.id and starts_at > now()
+         and status in ('pending_deposit', 'confirmed')) >= 3 then
+    raise exception 'too_many_bookings';
+  end if;
+
+  v_deposit := case when v_is_new then s.deposit_amount_pence else 0 end;
+
+  -- The optional answers (p_extras). Each is kept only in the shape it should have,
+  -- and on any problem they're all left out: they can never stop a booking.
+  begin
+    if jsonb_typeof(p_extras) = 'object' then
+      -- "?from=Instagram!!" → 'instagram'.
+      if jsonb_typeof(p_extras -> 'link_source') = 'string' then
+        v_link := nullif(left(regexp_replace(lower(p_extras ->> 'link_source'), '[^a-z0-9-]+', '', 'g'), 30), '');
+      end if;
+      if p_extras ->> 'heard_from' in ('instagram', 'facebook', 'google', 'friend', 'card', 'other') then
+        v_heard := p_extras ->> 'heard_from';
+      end if;
+      -- A few words on one line, such as a friend's name: never a link, an address or markup.
+      if v_heard in ('friend', 'other') and jsonb_typeof(p_extras -> 'heard_from_detail') = 'string' then
+        v_detail := btrim(regexp_replace(p_extras ->> 'heard_from_detail', '[[:space:][:cntrl:]]+', ' ', 'g'));
+        v_detail := case when v_detail !~* '[@<>]|://|www\.' then nullif(btrim(left(v_detail, 60)), '') end;
+      end if;
+      if jsonb_typeof(p_extras -> 'first_visit') = 'boolean' then
+        v_first := (p_extras -> 'first_visit')::boolean;
+      end if;
+      v_mkt := coalesce(p_extras -> 'marketing_ok' = 'true'::jsonb, false);
+    end if;
+  exception when others then
+    v_link := null; v_heard := null; v_detail := null; v_first := null; v_mkt := false;
+  end;
+
+  begin
+    insert into public.appointments (
+      client_id, service_id, service_name, price_pence, duration_min, starts_at, ends_at, busy_until,
+      status, source, booking_name, is_new_client, deposit_required_pence, deposit_due_at,
+      reference, client_notes, cancellation_policy_agreed, booking_phone,
+      link_source, heard_from, heard_from_detail, first_visit_said)
+    values (
+      v_client.id, v_service.id, v_service.name, v_service.price_pence, v_service.duration_min,
+      p_starts_at, p_starts_at, p_starts_at,             -- ends_at / busy_until recomputed by trigger
+      case when v_deposit > 0 then 'pending_deposit' else 'confirmed' end,
+      'online', v_name, v_is_new, v_deposit,
+      case when v_deposit > 0 then least(now() + make_interval(hours => s.deposit_deadline_hours), p_starts_at) end,
+      '', nullif(btrim(coalesce(p_notes, '')), ''), nullif(btrim(coalesce(s.cancellation_policy, '')), ''),
+      -- A returning client who typed a different mobile: kept for the owner to
+      -- check, so reminders and links never go to a number nobody has confirmed.
+      case when not v_created and v_phone is distinct from v_client.phone_e164 then btrim(p_phone) end,
+      v_link, v_heard, v_detail, v_first)
+    returning * into v_appt;
+  exception when exclusion_violation then
+    raise exception 'slot_taken';
+  end;
+
+  if p_consultation is not null and v_created then
+    if jsonb_typeof(p_consultation) <> 'object' or pg_column_size(p_consultation) >= 20000 then
+      raise exception 'invalid_form';
+    end if;
+    if not coalesce(p_health_consent, false) then raise exception 'consent_required'; end if;
+    if length(btrim(coalesce(p_signed_name, ''))) < 2 then raise exception 'signature_required'; end if;
+    insert into public.consultation_forms (client_id, appointment_id, answers, health_consent, signed_name, consent_version)
+    values (v_client.id, v_appt.id, p_consultation, true, left(btrim(p_signed_name), 100), public.current_consent_version());
+    update public.clients set health_consent_at = now(), health_consent_note = 'Online consultation form'
+     where id = v_client.id;
+  end if;
+
+  -- The only thing the booking page may set on a client's record, even an existing
+  -- one: that they ticked "message me about short-notice spaces and offers". It only
+  -- records the first tick, never clears it and touches nothing else. So the most
+  -- someone booking with another person's email can do is put that person on her
+  -- short-notice list, and every one of those messages says how to stop them.
+  if v_mkt then
+    begin
+      update public.clients set marketing_ok_at = now(), marketing_ok_note = 'Ticked on the booking page'
+       where id = v_client.id and marketing_ok_at is null;
+    exception when others then null;    -- an extra: never a reason for the booking to fail
+    end;
+  end if;
+
+  if v_ip is not null then
+    insert into public.booking_attempts (ip) values (v_ip);
+    delete from public.booking_attempts where at < now() - interval '2 days';
+  end if;
+
+  insert into public.email_outbox (kind, appointment_id, to_email)
+  values ('booking_received', v_appt.id, v_email)
+  on conflict do nothing;
+
+  if coalesce(s.owner_email, '') <> '' then
+    insert into public.email_outbox (kind, appointment_id, to_email)
+    values ('owner_new_booking', v_appt.id, s.owner_email)
+    on conflict do nothing;
+  end if;
+
+  -- Deliberately does not say whether the person was recognised as an
+  -- existing client: that would let anyone test whether someone is a client.
+  return jsonb_build_object('reference', v_appt.reference, 'starts_at', v_appt.starts_at);
+exception
+  when sqlstate 'P0001' then raise;                     -- our own short codes
+  when others then raise exception 'booking_failed';    -- never echo a row back to the public key
+end $$;
+
+-- Only the booking page and the signed-in app can use it, as before. A function made
+-- afresh starts out usable by everyone, so that's taken away first.
+revoke execute on function public.public_create_booking(uuid, timestamptz, text, text, text, text, jsonb, boolean, text, boolean, jsonb)
+  from public, anon, authenticated;
+grant execute on function public.public_create_booking(uuid, timestamptz, text, text, text, text, jsonb, boolean, text, boolean, jsonb)
+  to anon, authenticated;
+
+-- Let the app's API see the new columns and the new function straight away.
+notify pgrst, 'reload schema';

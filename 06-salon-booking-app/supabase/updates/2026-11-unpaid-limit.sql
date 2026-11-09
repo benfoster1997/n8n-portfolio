@@ -1,11 +1,10 @@
 -- =============================================================================
 -- Update, November 2026: old unpaid bookings no longer stop online booking
 --
--- For an app set up with an older schema.sql, from before this version (if you're
--- not sure, run it: it's safe on any install). Run it once: Supabase → SQL Editor
--- → New query → paste all of this file → Run. It should say "Success. No rows
--- returned". It doesn't depend on the app, so before or after the new version of
--- the app goes live are both fine.
+-- For an app set up with a schema.sql from before this version. Run it once:
+-- Supabase → SQL Editor → New query → paste all of this file → Run. It should say
+-- "Success. No rows returned". It doesn't depend on the app, so before or after
+-- the new version of the app goes live are both fine.
 --
 -- The booking page turns everyone away ("Lots of bookings are coming in right
 -- now") while 15 online bookings are waiting for a deposit. Until now that count
@@ -14,11 +13,23 @@
 -- online booking off. Now only bookings that haven't started yet are counted.
 --
 -- It replaces that one database function (public_create_booking) with the
--- version in schema.sql. Who can use it stays the same, and it changes nothing
--- else: no tables, no settings and no bookings. Running it again is safe.
+-- version that came with this update. Who can use it stays the same, and it
+-- changes nothing else: no tables, no settings and no bookings. Running it again
+-- before 2026-11-growth.sql changes nothing more.
 --
--- A new install doesn't need it: schema.sql already includes this version.
+-- Once 2026-11-growth.sql has been run, or on an install set up with a schema.sql
+-- that includes it, this isn't needed: growth's booking function already has this
+-- change. If it's run anyway, it stops at once and changes nothing.
 -- =============================================================================
+
+-- Already up to date with 2026-11-growth.sql: putting this older version back
+-- would leave two booking functions, so stop before changing anything.
+do $$
+begin
+  if to_regprocedure('public.public_create_booking(uuid,timestamptz,text,text,text,text,jsonb,boolean,text,boolean,jsonb)') is not null then
+    raise exception 'Nothing has been changed: this update is already included in 2026-11-growth.sql, which you''ve run.';
+  end if;
+end $$;
 
 create or replace function public.public_create_booking(
   p_service_id     uuid,

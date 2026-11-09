@@ -28,3 +28,4 @@ export const supabaseKey = key;
 export const api: Api = configured && reason === null ? supabaseApi(url, key) : demoApi();
 
 export type { Api } from './api';
+export { NeedsUpdateError, isNeedsUpdate } from './api';

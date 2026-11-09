@@ -58,7 +58,7 @@ beforeEach(async () => {
       cancel_notice_hours = 48, client_self_service = true,
       cancellation_policy = '48 hours notice or the full price is payable',
       tagline = null, strapline = null, extras_menu = null, safety_note = null,
-      instagram_handle = null, facebook_handle = null,
+      instagram_handle = null, facebook_handle = null, review_link = null, wa_template_review = null,
       email_secret_hash = '${createHash('sha256').update(SECRET).digest('hex')}'
      where id = 1;
     update public.opening_hours set is_open = true, open_time = '09:00', close_time = '18:00',
@@ -1968,4 +1968,195 @@ test('an install from before the booking page settings gets them, with their che
     await c.end();
     await admin.query(`drop database if exists ${old}`);
   }
+});
+
+// ---------------------------------------------------------------------------
+// The booking page's optional answers (p_extras): where the link came from,
+// "How did you hear about me?", "Is this your first visit?" and the short-notice box
+// ---------------------------------------------------------------------------
+
+/**
+ * A booking with the optional answers, the function's eleventh input, sent as JSON just as
+ * given (anything at all, to see what it does with junk). Leave it out for an SQL null.
+ */
+function bookWith(serviceId, startsAt, extras, overrides = {}) {
+  const p = { p_full_name: 'Jess Example', p_email: 'jess@example.com', p_phone: '07700 900123', ...overrides };
+  return asAnon(
+    `select public.public_create_booking($1, $2, $3, $4, $5, null, null, false, null, true, $6::jsonb) as r`,
+    [serviceId, startsAt, p.p_full_name, p.p_email, p.p_phone, extras === undefined ? null : JSON.stringify(extras)],
+  ).then((r) => r.rows[0].r);
+}
+const answersOf = async (reference) => {
+  const { link_source, heard_from, heard_from_detail, first_visit_said } = await appt(reference);
+  return { link_source, heard_from, heard_from_detail, first_visit_said };
+};
+const NO_ANSWERS = { link_source: null, heard_from: null, heard_from_detail: null, first_visit_said: null };
+/** Out of the way of the hourly and daily brakes on online bookings, as if made days ago. */
+const ageBookings = () => db.query(`update public.appointments set created_at = created_at - interval '2 days'`);
+
+/** One booking for each set of answers, each by a different new client, at 09:00, 10:00 … three days ahead. */
+async function bookEach(serviceId, list) {
+  const out = [];
+  for (const [i, extras] of list.entries()) {
+    const r = await bookWith(serviceId, await londonAt(3, `${9 + i}:00`.padStart(5, '0')), extras,
+      { p_email: `client${i}@example.com`, p_phone: `07700 9004${String(i).padStart(2, '0')}` });
+    assert.match(r.reference, /^[A-HJ-NP-Z2-9]{6}$/);
+    await ageBookings();
+    out.push(await answersOf(r.reference));
+  }
+  return out;
+}
+
+test('where the booking link came from is kept, tidied: "Instagram!!" is instagram', async () => {
+  const svc = await addService();
+  const sent = ['Instagram!!', 'free-times', '  Card ', 'IG story 2', 'x'.repeat(40), '!!!', '', 42, null];
+  const kept = (await bookEach(svc, sent.map((link_source) => ({ link_source })))).map((a) => a.link_source);
+  assert.deepEqual(kept, ['instagram', 'free-times', 'card', 'igstory2', 'x'.repeat(30), null, null, null, null]);
+});
+
+test('an answer to "How did you hear about me?" that isn’t one of the six is left out, never refused', async () => {
+  const svc = await addService();
+  const sent = ['instagram', 'facebook', 'google', 'friend', 'card', 'other', 'tiktok', 'Instagram', ['friend']];
+  const kept = (await bookEach(svc, sent.map((heard_from) => ({ heard_from })))).map((a) => a.heard_from);
+  assert.deepEqual(kept, ['instagram', 'facebook', 'google', 'friend', 'card', 'other', null, null, null]);
+});
+
+test('the words with A friend or Other are tidied to one short line; a link, an address or markup is left out, never refused', async () => {
+  const svc = await addService();
+  const long = `Sam from the gym, ${'who has really lovely nails, '.repeat(7)}`;
+  assert.ok(long.length > 200);
+  const sent = [
+    ['friend', 'Sam'], ['friend', '  Sam \n\t from   work  '], ['other', long],
+    ['friend', 'sam@example.com'], ['friend', 'Sam at www.example.com'], ['other', 'https://example.com/sam'],
+    ['friend', '<b>Sam</b>'], ['other', 'WWW.EXAMPLE.COM'], ['friend', ' \n '],
+  ];
+  const kept = await bookEach(svc, sent.map(([heard_from, heard_from_detail]) => ({ heard_from, heard_from_detail })));
+  assert.deepEqual(kept.map((a) => a.heard_from_detail),
+    ['Sam', 'Sam from work', long.slice(0, 60).trim(), null, null, null, null, null, null]);
+  assert.equal(kept[2].heard_from_detail.length, 60);
+  // The answer itself is kept when its words are left out.
+  assert.deepEqual(kept.map((a) => a.heard_from), sent.map(([h]) => h));
+});
+
+test('the words are kept only with A friend or Other', async () => {
+  const svc = await addService();
+  const sent = [['instagram', 'Sam'], ['google', 'Sam'], ['card', 'Sam'], [undefined, 'Sam'], ['friend', 'Sam'], ['other', 'A wedding fair']];
+  const kept = await bookEach(svc, sent.map(([heard_from, heard_from_detail]) => ({ heard_from, heard_from_detail })));
+  assert.deepEqual(kept.map((a) => [a.heard_from, a.heard_from_detail]), [
+    ['instagram', null], ['google', null], ['card', null], [null, null], ['friend', 'Sam'], ['other', 'A wedding fair'],
+  ]);
+});
+
+test('the client’s own answer to "Is this your first visit?" is kept as given; the deposit still follows the database’s rule', async () => {
+  const svc = await addService();
+  const kept = (await bookEach(svc, [true, false, 'yes', 1, null, undefined].map((first_visit) => ({ first_visit }))))
+    .map((a) => a.first_visit_said);
+  assert.deepEqual(kept, [true, false, null, null, null, null]);
+
+  // Someone with a visit marked as done who says it's their first isn't asked for a deposit;
+  // someone new who says it isn't still is.
+  const first = await book(svc, await londonAt(4, '10:00'), { p_email: 'amy@example.com', p_phone: '07700 900111' });
+  await db.query(`update public.appointments set status = 'completed' where reference = $1`, [first.reference]);
+  await ageBookings();
+  const back = await bookWith(svc, await londonAt(4, '12:00'), { first_visit: true }, { p_email: 'amy@example.com', p_phone: '07700 900111' });
+  const fresh = await bookWith(svc, await londonAt(4, '14:00'), { first_visit: false }, { p_email: 'sam@example.com', p_phone: '07700 900222' });
+  assert.deepEqual([(await appt(back.reference)).status, (await appt(back.reference)).deposit_required_pence], ['confirmed', 0]);
+  assert.deepEqual([(await appt(fresh.reference)).status, (await appt(fresh.reference)).deposit_required_pence], ['pending_deposit', 1000]);
+});
+
+test('the short-notice box: the first tick is recorded and never cleared, and nothing else on the client’s record changes', async () => {
+  const svc = await addService();
+  const amy = (await db.query(
+    `insert into public.clients (full_name, email, phone, allergies, notes, is_regular, health_consent_at, health_consent_note)
+     values ('Amy Example', 'amy@example.com', '07700 900111', 'HEMA', 'Private note', true, now() - interval '30 days', 'Paper consultation form')
+     returning *`)).rows[0];
+  const client = async (email) => (await db.query(`select * from public.clients where email = $1`, [email])).rows[0];
+  // Everything but the box. updated_at moves on whenever the record changes, as it does for the health form.
+  const rest = ({ marketing_ok_at: _a, marketing_ok_note: _n, updated_at: _u, ...row }) => row;
+
+  // Booked with her email, a different name and mobile, and the box ticked.
+  const someone = { p_full_name: 'Someone Else', p_email: 'amy@example.com', p_phone: '07700 900999' };
+  await bookWith(svc, await londonAt(3, '09:00'), { marketing_ok: true }, someone);
+  const once = await client('amy@example.com');
+  assert.ok(once.marketing_ok_at instanceof Date);
+  assert.equal(once.marketing_ok_note, 'Ticked on the booking page');
+  assert.deepEqual(rest(once), rest(amy));
+
+  // Ticked again it keeps the first date; unticked, or anything but true, it's never cleared.
+  await ageBookings();
+  await bookWith(svc, await londonAt(3, '10:00'), { marketing_ok: true }, someone);
+  await bookWith(svc, await londonAt(3, '11:00'), { marketing_ok: false }, someone);
+  const later = await client('amy@example.com');
+  assert.deepEqual([later.marketing_ok_at, later.marketing_ok_note], [once.marketing_ok_at, 'Ticked on the booking page']);
+  assert.deepEqual(rest(later), rest(amy));
+
+  // One she recorded herself is kept as she wrote it: the record isn't touched at all.
+  await db.query(`insert into public.clients (full_name, email, marketing_ok_at, marketing_ok_note)
+                  values ('Sam Example', 'sam@example.com', now() - interval '10 days', 'Said yes in the studio')`);
+  const sam = await client('sam@example.com');
+  await ageBookings();
+  await bookWith(svc, await londonAt(3, '12:00'), { marketing_ok: true }, { p_email: 'sam@example.com', p_phone: '07700 900222' });
+  assert.deepEqual(await client('sam@example.com'), sam);
+
+  // Only a JSON true counts; a new client who ticks it is recorded too.
+  await bookWith(svc, await londonAt(3, '13:00'), { marketing_ok: 'true' }, { p_email: 'jess@example.com', p_phone: '07700 900333' });
+  await bookWith(svc, await londonAt(3, '14:00'), { marketing_ok: 1 }, { p_email: 'kim@example.com', p_phone: '07700 900444' });
+  await ageBookings();
+  await bookWith(svc, await londonAt(3, '15:00'), { marketing_ok: true }, { p_email: 'lou@example.com', p_phone: '07700 900555' });
+  const asked = (await db.query(`select email, marketing_ok_note from public.clients where email in ('jess@example.com', 'kim@example.com', 'lou@example.com')
+                                  order by email`)).rows;
+  assert.deepEqual(asked, [
+    { email: 'jess@example.com', marketing_ok_note: null },
+    { email: 'kim@example.com', marketing_ok_note: null },
+    { email: 'lou@example.com', marketing_ok_note: 'Ticked on the booking page' },
+  ]);
+});
+
+test('answers that aren’t an object, or the wrong shapes, are left out and the booking is made as usual', async () => {
+  const svc = await addService();
+  const odd = { link_source: ['instagram'], heard_from: { friend: true }, heard_from_detail: 99, first_visit: 'true', marketing_ok: 'yes' };
+  const kept = await bookEach(svc, [[1, 2], 'instagram', 42, true, null, undefined, odd]);
+  assert.deepEqual(kept, kept.map(() => NO_ANSWERS));
+  const made = (await db.query(`select status, deposit_required_pence from public.appointments`)).rows;
+  assert.equal(made.length, 7);
+  assert.ok(made.every((a) => a.status === 'pending_deposit' && a.deposit_required_pence === 1000));
+  assert.equal((await db.query(`select count(*)::int as n from public.clients where marketing_ok_at is not null`)).rows[0].n, 0);
+  // A friend's name long enough to fill the diary's notes field is cut, not refused.
+  const r = await bookWith(svc, await londonAt(4, '10:00'), { heard_from: 'friend', heard_from_detail: 'S'.repeat(100_000) },
+    { p_email: 'long@example.com', p_phone: '07700 900666' });
+  assert.equal((await answersOf(r.reference)).heard_from_detail, 'S'.repeat(60));
+});
+
+test('with the answers, the booking page is still told only the reference and the time, and the rest is as before', async () => {
+  const svc = await addService();
+  const all = { link_source: 'instagram', heard_from: 'friend', heard_from_detail: 'Sam', first_visit: true, marketing_ok: true };
+  const r = await bookWith(svc, await londonAt(3, '10:00'), all);
+  assert.deepEqual(Object.keys(r).sort(), ['reference', 'starts_at']);
+  assert.deepEqual(await answersOf(r.reference), { link_source: 'instagram', heard_from: 'friend', heard_from_detail: 'Sam', first_visit_said: true });
+  const a = await appt(r.reference);
+  assert.deepEqual([a.status, a.deposit_required_pence, a.source], ['pending_deposit', 1000, 'online']);
+  assert.deepEqual((await db.query(`select kind, to_email from public.email_outbox order by kind`)).rows, [
+    { kind: 'booking_received', to_email: 'jess@example.com' },
+    { kind: 'owner_new_booking', to_email: 'owner@example.com' },
+  ]);
+  // The rules and brakes are the same with answers as without.
+  await rejects(bookWith(svc, await londonAt(3, '10:00'), all, { p_email: 'b@example.com', p_phone: '07700900222' }), 'slot_taken');
+  await rejects(bookWith(svc, await londonAt(3, '12:00'), all, { p_full_name: 'www.example.com' }), 'invalid_name');
+  await db.query(`update public.settings set booking_enabled = false where id = 1`);
+  await rejects(bookWith(svc, await londonAt(3, '14:00'), all), 'booking_disabled');
+});
+
+test('the owner can note how a client heard about her, their short-notice consent and a review ask; the public key can’t', async () => {
+  const c = (await db.query(`insert into public.clients (full_name, phone) values ('Amy Example', '07700 900111') returning id`)).rows[0];
+  const a = await diaryAppt(await londonAt(2, '10:00'), { email: 'amy@example.com' });
+  await asOwner(`update public.appointments set heard_from = 'card', heard_from_detail = null where id = $1`, [a.id]);
+  await asOwner(`update public.clients set marketing_ok_at = now(), marketing_ok_note = 'Said yes in the studio', review_asked_at = now()
+                 where id = $1`, [c.id]);
+  await asOwner(`update public.settings set review_link = 'https://g.page/r/demo-studio/review', wa_template_review = 'Thank you!' where id = 1`);
+  assert.equal((await appt(a.reference)).heard_from, 'card');
+  for (const sql of [`update public.appointments set heard_from = 'friend'`, `update public.clients set marketing_ok_at = now()`,
+    `update public.settings set review_link = 'https://example.com'`, `select review_link from public.settings`]) {
+    await rejects(asAnon(sql), 'permission denied');
+  }
+  assert.equal((await asStranger(`update public.clients set marketing_ok_at = null`)).rowCount, 0);
 });
