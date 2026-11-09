@@ -1,3 +1,9 @@
+# Search engines may show the booking page, and load the scripts, styles, fonts, icons and
+# preview picture it needs to draw. Everything else (her diary, private links) stays out.
+# Google follows the longest rule that matches.
 User-agent: *
 Allow: /book
+Allow: /assets/
+Allow: /icons/
+Allow: /og/
 Disallow: /
