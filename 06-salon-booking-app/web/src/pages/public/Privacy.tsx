@@ -94,6 +94,15 @@ export function Privacy() {
             treatments are safe for you. <i>Basis: your explicit consent (UK GDPR Article 9(2)(a)), which you give on the form
             and can withdraw at any time.</i> <span className="privacy-note">It may be kept longer only if needed to deal with a
             legal claim.</span></li>
+          <li><b>How you found {business}</b>&nbsp;— if you choose to tell me when you book (for example Instagram, Google or a
+            friend, and your friend’s first name), and which of my links or which website brought you to the booking page. Only
+            used to see which ways of finding new clients work, and to thank people who recommend me. Optional.
+            <i> Basis: legitimate interests.</i></li>
+          <li><b>Short-notice spaces and offers</b>&nbsp;— only if you tick the box when you book, or tell me you’d like them, I may
+            message you about short-notice spaces or offers. I note the date you said yes. Reply STOP, or tell me, any time and
+            I’ll stop. <i>Basis: consent.</i></li>
+          <li><b>A review request</b>&nbsp;— after a visit, if you say it’s OK, I may send you one WhatsApp with a link to leave a
+            Google review. Nothing is offered for a review, and you’re free to ignore it. <i>Basis: consent.</i></li>
         </ul>
       </Section>
 
