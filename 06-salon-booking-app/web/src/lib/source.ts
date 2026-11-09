@@ -29,6 +29,10 @@ export const HEARD_FROM_DETAIL_MAX = 60;
 export const LINK_FROM = {
   instagram: 'instagram',
   facebook: 'facebook',
+  /** Her Google Business Profile's booking link (a visit sent by a Google search reads the same). */
+  google: 'google',
+  /** Her WhatsApp Business profile. */
+  whatsapp: 'whatsapp',
   card: 'card',
   freeTimes: 'free-times',
   /** A client passing her booking link on to a friend (Share with a friend). */
@@ -40,11 +44,10 @@ const LINK_LABEL = new Map<string, string>([
   ['instagram', 'your Instagram link'],
   ['facebook', 'your Facebook link'],
   ['google', 'Google'],
+  ['whatsapp', 'your WhatsApp link'],
   ['card', 'your printed card'],
   ['free-times', 'a free-times post'],
   ['friend', 'a client sharing your link'],
-  // Her WhatsApp Business link (Settings → Booking page → Your links).
-  ['whatsapp', 'your WhatsApp link'],
 ]);
 
 /** "Instagram!!" → "instagram": a link's source as the database keeps it (lower case, a–z, 0–9 and -, up to 30), or null. */

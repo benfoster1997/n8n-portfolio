@@ -13,8 +13,8 @@ import { fmt } from './time';
 export const OWN_LINKS: readonly { place: string; from: string }[] = [
   { place: 'Instagram bio', from: LINK_FROM.instagram },
   { place: 'Facebook', from: LINK_FROM.facebook },
-  { place: 'Google Business Profile', from: 'google' },
-  { place: 'WhatsApp Business', from: 'whatsapp' },
+  { place: 'Google Business Profile', from: LINK_FROM.google },
+  { place: 'WhatsApp Business', from: LINK_FROM.whatsapp },
   { place: 'Printed cards and posters', from: LINK_FROM.card },
 ];
 
@@ -98,7 +98,7 @@ export const clientSearchLink = (name: string) => `/clients?q=${encodeURICompone
 
 /** A link's short name for Money's "Links used": "card", "free times". One she made up reads as she typed it. */
 const LINK_WORDS: [string, string][] = [
-  [LINK_FROM.instagram, 'Instagram'], [LINK_FROM.facebook, 'Facebook'], ['google', 'Google'], ['whatsapp', 'WhatsApp'],
+  [LINK_FROM.instagram, 'Instagram'], [LINK_FROM.facebook, 'Facebook'], [LINK_FROM.google, 'Google'], [LINK_FROM.whatsapp, 'WhatsApp'],
   [LINK_FROM.card, 'card'], [LINK_FROM.freeTimes, 'free times'], [LINK_FROM.friend, 'shared by clients'],
 ];
 // summariseNewClients() gives each link as linkLabel() words it ("your printed card"): from those back to the short name.

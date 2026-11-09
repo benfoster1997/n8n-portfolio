@@ -112,8 +112,8 @@ describe('foundYouLabel: how the owner sees where a client came from', () => {
 
   it('her own links carry these', () => {
     expect(Object.values(LINK_FROM).map((v) => [v, linkLabel(v)])).toEqual([
-      ['instagram', 'your Instagram link'], ['facebook', 'your Facebook link'], ['card', 'your printed card'],
-      ['free-times', 'a free-times post'], ['friend', 'a client sharing your link'],
+      ['instagram', 'your Instagram link'], ['facebook', 'your Facebook link'], ['google', 'Google'], ['whatsapp', 'your WhatsApp link'],
+      ['card', 'your printed card'], ['free-times', 'a free-times post'], ['friend', 'a client sharing your link'],
     ]);
     for (const v of Object.values(LINK_FROM)) expect(cleanLinkSource(v)).toBe(v);
   });
