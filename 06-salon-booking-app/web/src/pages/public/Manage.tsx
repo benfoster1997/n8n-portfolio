@@ -5,7 +5,8 @@ import { SlotPicker, useFreeSlots } from '../../components/SlotPicker';
 import { BrandFooter, BrandHero, ScriptTitle } from '../../components/brand';
 import { TreatmentMenu, TreatmentRow } from '../../components/public/menu';
 import {
-  Celebration, ChosenTreatment, DateTile, GroupHead, GroupIcon, NextArrow, PolicyCard, PublicLoading, PublicProblem, RefStub, StickyAction, Steps, Ticket,
+  Celebration, ChosenTreatment, DateTile, GroupHead, GroupIcon, NextArrow, PolicyCard, PublicLoading, PublicProblem, RefStub, ShareWithFriend,
+  StickyAction, Steps, Ticket,
 } from '../../components/public/parts';
 import { ErrorBox, Field, Icon, Sheet, Spinner, useAction, useLoad } from '../../components/ui';
 import { openDays } from '../../lib/slots';
@@ -234,6 +235,9 @@ function ManageBooking({ m, token, reload, setData }: {
               <div><dt>Reference</dt><dd className="mono">{b.reference}</dd></div>
             </dl>
           </Ticket>
+
+          {/* Coming up, or been (not cancelled or missed): pass her booking link on. */}
+          {(live || b.status === 'completed') && <ShareWithFriend business={business} />}
 
           {upcoming && b.status === 'pending_deposit' && !b.deposit_paid && b.deposit_required_pence > 0 && (
             <DepositCard m={m} />
