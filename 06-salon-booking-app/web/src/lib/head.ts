@@ -42,6 +42,16 @@ export function businessName(v: string | null | undefined): string | null {
   return n && n.toLowerCase() !== DEFAULT_BUSINESS_NAME.toLowerCase() ? n : null;
 }
 
+/**
+ * "Demo Nail Studio · Book online", or "Book an appointment" while the name is blank or still the
+ * default: the head's title, and the booking page's own once it has loaded (Book.tsx), so Google
+ * reads the same title before and after the page's scripts run.
+ */
+export function bookingTitle(v: string | null | undefined): string {
+  const name = businessName(v);
+  return name ? `${name} · Book online` : FALLBACK_TITLE;
+}
+
 const ENTITIES: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;', '%': '&#37;' };
 
 /**
@@ -112,7 +122,7 @@ export function verificationCode(raw: string | null | undefined): string | null 
 /** The tags that replace <!-- booking-head --> in index.html, one per line. */
 export function buildHead(v: HeadValues): string {
   const name = businessName(v.name);
-  const title = name ? `${name} · Book online` : FALLBACK_TITLE;
+  const title = bookingTitle(v.name);
   const description = headDescription(v);
   const site = siteAddress(v.siteUrl);
   const code = verificationCode(v.verification);

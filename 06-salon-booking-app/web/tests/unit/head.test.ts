@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  buildHead, CARD_ALT, cutAtWord, escapeHtml, FALLBACK_DESCRIPTION, FALLBACK_TITLE, headDescription, siteAddress,
+  bookingTitle, buildHead, CARD_ALT, cutAtWord, escapeHtml, FALLBACK_DESCRIPTION, FALLBACK_TITLE, headDescription, siteAddress,
   straplineText, verificationCode,
 } from '../../src/lib/head';
 import indexHtml from '../../index.html?raw';
@@ -107,6 +107,15 @@ describe('buildHead (the booking page’s head, written into index.html when the
     }
     // A name that only starts the same way is her own.
     expect(line(buildHead({ name: 'My Nail Studio Exampletown' }), '<title>')).toBe('<title>My Nail Studio Exampletown · Book online</title>');
+  });
+
+  it('gives the booking page the same title once it has loaded (bookingTitle, used by Book.tsx)', () => {
+    expect(bookingTitle('Demo Nail Studio')).toBe('Demo Nail Studio · Book online');
+    expect(bookingTitle('  Amy’s \n Nails ')).toBe('Amy’s Nails · Book online');
+    for (const name of ['My Nail Studio', 'my nail studio', '', '   ', null, undefined]) expect(bookingTitle(name), String(name)).toBe(FALLBACK_TITLE);
+    for (const name of ['Demo Nail Studio', 'Jess & Amy’s Nails', 'My Nail Studio']) {
+      expect(line(buildHead({ name }), '<title>'), name).toBe(`<title>${escapeHtml(bookingTitle(name))}</title>`);
+    }
   });
 
   it('adds the Google verification tag only for a code of letters, digits, - and _', () => {

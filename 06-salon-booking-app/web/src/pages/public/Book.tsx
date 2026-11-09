@@ -13,6 +13,7 @@ import {
 import { ErrorBox, Field, Icon, Spinner, useAction, useLoad } from '../../components/ui';
 import { blankAnswers, validateAnswers } from '../../lib/consultation';
 import { findTreatment } from '../../lib/freeTimes';
+import { bookingTitle } from '../../lib/head';
 import { openDays } from '../../lib/slots';
 import { HEARD_FROM, HEARD_FROM_DETAIL_MAX, LINK_FROM, readSource, takesDetail } from '../../lib/source';
 import { addDays, fmtDayLong, fmtTime, minutesLabel, startOfDayInstant } from '../../lib/time';
@@ -97,7 +98,8 @@ export function Book() {
   useClientManifest();
   const [source] = useState(sourceOfVisit);
   const { data: info, error, loading } = useLoad(() => api.getBookingInfo(), []);
-  useEffect(() => { if (info) document.title = `${info.business_name} · Book online`; }, [info]);
+  // The same title as the page's built-in head, so the default name is never advertised here either.
+  useEffect(() => { if (info) document.title = bookingTitle(info.business_name); }, [info]);
   if (loading) return <PublicLoading />;
   if (!info) {
     return (

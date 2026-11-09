@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useEffect, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../../api';
 import { BrandHero, BrandIcon, Heart } from '../../components/brand';
@@ -48,6 +48,8 @@ export function Privacy() {
   useClientManifest();
   const { data, loading } = useLoad(() => api.getBookingInfo(), []);
   const business = data?.business_name ?? 'This business';
+  // Every page starts with the booking page's title (index.html): this one is the privacy notice.
+  useEffect(() => { document.title = data ? `Privacy notice · ${data.business_name}` : 'Privacy notice'; }, [data]);
   const owner = data?.legal_name?.trim();
   const email = data?.contact_email?.trim();
   const contact = email ? <a href={`mailto:${email}`}>{email}</a> : 'the email address on your booking confirmation';

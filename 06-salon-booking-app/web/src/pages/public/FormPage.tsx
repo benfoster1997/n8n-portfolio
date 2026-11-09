@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../../api';
 import { BrandFooter, BrandHero, BrandIcon, Heart, LemonSlice, PolishBottle, ScriptTitle } from '../../components/brand';
@@ -14,6 +14,8 @@ export function FormPage() {
   const { token = '' } = useParams();
   const valid = /^[0-9a-f-]{36}$/i.test(token);
   const { data, error, loading } = useLoad(() => (valid ? api.getForm(token) : Promise.resolve(null)), [token]);
+  // Every page starts with the booking page's title (index.html): this one is the form.
+  useEffect(() => { document.title = data ? `Consultation form · ${data.business_name}` : 'Consultation form'; }, [data]);
   const [answers, setAnswers] = useState(blankAnswers);
   const [consent, setConsent] = useState(false);
   const [signedName, setSignedName] = useState('');

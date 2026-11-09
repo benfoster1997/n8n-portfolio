@@ -34,6 +34,36 @@ test('the booking page’s own HTML has one title, a canonical link and the prev
   expect({ format, width, height }).toEqual({ format: 'jpeg', width: 1200, height: 630 });
 });
 
+test('once the booking page has loaded, its tab says the same, and never the default business name', async ({ page }) => {
+  await page.goto('/book');
+  await expect(page.getByRole('button', { name: /Gel polish — hands/ })).toBeVisible();
+  await expect(page).toHaveTitle('Demo Nail Studio · Book online');
+  // A new install's name counts as unset here too, as it does in the built-in head.
+  await page.evaluate((key) => {
+    const db = JSON.parse(localStorage.getItem(key)!);
+    db.settings.business_name = 'My Nail Studio';
+    localStorage.setItem(key, JSON.stringify(db));
+  }, 'salon-demo-v4');
+  await page.reload();
+  await expect(page.getByRole('button', { name: /Gel polish — hands/ })).toBeVisible();
+  await expect(page).toHaveTitle('Book an appointment');
+});
+
+test('the privacy notice and the consultation form have tab titles of their own', async ({ page }) => {
+  await page.goto('/privacy');
+  await expect(page.getByRole('heading', { name: 'Privacy notice' })).toBeVisible();
+  await expect(page).toHaveTitle('Privacy notice · Demo Nail Studio');
+  const token = await page.evaluate((key) => (JSON.parse(localStorage.getItem(key)!).appointments as { status: string; public_token: string }[])
+    .find((a) => a.status === 'confirmed')!.public_token, 'salon-demo-v4');
+  await page.goto(`/form/${token}`);
+  await expect(page.getByText('Consultation form').first()).toBeVisible();
+  await expect(page).toHaveTitle('Consultation form · Demo Nail Studio');
+  // A broken link still says what it was for.
+  await page.goto('/form/not-a-link');
+  await expect(page.getByRole('heading', { name: 'Consultation form' })).toBeVisible();
+  await expect(page).toHaveTitle('Consultation form');
+});
+
 test('robots.txt lets Google load the booking page’s scripts and picture, and keeps the rest out', async ({ request }) => {
   const res = await request.get('/robots.txt');
   expect(res.ok()).toBe(true);
