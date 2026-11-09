@@ -9,7 +9,10 @@ import { shrinkImage } from '../../lib/image';
 import { fmt, fmtDay, fmtDayTime, todayInZone } from '../../lib/time';
 import { firstName, friendlyError, money, whatsappLink } from '../../lib/text';
 import { latestBooking, newAppointmentLink, sameTreatment } from '../../lib/nextVisit';
-import type { ClientPhoto, ConsultationForm, PatchTest } from '../../lib/types';
+import {
+  clientSearchLink, firstFoundYou, foundYouThrough, friendName, reviewAskedText, SAID_YES_IN_PERSON, shortNoticeLine, type FoundYou,
+} from '../../lib/growth';
+import type { Client, ClientPhoto, ConsultationForm, PatchTest } from '../../lib/types';
 import { Avatar, ClientSheet, Glyph } from './Clients';
 import { BrandIcon } from '../../components/brand';
 
@@ -19,7 +22,7 @@ export function ClientView() {
   const tz = s.timezone;
   const nav = useNavigate();
   const toast = useToast();
-  const { data, error, loading, reload } = useLoad(async () => {
+  const { data, error, loading, reload, setData } = useLoad(async () => {
     const [client, appts, tests, forms, photos, services] = await Promise.all([
       api.getClient(id), api.listClientAppointments(id), api.listPatchTests(id), api.listForms(id), api.listPhotos(id), api.listServices()]);
     return { client, appts, tests, forms, photos, services };
@@ -31,6 +34,9 @@ export function ClientView() {
   const [allergies, setAllergies] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const act = useAction();
+  // The short-notice list: its own, so a problem shows beside it, and the tick as she left it while it saves.
+  const offers = useAction();
+  const [offersTicked, setOffersTicked] = useState<boolean | null>(null);
 
   if (loading && !data) return <Spinner />;
   const c = data?.client;
@@ -46,6 +52,22 @@ export function ClientView() {
   const last = latestBooking(data!.appts);
   const bookLink = newAppointmentLink(c.id, last && sameTreatment(last, data!.services));
   const hasHealth = consented || !!c.allergies || data!.tests.length > 0 || data!.forms.length > 0;
+  // How they found her: their first answer, else the first link they booked through.
+  const found = firstFoundYou(data!.appts);
+
+  /** Their yes to short-notice spaces and offers: one given in person, or stopping them (they replied STOP, say). */
+  async function setOffers(yes: boolean) {
+    const patch: Pick<Client, 'marketing_ok_at' | 'marketing_ok_note'> = yes
+      ? { marketing_ok_at: new Date().toISOString(), marketing_ok_note: SAID_YES_IN_PERSON }
+      : { marketing_ok_at: null, marketing_ok_note: null };
+    setOffersTicked(yes);
+    let saved: Client | undefined;
+    if (await offers.run(async () => { saved = await api.updateClient(c!.id, patch); })) {
+      setData({ ...data!, client: saved! });
+      toast(yes ? 'Added to your short-notice list' : 'Taken off your short-notice list');
+    }
+    setOffersTicked(null);
+  }
 
   async function saveNotes() {
     if (notes === null) return;
@@ -82,6 +104,12 @@ export function ClientView() {
           <div><dt>Spent</dt><dd>{money(spent)}</dd></div>
           <div><dt>Client since</dt><dd>{fmtDay(c.created_at, tz)}</dd></div>
         </dl>
+        {(found || c.review_asked_at) && (
+          <ul className="od-facts">
+            {found && <li className="od-fact-found"><FoundYouLine f={found} /></li>}
+            {c.review_asked_at && <li className="od-fact-review">{reviewAskedText(c.review_asked_at, tz)}</li>}
+          </ul>
+        )}
         {(c.phone_e164 || c.phone || c.email) && (
           <div className="od-contact">
             {c.phone_e164 && <a className="btn wa" href={whatsappLink(c.phone_e164, `Hi ${firstName(c.full_name)}, `)} target="_blank" rel="noreferrer"><Icon name="whatsapp" size={20} /> WhatsApp</a>}
@@ -109,6 +137,14 @@ export function ClientView() {
         <span>Regular client — never asked for a <span className="od-nowrap">new-client</span> deposit<br />
           <span className="sub">Tick this for regulars you’ve moved across from your old booking app.</span></span>
       </label>
+
+      <label className="check card od-regular od-offers">
+        <input type="checkbox" checked={offersTicked ?? !!c.marketing_ok_at} disabled={offers.busy} onChange={(e) => setOffers(e.target.checked)} />
+        <span>Short-notice spaces and offers<br />
+          <span className="od-offers-state">{shortNoticeLine(c, tz)}</span><br />
+          <span className="sub">{c.marketing_ok_at ? 'If they reply STOP, switch this off.' : 'Tick this if they say yes in person.'}</span></span>
+      </label>
+      <ErrorBox error={offers.error} />
 
       <div className="section-title">Notes</div>
       <div className="card stack od-client-notes">
@@ -278,6 +314,13 @@ export function ClientView() {
       )}
     </div>
   );
+}
+
+/** "Found you through Instagram", "… through a friend: Sam" (Sam opens Clients, looking for her), "… through your printed card". */
+function FoundYouLine({ f }: { f: FoundYou }) {
+  const friend = friendName(f);
+  if (friend) return <>Found you through a friend: <Link className="od-found-name" to={clientSearchLink(friend)}>{friend}</Link></>;
+  return <>Found you {foundYouThrough(f)}</>;
 }
 
 function PatchRow({ t, tz, onDeleted }: { t: PatchTest; tz: string; onDeleted: () => void }) {

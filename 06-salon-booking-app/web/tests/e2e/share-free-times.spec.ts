@@ -56,8 +56,9 @@ test('Share free times writes this week’s real gaps for her most-booked treatm
   await expect(sheet.getByRole('radio', { name: 'This week' })).toHaveAttribute('aria-checked', 'true');
   await expect(sheet.locator('.od-share-range')).toHaveText('Wed 4 Nov to Tue 10 Nov');
   // Today is inside the 12 hours' notice, Sunday is closed and Monday is time off. At most 8 times,
-  // spread over the days, each a separate space around what's booked.
-  const message = `${WEEK} Book here: ${origin(page)}/book?treatment=biab-infill`;
+  // spread over the days, each a separate space around what's booked. The link says it came from a
+  // free-times post, so Money can count the new clients it brings.
+  const message = `${WEEK} Book here: ${origin(page)}/book?treatment=biab-infill&from=free-times`;
   await expect(sheet.locator('.od-share-msg')).toHaveText(message);
   await expect(sheet.getByText('Only times clients can book online now. Post it on your Story or Status, or send it to someone who’s asked.')).toBeVisible();
   await shot(page, 's01-share-free-times');
@@ -71,12 +72,12 @@ test('Share free times writes this week’s real gaps for her most-booked treatm
   // The next 2 weeks: more days than times, so 8 days spread out, alternately early and late.
   await sheet.getByRole('radio', { name: 'Next 2 weeks' }).click();
   await expect(sheet.locator('.od-share-range')).toHaveText('Wed 4 Nov to Tue 17 Nov');
-  await expect(sheet.locator('.od-share-msg')).toHaveText(`${FORTNIGHT} Book here: ${origin(page)}/book?treatment=biab-infill`);
+  await expect(sheet.locator('.od-share-msg')).toHaveText(`${FORTNIGHT} Book here: ${origin(page)}/book?treatment=biab-infill&from=free-times`);
 
   // Another treatment: its own times and its own link.
   await sheet.getByLabel('Treatment').selectOption({ label: 'Gel polish — hands' });
   await expect(sheet.locator('.od-share-msg')).toContainText('Spaces for Gel polish — hands: ');
-  await expect(sheet.locator('.od-share-msg')).toContainText(`Book here: ${origin(page)}/book?treatment=gel-polish-hands`);
+  await expect(sheet.locator('.od-share-msg')).toContainText(`Book here: ${origin(page)}/book?treatment=gel-polish-hands&from=free-times`);
 });
 
 test('every time it lists can be booked from the link, which opens straight on that treatment', async ({ page }) => {
@@ -84,7 +85,7 @@ test('every time it lists can be booked from the link, which opens straight on t
   const sheet = await openSheet(page);
   const message = (await sheet.locator('.od-share-msg').textContent())!;
   const link = message.split('Book here: ')[1];
-  expect(link).toBe(`${origin(page)}/book?treatment=biab-infill`);
+  expect(link).toBe(`${origin(page)}/book?treatment=biab-infill&from=free-times`);
 
   await page.goto(link);
   await expect(page.getByRole('heading', { name: 'Pick a day and time' })).toBeVisible();
@@ -116,7 +117,7 @@ test('Share opens the phone’s share sheet with the message', async ({ page }) 
   const sheet = await openSheet(page);
   await sheet.getByRole('button', { name: 'Share', exact: true }).click();
   const shared = await page.evaluate(() => (window as unknown as { shared: unknown[] }).shared);
-  expect(shared).toEqual([{ text: `${WEEK} Book here: ${origin(page)}/book?treatment=biab-infill` }]);
+  expect(shared).toEqual([{ text: `${WEEK} Book here: ${origin(page)}/book?treatment=biab-infill&from=free-times` }]);
   await expect(sheet.getByRole('button', { name: 'Copy', exact: true })).toBeVisible();
 });
 

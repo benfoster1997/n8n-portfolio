@@ -76,6 +76,10 @@ test('after Mark as done, the same treatment in 2, 3 or 4 weeks is one tap from 
   ]);
   // Behind the sheet the appointment already says Done.
   await expect(page.locator('.od-hero .chip')).toHaveText('Done');
+  // Under the next visit, the Google review ask: the demo has no review link saved, so it says where to add one
+  // (growth-owner.spec.ts has the ask itself).
+  await expect(sheet.locator('.od-review-none')).toHaveText(
+    'To ask clients for a Google review here, add your review link in Settings → Booking page.');
   await shot(page, 'v01-next-visit');
 
   await sheet.getByRole('link', { name: /In 2 weeks/ }).click();

@@ -6,7 +6,8 @@ import { Blossom, BrandIcon, LemonSlice } from '../../components/brand';
 import { useOwner } from '../../components/owner';
 import { ErrorBox, Icon, LateChip, Spinner, useLoad, useRefreshOnReturn, useToast } from '../../components/ui';
 import { addDays, fmt, fmtDay, fmtDayLong, fmtDayTime, fmtTime, startOfDayInstant, todayInZone, dateInZone } from '../../lib/time';
-import { money } from '../../lib/text';
+import { DEFAULT_BUSINESS_NAME, money } from '../../lib/text';
+import { isDefaultBusinessName } from '../../lib/growth';
 import { dueWhatsAppReminders, lateCharge, reminderDates, reminderDays } from '../../lib/reminders';
 import { needingForms } from '../../lib/health';
 import { isUnfinished, todayNote, UNFINISHED_SHOWN } from '../../lib/unfinished';
@@ -99,7 +100,11 @@ export function Today() {
   const lateCancels = (data?.late ?? []).map((a) => ({ a, ...lateCharge(a, data?.payments ?? []) })).filter((c) => c.owed > 0);
   const takingsToday = todays.filter((a) => a.status !== 'no_show').reduce((n, a) => n + a.price_pence, 0);
 
+  // Keyed by their words: two of them can go to the same page.
   const setup: { text: string; to: string }[] = [];
+  if (isDefaultBusinessName(s.business_name)) {
+    setup.push({ text: `Add your business name: your booking page still says ${DEFAULT_BUSINESS_NAME}`, to: '/settings/business' });
+  }
   if (data && !data.services.some((v) => v.is_active)) setup.push({ text: 'Add your treatments and prices', to: '/settings/services' });
   if (!s.bank_account_number && s.deposit_amount_pence > 0) setup.push({ text: 'Add bank details for deposits', to: '/settings/deposits' });
   if (!s.public_site_url) setup.push({ text: 'Save your booking link', to: '/settings/business' });
@@ -185,7 +190,7 @@ export function Today() {
               <div className="section-title">Finish setting up</div>
               <div className="card tight td-setup"><ul className="list">
                 {setup.map((x) => (
-                  <li key={x.to}><Link className="list-row" to={x.to}>
+                  <li key={x.text}><Link className="list-row" to={x.to}>
                     <span className="td-setup-dot" aria-hidden="true" />
                     <span className="grow">{x.text}</span>
                     <span className="chev"><Icon name="chev" size={18} /></span>
@@ -340,7 +345,10 @@ export function Today() {
                 <BrandIcon name="clock" size={18} /> Share free times
               </button>
             </div>
-            <p className="td-link-hint">Put this in your Instagram bio and WhatsApp Business profile.</p>
+            <p className="td-link-hint">
+              For your Instagram bio, WhatsApp Business and cards, use <Link to="/settings/booking-page">a link for each place</Link>: Money
+              then shows which bring new clients.
+            </p>
           </div>
           {sharingTimes && <ShareFreeTimesSheet bookingUrl={bookingUrl} onClose={() => setSharingTimes(false)} />}
         </>

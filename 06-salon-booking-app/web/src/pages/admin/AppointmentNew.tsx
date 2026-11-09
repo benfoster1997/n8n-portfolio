@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { api } from '../../api';
+import { api, isNeedsUpdate } from '../../api';
+import { FoundYouFields } from '../../components/appts';
 import { useOwner } from '../../components/owner';
-import { ErrorBox, Field, Icon, Spinner, TopBar, useAction, useLoad } from '../../components/ui';
+import { ErrorBox, Field, Icon, Spinner, TopBar, useAction, useLoad, useToast } from '../../components/ui';
 import { availableSlots } from '../../lib/slots';
 import { addDays, fmtTime, minutesLabel, startOfDayInstant, todayInZone, zonedToInstant } from '../../lib/time';
 import { isPlausibleEmail, isPlausiblePhone, money, parsePounds } from '../../lib/text';
 import { readNewAppointmentLink } from '../../lib/nextVisit';
+import { foundYouPatch, type FoundYouAnswer } from '../../lib/growth';
 import type { Client } from '../../lib/types';
 import { Avatar } from './Clients';
 
@@ -40,8 +42,11 @@ export function AppointmentNew() {
   const [askDeposit, setAskDeposit] = useState<boolean | null>(null);
   const [emailConfirm, setEmailConfirm] = useState(true);
   const [notes, setNotes] = useState('');
+  // A new client: how they found her, if she knows (optional; Money adds these up).
+  const [found, setFound] = useState<FoundYouAnswer>({ heard_from: null, detail: '' });
   const [visits, setVisits] = useState<number | null>(null);
   const { busy, error, run, setError } = useAction();
+  const toast = useToast();
 
   const service = data?.services.find((x) => x.id === serviceId);
   const duration = service ? service.duration_min : Number(custom.duration) || 0;
@@ -126,6 +131,13 @@ export function AppointmentNew() {
         owner_notes: notes.trim() || null,
       });
       if (emailConfirm && c.email) await api.queueEmail(a.id, 'booking_received').catch(() => {});
+      // Saved with the appointment once it's in the diary, so it can never stop it being added.
+      const answer = foundYouPatch(found);
+      if (isNew && answer.heard_from) {
+        await api.updateAppointment(a.id, answer).catch((e) => toast(isNeedsUpdate(e)
+          ? 'Added. How they found you needs the database update (2026-11-growth.sql) first.'
+          : 'Added, but how they found you wasn’t saved: add it on the appointment.'));
+      }
       // The appointment screen offers WhatsApp for the confirmation when there's no email address.
       nav(`/appointments/${a.id}`, { replace: true, state: { added: true } });
     });
@@ -224,6 +236,9 @@ export function AppointmentNew() {
 
       <div className="card stack od-step">
         <div className="od-step-head"><StepNum n={4} /><h3>Last details</h3></div>
+        {isNew && (
+          <FoundYouFields value={found} onChange={setFound} hint="Optional. Money adds these up, so you can see what brings new clients." />
+        )}
         {s.deposit_amount_pence > 0 && (
           <label className="check">
             <input type="checkbox" checked={depositOn} onChange={(e) => setAskDeposit(e.target.checked)} />
