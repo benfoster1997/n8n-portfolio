@@ -1,19 +1,25 @@
 import { useMemo, useState } from 'react';
-import { api } from '../../api';
+import { api, isNeedsUpdate } from '../../api';
 import { ErrorBox, Field, Icon, Seg, Sheet, Spinner, useLoad, useToast } from '../../components/ui';
 import { addDays, fmtDay, startOfDayInstant, todayInZone } from '../../lib/time';
 import {
   BOOKED_LOOKBACK_DAYS, mostBookedFirst, shareableTimes, shareMessage, spanDays, spanRange, SPAN_DAYS, treatmentLink, type ShareSpan,
 } from '../../lib/freeTimes';
+import { LINK_FROM } from '../../lib/source';
+import { shortNoticeMessage, whatsappLink } from '../../lib/text';
+import { shortDate } from '../../lib/growth';
+import type { ShortNoticeClient } from '../../lib/types';
 
 const SPANS: { value: ShareSpan; label: string }[] = [{ value: 'week', label: 'This week' }, { value: 'fortnight', label: 'Next 2 weeks' }];
 
 /**
  * Share free times (Today → Your booking link). She picks a treatment, her most-booked first,
  * and this week or the next 2 weeks; the app writes a message listing times a client could book
- * online, with her booking link for that treatment. It works from what the booking page itself
- * sees (public_booking_info and public_busy_times), so it follows the same rules. Share opens the
- * phone's share sheet; Copy puts the message on the clipboard. Nothing is sent by the app.
+ * online, with her booking link for that treatment (marked as from a free-times post, for Money).
+ * It works from what the booking page itself sees (public_booking_info and public_busy_times), so it
+ * follows the same rules. Share opens the phone's share sheet; Copy puts the message on the clipboard.
+ * Under it, her short-notice list: clients who said yes to hearing about spaces and offers, each with
+ * their own WhatsApp button, one at a time. Nothing is sent by the app.
  */
 export function ShareFreeTimesSheet({ bookingUrl, onClose }: { bookingUrl: string; onClose: () => void }) {
   const toast = useToast();
@@ -30,6 +36,8 @@ export function ShareFreeTimesSheet({ bookingUrl, onClose }: { bookingUrl: strin
     ]);
     return { info, busy, now, services: mostBookedFirst(info.services, appts) };
   }, []);
+  // On its own, so the free times still show before the database update that adds the list.
+  const { data: list, error: listError } = useLoad(() => api.listShortNoticeClients(), []);
   const [picked, setPicked] = useState<string | null>(null);
   const [span, setSpan] = useState<ShareSpan>('week');
   const service = data && (data.services.find((x) => x.id === picked) ?? data.services[0]);
@@ -37,7 +45,7 @@ export function ShareFreeTimesSheet({ bookingUrl, onClose }: { bookingUrl: strin
     if (!data || !service) return null;
     const { info, busy, now } = data;
     const times = shareableTimes(info, service.duration_min, spanDays(info, span, now), busy, now);
-    const link = treatmentLink(bookingUrl, service, info.services);
+    const link = treatmentLink(bookingUrl, service, info.services, LINK_FROM.freeTimes);
     return { range: spanRange(info, span, now), message: times.length ? shareMessage(service.name, times, info.timezone, link) : null };
   }, [data, service, span, bookingUrl]);
   const canShare = typeof navigator !== 'undefined' && typeof navigator.share === 'function';
@@ -87,6 +95,7 @@ export function ShareFreeTimesSheet({ bookingUrl, onClose }: { bookingUrl: strin
                   <button className={`btn${canShare ? '' : ' primary'}`} onClick={() => copy(out.message!)}><Icon name="copy" size={20} /> Copy{canShare ? '' : ' message'}</button>
                 </div>
                 <p className="sub od-share-note">Only times clients can book online now. Post it on your Story or Status, or send it to someone who’s asked.</p>
+                <ShortNoticeList clients={list} error={listError} message={shortNoticeMessage(out.message, data.info.business_name)} tz={data.info.timezone} />
               </>
             ) : (
               <p className="notice od-share-none">
@@ -98,5 +107,58 @@ export function ShareFreeTimesSheet({ bookingUrl, onClose }: { bookingUrl: strin
         )}
       </div>
     </Sheet>
+  );
+}
+
+/**
+ * Her short-notice list: clients who said she may message them about short-notice spaces and offers
+ * (ticked on the booking page, or a yes she recorded), and have a mobile. One WhatsApp button each, with
+ * the message signed and ending with how to stop them: one at a time, never all at once.
+ */
+function ShortNoticeList({ clients, error, message, tz }: {
+  clients: ShortNoticeClient[] | undefined; error: unknown; message: string; tz: string;
+}) {
+  // Who she has opened WhatsApp for, while the sheet is open.
+  const [opened, setOpened] = useState<string[]>([]);
+  if (!clients) {
+    if (isNeedsUpdate(error)) {
+      return (
+        <p className="sub od-sn-none">
+          Your short-notice list will show here once the app’s database update has been run: ask whoever set up the app (see SETUP.md).
+        </p>
+      );
+    }
+    return error ? <ErrorBox error={error} /> : null;
+  }
+  return (
+    <section className="od-sn" aria-labelledby="od-sn-h">
+      <h3 id="od-sn-h" className="od-sn-h">Your short-notice list ({clients.length})</h3>
+      {clients.length === 0 ? (
+        <p className="sub od-sn-none">
+          Nobody yet. Clients can tick the box when they book, or you can record a yes on their client record.
+        </p>
+      ) : (
+        <>
+          <p className="sub od-sn-intro">They said yes to messages about short-notice spaces and offers. Each message ends with how to stop them.</p>
+          <ul className="list card tight od-sn-list">
+            {clients.map((c) => (
+              <li key={c.id} className="list-row od-sn-row">
+                <span className="grow od-sn-who">
+                  <span className="title">{c.full_name}</span>
+                  <span className="meta">
+                    {opened.includes(c.id) ? <><span className="visually-hidden">✓ </span>WhatsApp opened</>
+                      : `Since ${shortDate(c.marketing_ok_at, tz)}${c.marketing_ok_note ? ` · ${c.marketing_ok_note}` : ''}`}
+                  </span>
+                </span>
+                <a className="btn wa small od-sn-send" href={whatsappLink(c.phone_e164, message)} target="_blank" rel="noreferrer"
+                  onClick={() => setOpened((o) => (o.includes(c.id) ? o : [...o, c.id]))}>
+                  <Icon name="whatsapp" size={18} /> WhatsApp<span className="visually-hidden"> {c.full_name}</span>
+                </a>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </section>
   );
 }

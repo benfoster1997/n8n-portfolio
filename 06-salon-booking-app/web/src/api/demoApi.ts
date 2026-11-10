@@ -5,12 +5,13 @@
 import type { Api, FormInfo } from './api';
 import type {
   Appointment, BookingInfo, BusyRange, Client, ClientChange, ClientPhoto, ConsultationForm, EmailLogRow,
-  ManageInfo, OpeningHours, PatchTest, Payment, Service, Session, Settings, TaxYear, TimeOff,
+  ManageInfo, NewClientBooking, OpeningHours, PatchTest, Payment, Service, Session, Settings, ShortNoticeClient, TaxYear, TimeOff,
 } from '../lib/types';
 import { addDays, dateInZone, todayInZone, zonedToInstant } from '../lib/time';
 import { availableSlots } from '../lib/slots';
 import { normalizeUkPhone } from '../lib/text';
 import { emptyTaxYear, TAX_YEAR_MAX_PENCE } from '../lib/tax';
+import { tidyExtras } from '../lib/source';
 
 const KEY = 'salon-demo-v4';
 const MAX_CLIENT_CHANGES = 6; // public.max_client_changes()
@@ -80,6 +81,9 @@ function demoSettings(): Settings {
     wa_template_reminder: null,
     wa_template_deposit: null,
     wa_template_confirmed: null,
+    wa_template_review: null,
+    // Left empty, so the demo shows what happens before she has added her Google review link.
+    review_link: null,
     booking_enabled: true,
     legal_name: 'Demo Owner',
     auto_cancel_unpaid: false,
@@ -89,6 +93,8 @@ function demoSettings(): Settings {
     strapline: 'Gel, BIAB, Nail art',
     extras_menu: DEMO_EXTRAS_MENU,
     safety_note: 'Tools are cleaned between every client, and I use PPE for all nail work.',
+    // None: any handle that looks real could belong to a real stranger, who'd get the demo's "Message me"
+    // taps. So the demo's Message me buttons are just Email (owner@example.com); the tests set handles.
     instagram_handle: null,
     facebook_handle: null,
     email_secret_hash: null,
@@ -121,7 +127,7 @@ function seed(): Store {
   const cl = (full_name: string, phone: string, email: string | null, allergies: string | null = null, notes: string | null = null): Client =>
     ({ id: uid(), full_name, phone, phone_e164: normalizeUkPhone(phone), email, allergies, notes, is_regular: false,
       health_consent_at: allergies ? at(-40, '12:00') : null, health_consent_note: allergies ? 'Paper consultation form' : null,
-      created_at: at(-60, '12:00') });
+      marketing_ok_at: null, marketing_ok_note: null, review_asked_at: null, created_at: at(-60, '12:00') });
   const clients = [
     cl('Amelia Hart', '07700 900101', 'amelia@example.com', null, 'Likes almond shape, short length. Nude/pink shades.'),
     cl('Grace Patel', '07700 900102', 'grace@example.com', 'Sensitive to HEMA — use HEMA-free gel only.', 'Prefers Thursday evenings.'),
@@ -142,7 +148,8 @@ function seed(): Store {
       deposit_due_at: null, deposit_paid_at: null, reference: ref(), public_token: uid(), client_notes: null,
       owner_notes: null, cancellation_policy_agreed: null, reminder_email_sent_at: null, whatsapp_reminder_sent_at: null, cancelled_at: null,
       cancel_reason: null, cancelled_by: null, cancelled_late: false, client_change_count: 0, client_changed_at: null,
-      details_sent_at: null, moved_at: null, late_fee_pence: null, booking_phone: null, created_at: at(-14, '09:00'), ...extra,
+      details_sent_at: null, moved_at: null, late_fee_pence: null, booking_phone: null,
+      link_source: null, heard_from: null, heard_from_detail: null, first_visit_said: null, created_at: at(-14, '09:00'), ...extra,
     };
     appts.push(a);
     return a;
@@ -167,16 +174,19 @@ function seed(): Store {
   add(isla, infill, at(0, '10:00'), 'confirmed');
   add(grace, infill, at(0, '13:00'), 'confirmed', { owner_notes: 'HEMA-free gel!' });
   add(chloe, gel, at(1, '11:00'), 'confirmed');
+  // Booked through her Instagram link, as a first visit.
   const newBooking = add(sophie, biab, at(1, '14:00'), 'pending_deposit', {
     source: 'online', is_new_client: true, deposit_required_pence: 1000,
     deposit_due_at: new Date(Date.now() + 10 * 3600e3).toISOString(), created_at: new Date(Date.now() - 14 * 3600e3).toISOString(),
-    client_notes: 'First time trying BIAB — would love a soft pink.',
+    client_notes: 'First time trying BIAB — would love a soft pink.', link_source: 'instagram', first_visit_said: true,
   });
   add(ruby, gel, at(3, '10:30'), 'confirmed');
   // Changes clients made themselves from the link in their emails.
   const hoursAgo = (h: number) => new Date(Date.now() - h * 3600e3).toISOString();
+  // A regular, who came to the booking page from Google.
   const moved = add(amelia, infill, at(8, '12:00'), 'confirmed', {
     source: 'online', client_change_count: 1, client_changed_at: hoursAgo(3), details_sent_at: hoursAgo(3),
+    link_source: 'google', first_visit_said: false,
   });
   const lateCancel = add(isla, toes, at(1, '15:30'), 'cancelled', {
     source: 'online', cancelled_by: 'client', cancelled_late: true, cancelled_at: hoursAgo(4), late_fee_pence: toes.price_pence,
@@ -189,6 +199,7 @@ function seed(): Store {
   add(jess, biab, at(-5, '14:00'), 'pending_deposit', {
     source: 'online', is_new_client: true, deposit_required_pence: 1000,
     deposit_due_at: at(-6, '19:00'), created_at: jess.created_at,
+    heard_from: 'friend', heard_from_detail: 'Sam', first_visit_said: true,
   });
   // Amelia's next infill, three weeks out, overlapping Grace's usual 13:00: when Grace's visit
   // today is marked as done, "In 3 weeks" offers the nearest free time instead.
@@ -204,6 +215,9 @@ function seed(): Store {
 
   sophie.health_consent_at = newBooking.created_at;
   sophie.health_consent_note = 'Online consultation form';
+  // She ticked "WhatsApp me about short-notice spaces and offers" when she booked.
+  sophie.marketing_ok_at = newBooking.created_at;
+  sophie.marketing_ok_note = 'Ticked on the booking page';
   return {
     settings, hours, services, clients, appointments: appts,
     patch_tests: [
@@ -241,6 +255,12 @@ function upgrade(s: Store): Store {
   const settings = s.settings as unknown as Record<string, unknown>;
   for (const [k, v] of Object.entries(defaults)) if (!(k in settings)) settings[k] = v;
   if (!Array.isArray(s.tax_years)) s.tax_years = [];
+  for (const c of s.clients) {
+    c.marketing_ok_at ??= null; c.marketing_ok_note ??= null; c.review_asked_at ??= null;
+  }
+  for (const a of s.appointments) {
+    a.link_source ??= null; a.heard_from ??= null; a.heard_from_detail ??= null; a.first_visit_said ??= null;
+  }
   return s;
 }
 function save(s: Store) {
@@ -356,9 +376,12 @@ export function demoApi(): Api {
       const created = !c;
       if (!c) {
         c = { id: uid(), full_name: r.full_name.trim(), email, phone: r.phone.trim(), phone_e164: phone, allergies: null, notes: null,
-          is_regular: false, health_consent_at: null, health_consent_note: null, created_at: nowIso() };
+          is_regular: false, health_consent_at: null, health_consent_note: null, marketing_ok_at: null, marketing_ok_note: null,
+          review_asked_at: null, created_at: nowIso() };
         db.clients.push(c);
       }
+      // The optional answers, tidied as the database does: anything odd is left out.
+      const extras = tidyExtras(r.extras);
       const isNew = !(c.is_regular || db.appointments.some((a) => a.client_id === c!.id && a.status === 'completed'));
       const deposit = isNew ? s.deposit_amount_pence : 0;
       const ends = new Date(new Date(r.starts_at).getTime() + service.duration_min * 60e3).toISOString();
@@ -375,6 +398,8 @@ export function demoApi(): Api {
         moved_at: null, late_fee_pence: null,
         // A returning client who typed a different mobile: kept for the owner to check.
         booking_phone: !created && phone !== c.phone_e164 ? r.phone.trim() : null,
+        link_source: extras.link_source, heard_from: extras.heard_from, heard_from_detail: extras.heard_from_detail,
+        first_visit_said: extras.first_visit,
         created_at: nowIso(),
       });
       db.appointments.push(a);
@@ -384,6 +409,12 @@ export function demoApi(): Api {
           signed_name: r.signed_name ?? r.full_name, submitted_at: nowIso() });
         c.health_consent_at = nowIso();
         c.health_consent_note = 'Online consultation form';
+      }
+      // The one thing a booking may set on a client's record: the first tick of the short-notice box. As in the
+      // database, for an existing client only with the mobile on their record, where those messages go.
+      if (extras.marketing_ok && !c.marketing_ok_at && (created || phone === c.phone_e164)) {
+        c.marketing_ok_at = nowIso();
+        c.marketing_ok_note = 'Ticked on the booking page';
       }
       queue(a.id, 'booking_received', email);
       queue(a.id, 'owner_new_booking', s.owner_email);
@@ -559,7 +590,7 @@ export function demoApi(): Api {
         deposit_paid_at: null, reference: ref(), public_token: uid(), client_notes: null, cancellation_policy_agreed: null, reminder_email_sent_at: null,
         whatsapp_reminder_sent_at: null, cancelled_at: null, cancel_reason: null, cancelled_by: null, cancelled_late: false,
         client_change_count: 0, client_changed_at: null, details_sent_at: null, moved_at: null, late_fee_pence: null,
-        booking_phone: null, created_at: nowIso(),
+        booking_phone: null, link_source: null, heard_from: null, heard_from_detail: null, first_visit_said: null, created_at: nowIso(),
       });
       db.appointments.push(a);
       commit();
@@ -674,7 +705,8 @@ export function demoApi(): Api {
       if (email && db.clients.some((x) => x.email === email)) fail('A client with that email already exists');
       const created: Client = { id: uid(), full_name: c.full_name.trim(), email, phone: c.phone?.trim() || null,
         phone_e164: normalizeUkPhone(c.phone), allergies: c.allergies ?? null, notes: c.notes ?? null,
-        is_regular: false, health_consent_at: null, health_consent_note: null, created_at: nowIso() };
+        is_regular: false, health_consent_at: null, health_consent_note: null, marketing_ok_at: null, marketing_ok_note: null,
+        review_asked_at: null, created_at: nowIso() };
       db.clients.push(created);
       commit();
       return delay(created);
@@ -759,6 +791,32 @@ export function demoApi(): Api {
       db.tax_years = [...db.tax_years.filter((t) => t.start_year !== start_year), row].sort((a, b) => a.start_year - b.start_year);
       commit();
       return delay({ ...row });
+    },
+
+    async listNewClientBookings(fromIso, toIso) {
+      needOwner();
+      const from = new Date(fromIso).getTime(), to = new Date(toIso).getTime();
+      return delay(db.appointments
+        .filter((a) => {
+          const at = new Date(a.created_at).getTime();
+          // As the live app asks: with no answer to "Is this your first visit?", the database's own rule.
+          const online = a.first_visit_said === true || (a.first_visit_said === null && a.is_new_client);
+          return at >= from && at < to && (a.source === 'online' ? online : a.is_new_client);
+        })
+        .sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id))
+        .map((a): NewClientBooking => ({
+          id: a.id, client_id: a.client_id, status: a.status, created_at: a.created_at, link_source: a.link_source,
+          heard_from: a.heard_from, heard_from_detail: a.heard_from_detail,
+          full_name: db.clients.find((c) => c.id === a.client_id)?.full_name ?? null,
+        })));
+    },
+    async listShortNoticeClients() {
+      needOwner();
+      return delay(db.clients
+        .filter((c): c is Client & { marketing_ok_at: string; phone_e164: string } => !!c.marketing_ok_at && !!c.phone_e164)
+        .sort((a, b) => a.full_name.localeCompare(b.full_name) || a.id.localeCompare(b.id))
+        .map(({ id, full_name, phone_e164, marketing_ok_at, marketing_ok_note }): ShortNoticeClient =>
+          ({ id, full_name, phone_e164, marketing_ok_at, marketing_ok_note })));
     },
 
     async exportAll() {

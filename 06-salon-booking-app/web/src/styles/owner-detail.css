@@ -1398,3 +1398,135 @@
 }
 .od-share-btns > .btn { flex: 1 1 120px; }
 .od-share-note, .od-share-none { margin: 0; }
+
+/* ------------------------------------------------------------------ where clients come from, reviews and
+   short-notice spaces (the November 2026 update) */
+
+/* the appointment's receipt: "Found you …… A friend: Sam  Edit", the friend's name a link to Clients */
+.od-found-name {
+  color: var(--accent-text);
+  font-weight: 750;
+  text-decoration: underline;
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 3px;
+  -webkit-tap-highlight-color: transparent;
+}
+.od-found-edit {
+  position: relative;
+  margin-left: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent-text);
+  font: inherit;
+  font-size: 0.86rem;
+  font-weight: 750;
+  white-space: nowrap;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+/* a 44px tap target that doesn't make the row taller */
+.od-found-edit::after { content: ''; position: absolute; inset: -13px -10px; }
+/* nothing recorded: a small link under the receipt instead of the row */
+.od-hero .od-found-add {
+  position: relative;
+  margin: 6px 0 -10px;
+  border: 0;
+  background: none;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+/* the review ask: after Mark as done (under the next visit) and on a finished appointment */
+.od-review { display: flex; flex-direction: column; gap: 10px; }
+.od-review.card { gap: 12px; }
+.od-review-head { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.od-review-head h3 { flex: 1; min-width: 0; font-size: 1.06rem; line-height: 1.3; text-wrap: balance; overflow-wrap: anywhere; }
+.od-review-note { margin: 0; }
+.od-review.od-review-asked { flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 2px 10px; }
+.od-review-asked.card { padding-top: 10px; padding-bottom: 10px; }
+.od-review-when { display: inline-flex; align-items: center; gap: 8px; color: var(--ok); font-weight: 750; font-size: 0.94rem; }
+.od-review-when svg { flex: none; }
+/* a visit from another day that she didn't ask about: a plain reminder, not a done thing */
+.od-review-later .od-review-when { color: var(--muted); font-weight: 650; }
+.od-review-again { margin-right: -10px; }
+.od-review-none { margin: 0; }
+.od-review-none a { color: var(--accent-text); font-weight: 750; }
+/* in the sheet it comes after the next visit, set apart by a dashed line */
+.od-next .od-review, .od-next .od-review-none { margin-top: 2px; padding-top: 14px; border-top: 1px dashed var(--line-strong); }
+
+/* the client record: how they found her and the review ask, under the figures */
+.od-facts { list-style: none; margin: -4px 0 0; padding: 0 4px; display: flex; flex-direction: column; gap: 6px; }
+.od-facts li { position: relative; padding-left: 22px; color: var(--ink); font-size: 0.92rem; font-weight: 600; line-height: 1.45; overflow-wrap: anywhere; text-wrap: pretty; }
+.od-facts li::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 4px;
+  width: 13px;
+  height: 13px;
+  background: var(--pink);
+  -webkit-mask: var(--heart-mask) center / contain no-repeat;
+  mask: var(--heart-mask) center / contain no-repeat;
+}
+.od-facts .od-fact-review::before { background: var(--lemon); }
+/* short-notice spaces and offers: what they said, under the tick's label */
+.od-offers-state { display: inline-block; margin-top: 3px; color: var(--ink-strong); font-weight: 700; font-size: 0.92rem; }
+.od-offers .sub { display: inline-block; margin-top: 2px; }
+
+/* Settings → Booking page: her link for each place, with Copy */
+.od-links { list-style: none; margin: -2px 0 -6px; padding: 0; display: flex; flex-direction: column; }
+.od-link { display: flex; align-items: center; gap: 12px; padding: 10px 0; min-width: 0; }
+.od-link + .od-link { border-top: 1px dashed var(--line); }
+.od-link-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.od-link-place { font-weight: 750; color: var(--ink-strong); line-height: 1.35; }
+.od-link-url { color: var(--muted); font-size: 0.8rem; font-weight: 600; line-height: 1.4; overflow-wrap: anywhere; }
+.od-link-copy { flex: none; }
+.od-link-copy svg { color: var(--accent); }
+.od-review-test { align-self: flex-start; margin-top: -6px; }
+.od-update-needed, .od-name-note, .od-renamed-note { margin: 0; }
+/* the notes sit with the business name above them */
+.od-name-note, .od-renamed-note { margin-top: -6px; }
+
+/* Settings → WhatsApp messages: the review request's rules, under its box */
+.od-template-warn { margin: 10px 0 0; }
+.od-template-rules {
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  color: var(--ink);
+  font-size: 0.86rem;
+  line-height: 1.5;
+  text-wrap: pretty;
+}
+
+/* Money → Month: new clients, with a lilac edge (the money cards above are lemon) */
+.od-newclients { margin-top: 12px; display: flex; flex-direction: column; gap: 12px; box-shadow: inset 0 3px 0 var(--lilac), var(--shadow); }
+.od-newclients-h {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  font-size: 0.8rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent-text);
+}
+.od-newclients-text { display: flex; flex-direction: column; gap: 6px; }
+.od-newclients-text p { margin: 0; color: var(--ink); line-height: 1.45; overflow-wrap: anywhere; text-wrap: pretty; }
+.od-newclients-text .od-newclients-main { color: var(--ink-strong); font-weight: 800; font-size: 1.04rem; text-wrap: balance; }
+.od-newclients-text .od-newclients-before { margin-top: 4px; padding-top: 9px; border-top: 1px dashed var(--line); color: var(--muted); font-size: 0.86rem; font-weight: 600; }
+.od-newclients-update { margin: 0; }
+
+/* Share free times: her short-notice list, one WhatsApp each */
+.od-sn { display: flex; flex-direction: column; gap: 10px; margin-top: 2px; padding-top: 14px; border-top: 1px dashed var(--line-strong); }
+.od-sn-h { font-size: 1.02rem; font-weight: 800; }
+.od-sn-intro, .od-sn-none { margin: 0; }
+.od-sn-list .list-row.od-sn-row { gap: 10px; min-height: 60px; padding: 10px 14px; cursor: default; }
+.od-sn-list .list-row.od-sn-row:active { background: none; }
+.od-sn-who { display: flex; flex-direction: column; gap: 1px; }
+.od-sn-who .title, .od-sn-who .meta { overflow-wrap: anywhere; line-height: 1.35; }
+.od-sn-send { flex: none; }

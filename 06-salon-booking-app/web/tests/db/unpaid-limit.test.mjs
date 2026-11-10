@@ -3,6 +3,11 @@
 // count towards the booking page's limit of 15 only until they start. The rule
 // itself is tested in booking.test.mjs.
 //
+// The update was written for schema.sql as it was at de67f2e, so that's the new
+// install it's compared with. 2026-11-growth.sql has since replaced the booking
+// function (growth-update.test.mjs); on an install that has that version, this
+// update stops and changes nothing.
+//
 //   npm run test:db        (needs a local PostgreSQL reachable as the current OS user,
 //                           and the git history, for schema.sql as it was before)
 //
@@ -24,17 +29,24 @@ const conn = { host: process.env.PGHOST || '/var/run/postgresql', user: process.
 
 // main just before this update: what an existing install was set up with.
 const BEFORE = 'aa6282b';
-function previousSchema() {
+// main with this update and nothing newer: the schema.sql it was written for.
+const WRITTEN_FOR = 'de67f2e';
+function schemaAt(rev) {
   try {
-    return execFileSync('git', ['show', `${BEFORE}:./supabase/schema.sql`], { cwd: APP, encoding: 'utf8', maxBuffer: 1 << 24 });
+    return execFileSync('git', ['show', `${rev}:./supabase/schema.sql`], { cwd: APP, encoding: 'utf8', maxBuffer: 1 << 24 });
   } catch (e) {
-    throw new Error(`These tests read schema.sql as it was at ${BEFORE}, so they need the git history `
+    throw new Error(`These tests read schema.sql as it was at ${rev}, so they need the git history `
       + `(in a shallow copy, run git fetch --unshallow first): ${e.message}`);
   }
 }
-const PREVIOUS = previousSchema();
+const PREVIOUS = schemaAt(BEFORE);
+const THEN = schemaAt(WRITTEN_FOR);
 
 const FN = 'public.public_create_booking(uuid, timestamptz, text, text, text, text, jsonb, boolean, text, boolean)';
+/** What the update says first: stop if 2026-11-growth.sql's version (with p_extras) is there. Spaces as one. */
+const GUARD = "do $$ begin if to_regprocedure('public.public_create_booking(uuid,timestamptz,text,text,text,text,jsonb,boolean,text,boolean,jsonb)') "
+  + "is not null then raise exception 'Nothing has been changed: this update is already included in 2026-11-growth.sql, which you''ve run.'; "
+  + 'end if; end $$;';
 /** The function's own text, as written in a .sql file. */
 const fnText = (sql) => sql.match(/^create or replace function public\.public_create_booking\([\s\S]*?^end \$\$;$/m)?.[0];
 
@@ -140,23 +152,24 @@ async function bookOnline(c, serviceId) {
 
 // ---------------------------------------------------------------------------
 
-test('the update is the booking function from schema.sql, word for word, and who can call it: nothing else', () => {
-  assert.ok(fnText(SCHEMA), 'schema.sql has the function');
-  assert.equal(fnText(UPDATE), fnText(SCHEMA));
-  // Besides the function, the one other statement says again who can call it, as schema.sql does:
-  // nothing that drops, deletes or changes a table.
+test('the update is the booking function from schema.sql at de67f2e, word for word, a guard, and who can call it: nothing else', () => {
+  assert.ok(fnText(THEN), 'schema.sql had the function');
+  assert.equal(fnText(UPDATE), fnText(THEN));
+  // Besides the function: the guard that stops it once 2026-11-growth.sql has been run, and the
+  // statement that says again who can call it, as schema.sql did. Nothing that drops, deletes or
+  // changes a table.
   const rest = UPDATE.replace(fnText(UPDATE), '').replace(/--.*$/gm, '').trim();
-  assert.equal(rest.replace(/\s+/g, ' '), `grant execute on function ${FN} to anon, authenticated;`);
+  assert.equal(rest.replace(/\s+/g, ' '), `${GUARD} grant execute on function ${FN} to anon, authenticated;`);
   // Inside the function, the only delete is its own tidying-up of old booking records, as before.
   assert.deepEqual(fnText(UPDATE).match(/\bdelete\s+from\s+[\w.]+/gi), ['delete from public.booking_attempts']);
   assert.doesNotMatch(fnText(UPDATE), /\bdrop\s+\w+|\btruncate\b|\balter\s+table\b/i);
   // What changed since the previous schema: the count of unpaid bookings leaves out those that have started.
-  assert.notEqual(fnText(PREVIOUS), fnText(SCHEMA));
-  assert.match(fnText(SCHEMA), /status = 'pending_deposit'\s+and starts_at > now\(\)\) >= 15/);
+  assert.notEqual(fnText(PREVIOUS), fnText(THEN));
+  assert.match(fnText(THEN), /status = 'pending_deposit'\s+and starts_at > now\(\)\) >= 15/);
 });
 
 test('run twice on an install from before this version: the same function as a new install, and nothing else changes', async () => {
-  const fresh = await install('fresh', SCHEMA);
+  const fresh = await install('fresh', THEN);
   const old = await install('old', PREVIOUS);
   try {
     const svc = await seed(old);
@@ -189,12 +202,29 @@ test('run twice on an install from before this version: the same function as a n
 });
 
 test('on an install that already has this version, it changes nothing at all', async () => {
-  const c = await install('again', SCHEMA);
+  const c = await install('again', THEN);
   try {
     await seed(c);
     const before = await snapshot(c);
     await c.query(UPDATE);
     assert.deepEqual(await snapshot(c), before);
+  } finally {
+    await c.end();
+  }
+});
+
+test('after 2026-11-growth.sql (and on a new install from today’s schema.sql), it stops at once and changes nothing', async () => {
+  const c = await install('growth', SCHEMA);
+  try {
+    await seed(c);
+    const before = await snapshot(c);
+    await assert.rejects(c.query(UPDATE),
+      (e) => e.message === 'Nothing has been changed: this update is already included in 2026-11-growth.sql, which you\'ve run.');
+    assert.deepEqual(await snapshot(c), before);
+    // Still the one booking function, the newer one: never the older version put back beside it.
+    const fns = (await c.query(`select oid::regprocedure::text as f from pg_proc where proname = 'public_create_booking'`)).rows;
+    assert.deepEqual(fns.map((r) => r.f),
+      ['public_create_booking(uuid,timestamp with time zone,text,text,text,text,jsonb,boolean,text,boolean,jsonb)']);
   } finally {
     await c.end();
   }

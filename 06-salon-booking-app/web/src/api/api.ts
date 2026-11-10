@@ -4,9 +4,28 @@
 //                   tried (and tested) before anything is set up.
 import type {
   Appointment, BookingChangeResult, BookingInfo, BookingRequest, BusyRange, Client, ClientChange, ClientPhoto,
-  ConsultationForm, EmailKind, EmailLogRow, ManageInfo, NewAppointment, OpeningHours, PatchTest, PayMethod,
-  Payment, Service, Session, Settings, TaxYear, TimeOff,
+  ConsultationForm, EmailKind, EmailLogRow, ManageInfo, NewAppointment, NewClientBooking, OpeningHours, PatchTest, PayMethod,
+  Payment, Service, Session, Settings, ShortNoticeClient, TaxYear, TimeOff,
 } from '../lib/types';
+
+/**
+ * The live database hasn't had the update for this version (supabase/updates/2026-11-growth.sql):
+ * a column it adds isn't there. Only what's new fails like this (listNewClientBookings,
+ * listShortNoticeClients, and saving one of the new fields); everything else works as before,
+ * and bookings still go through without their optional answers. friendlyError() words it for her.
+ */
+export class NeedsUpdateError extends Error {
+  /** The update to run in Supabase's SQL Editor. */
+  readonly update = 'supabase/updates/2026-11-growth.sql';
+  constructor() {
+    super('growth_update_needed');
+    this.name = 'NeedsUpdateError';
+  }
+}
+
+/** The error is a NeedsUpdateError (or carries its code, after being passed along as a plain error). */
+export const isNeedsUpdate = (e: unknown): boolean =>
+  e instanceof NeedsUpdateError || (e instanceof Error && e.message === 'growth_update_needed');
 
 export interface FormInfo {
   business_name: string;
@@ -48,6 +67,7 @@ export interface Api {
 
   // --- owner: settings -----------------------------------------------------
   getSettings(): Promise<Settings>;
+  /** Saving review_link or wa_template_review fails with NeedsUpdateError until the database update has been run. */
   updateSettings(patch: Partial<Settings>): Promise<Settings>;
   listOpeningHours(): Promise<OpeningHours[]>;
   saveOpeningHours(rows: OpeningHours[]): Promise<void>;
@@ -67,9 +87,10 @@ export interface Api {
   /** With the client's health information (allergies, consent, patch tests and forms). */
   getAppointment(id: string): Promise<Appointment | null>;
   createAppointment(a: NewAppointment): Promise<Appointment>;
+  /** Saving heard_from or heard_from_detail fails with NeedsUpdateError until the database update has been run. */
   updateAppointment(id: string, patch: Partial<Pick<Appointment,
     'starts_at' | 'duration_min' | 'service_name' | 'service_id' | 'price_pence' | 'owner_notes' | 'status' | 'whatsapp_reminder_sent_at'
-    | 'booking_phone'>>): Promise<Appointment>;
+    | 'booking_phone' | 'heard_from' | 'heard_from_detail'>>): Promise<Appointment>;
   markDepositPaid(id: string, method: PayMethod): Promise<void>;
   completeAppointment(id: string, amountPence: number, method: PayMethod, tipPence: number, note: string | null): Promise<void>;
   /** late: the client cancelled with too little notice (by phone or WhatsApp). */
@@ -87,8 +108,10 @@ export interface Api {
   listClients(): Promise<(Client & { last_visit: string | null; visits: number })[]>;
   getClient(id: string): Promise<Client | null>;
   createClient(c: Pick<Client, 'full_name' | 'email' | 'phone'> & Partial<Pick<Client, 'allergies' | 'notes'>>): Promise<Client>;
+  /** Saving marketing_ok_at, marketing_ok_note or review_asked_at fails with NeedsUpdateError until the database update has been run. */
   updateClient(id: string, patch: Partial<Pick<Client,
-    'full_name' | 'email' | 'phone' | 'allergies' | 'notes' | 'is_regular' | 'health_consent_at' | 'health_consent_note'>>): Promise<Client>;
+    'full_name' | 'email' | 'phone' | 'allergies' | 'notes' | 'is_regular' | 'health_consent_at' | 'health_consent_note'
+    | 'marketing_ok_at' | 'marketing_ok_note' | 'review_asked_at'>>): Promise<Client>;
   deleteClient(id: string): Promise<void>;
   /** Consent withdrawn: delete forms, patch tests and allergy notes, keep the client. */
   deleteHealthData(clientId: string): Promise<void>;
@@ -114,6 +137,21 @@ export interface Api {
   getTaxYear(startYear: number): Promise<TaxYear>;
   /** Save (or replace) a tax year's figures. Fails with "tax_update_needed" until the database update has been run. */
   saveTaxYear(row: Pick<TaxYear, 'start_year' | 'extra_takings_pence' | 'expenses_pence'>): Promise<TaxYear>;
+
+  // --- owner: where clients come from, and short-notice spaces ----------------
+  /**
+   * Bookings by new clients made (created_at) from `fromIso` up to, not including, `toIso`, oldest first:
+   * online ones whose client said it was their first visit (or, with no answer, as booked before this
+   * version, that the database counted as a new client: is_new_client), and her own bookings for a new
+   * client (is_new_client). For Money → New clients: count them with summariseNewClients() in lib/source.
+   * Fails with NeedsUpdateError until the database update has been run.
+   */
+  listNewClientBookings(fromIso: string, toIso: string): Promise<NewClientBooking[]>;
+  /**
+   * Clients who said she may message them about short-notice spaces and offers, and have a mobile, by name.
+   * Fails with NeedsUpdateError until the database update has been run.
+   */
+  listShortNoticeClients(): Promise<ShortNoticeClient[]>;
 
   // --- owner: backup -------------------------------------------------------
   exportAll(): Promise<Record<string, unknown[]>>;

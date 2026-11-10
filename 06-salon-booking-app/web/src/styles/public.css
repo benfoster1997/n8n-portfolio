@@ -685,6 +685,62 @@
 .pub-deposit p { margin: 0; font-size: 0.95rem; line-height: 1.55; }
 .pub-age { padding: 6px 18px; }
 .pub-age .check { font-weight: 650; color: var(--ink-strong); }
+/* the optional offers box: the same tick, in a quieter voice than the ones they must tick */
+.pub-offers { padding: 6px 18px; }
+.pub-offers .check { color: var(--ink); }
+.pub-nowrap { white-space: nowrap; }
+
+/* "Did you mean sam@gmail.com?": a suggestion under the field, never a change by itself.
+   The words wrap in their own column, so Use this stays beside them. */
+.pub-email-hint {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 8px 0 0;
+  padding: 8px 8px 8px 14px;
+  border-radius: 14px;
+  border: 1px solid color-mix(in srgb, var(--lemon-deep) 35%, var(--line));
+  background: var(--attention);
+  font-size: 0.92rem;
+  line-height: 1.4;
+  color: var(--ink);
+  animation: enter 0.35s var(--ease) backwards;
+}
+.pub-email-hint > span { flex: 1 1 auto; min-width: 0; text-wrap: pretty; }
+.pub-email-hint b { overflow-wrap: anywhere; }
+.pub-email-hint .btn { flex: none; }
+
+/* "How did you hear about me?": the fieldset is the card itself, so its legend is floated into the
+   content (as .consult-legend is) rather than drawn over the card's top border */
+.pub-group.pub-heard { display: block; }
+.pub-heard > legend.group-head { float: left; width: 100%; margin: 0 0 14px; }
+.pub-heard > legend + * { clear: both; }
+.pub-optional { font-weight: 650; font-size: 0.9em; color: var(--muted); white-space: nowrap; }
+.pub-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.pub-chip {
+  min-height: 44px;
+  padding: 0 16px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--line-strong);
+  background: var(--surface-2);
+  color: var(--ink);
+  font-weight: 700;
+  font-size: 0.95rem;
+  line-height: 1.2;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  transition: background-color 0.2s var(--ease), border-color 0.2s, color 0.2s, box-shadow 0.25s var(--ease), transform 0.15s var(--ease);
+}
+.pub-chip:active { transform: scale(0.96); }
+@media (hover: hover) { .pub-chip:not(.on):hover { border-color: var(--accent); color: var(--accent); } }
+.pub-chip.on {
+  background: var(--grad-accent);
+  border-color: transparent;
+  color: var(--accent-ink);
+  box-shadow: var(--glow);
+}
+.pub-heard > .field { margin-top: 16px; animation: enter 0.35s var(--ease) backwards; }
 
 .btn.pub-confirm {
   min-height: 58px;
@@ -722,6 +778,20 @@
 .pub-next li + li { border-top: 1px solid var(--line); }
 .pub-next .group-ring { width: 32px; height: 32px; margin-top: -3px; }
 .pub-next b { overflow-wrap: anywhere; }
+
+/* Share with a friend: a soft pink button, set apart from "Book another appointment" */
+.pub-share { display: flex; flex-direction: column; }
+.btn.pub-share-btn {
+  background: color-mix(in srgb, var(--accent-soft) 70%, var(--surface));
+  border-color: color-mix(in srgb, var(--pink) 34%, var(--line));
+  color: var(--accent-text);
+}
+.pub-share-heart { color: var(--pink); }
+.pub-share-note { margin: 8px 0 0; font-size: 0.9rem; font-weight: 700; text-align: center; color: var(--ok); }
+.pub-share-note:empty { margin: 0; }
+/* no share sheet and no clipboard (some apps' own browsers): the link itself, to copy by hand */
+.pub-share-hand { gap: 10px; margin-top: 12px; }
+.pub-share-hand input { font-weight: 650; color: var(--accent-text); text-overflow: ellipsis; }
 
 .celebrate {
   position: relative;
@@ -1027,3 +1097,13 @@
 
 /* Back on the free times because the chosen time has just gone */
 .pub-time-gone { margin: 0; line-height: 1.45; }
+
+/* ---------- "Message me": a way out wherever the page can't book them in ---------- */
+.pub-contact { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
+.pub-contact-btn svg { color: var(--pink); }
+.pub-no-times { gap: 12px; }
+.pub-no-times > p { margin: 0; line-height: 1.5; text-wrap: pretty; }
+/* under the free times: "Can’t see a time that suits? Message me on Instagram" */
+.pub-suits { margin: -2px 2px 0; text-align: center; }
+/* each half stays whole, so a narrow screen breaks the line between the question and the link */
+.pub-suits > span, .pub-suits a { white-space: nowrap; }

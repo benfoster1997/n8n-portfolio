@@ -1,9 +1,11 @@
 import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { api } from '../../api';
+import { api, isNeedsUpdate } from '../../api';
 import { useOwner } from '../../components/owner';
 import { ErrorBox, Field, Icon, Seg, Sheet, Spinner, TopBar, useAction, useLoad, useToast } from '../../components/ui';
-import { fmt, todayInZone } from '../../lib/time';
+import { fmt, startOfDayInstant, todayInZone } from '../../lib/time';
+import { summariseNewClients, type NewClientsSummary } from '../../lib/source';
+import { lastMonthText, newClientsText } from '../../lib/growth';
 import { friendlyError, money, moneyPlain, parsePounds, taxYearOf, toCsv } from '../../lib/text';
 import {
   billInPounds, dueFromEarlierYear, emptyTaxYear, estimateTax, longDate, makingTaxDigital, marginalRatesAt, monthPutAside, monthTaxParts, mtdStage,
@@ -137,6 +139,7 @@ export function Money() {
           {view === 'month' && total > 0 && (
             <MonthPutAside month={month} today={today} tz={tz} version={`${rows.length}:${total}`} />
           )}
+          {view === 'month' && <NewClientsCard month={month} today={today} tz={tz} />}
           <button className="btn block od-export" disabled={!rows.length || loading} onClick={exportCsv}><Glyph name="download" size={20} /> Save spreadsheet (CSV)</button>
           {canShare && rows.length > 0 && <p className="od-export-hint">Choose Save to Files, or send it to your accountant.</p>}
           <p className="od-tax-note">
@@ -244,6 +247,71 @@ function MonthPutAside({ month, today, tz, version }: { month: string; today: st
         )}
       </div>
     </div>
+  );
+}
+
+/** One month's new clients, and the month before's to compare (NewClientsCard). */
+export interface NewClientsData {
+  month: string;
+  now: NewClientsSummary;
+  before: NewClientsSummary;
+}
+
+/**
+ * Month view: the new clients who booked this month (listNewClientBookings, each counted once by
+ * summariseNewClients), how they found her and the links they used, with last month's total. Plain
+ * numbers. Bookings count in the month they were made.
+ */
+function NewClientsCard({ month, today, tz }: { month: string; today: string; tz: string }) {
+  const { data, error } = useLoad(async (): Promise<NewClientsData> => {
+    const start = (ym: string) => startOfDayInstant(`${ym}-01`, tz);
+    const rows = await api.listNewClientBookings(start(shiftMonth(month, -1)).toISOString(), start(shiftMonth(month, 1)).toISOString());
+    const from = start(month).getTime();
+    const inMonth = (r: { created_at: string }) => new Date(r.created_at).getTime() >= from;
+    return { month, now: summariseNewClients(rows.filter(inMonth)), before: summariseNewClients(rows.filter((r) => !inMonth(r))) };
+  }, [month]);
+  return <NewClientsView month={month} today={today} tz={tz} data={data?.month === month ? data : null} error={error} />;
+}
+
+/**
+ * The New clients card for what has loaded (exported for the tests). Before the database update there's
+ * nothing to count yet: one line says who to ask, instead of an error. Nothing while it loads.
+ */
+export function NewClientsView({ month, today, tz, data, error }: {
+  /** "2026-11" */
+  month: string;
+  /** yyyy-mm-dd in the business's time zone. */
+  today: string;
+  tz: string;
+  /** This month's, once it's in (never another month's). */
+  data: NewClientsData | null;
+  error: unknown;
+}) {
+  if (!data && !error) return null;
+  const name = (ym: string) => fmt(`${ym}-15T12:00:00Z`, 'MMMM', tz);
+  const text = data && {
+    ...newClientsText(data.now, name(month), month >= today.slice(0, 7)),
+    before: lastMonthText(data.before, name(shiftMonth(month, -1))),
+  };
+  return (
+    <section className="card od-newclients" aria-labelledby="od-newclients-h">
+      <h2 id="od-newclients-h" className="od-newclients-h">
+        <span className="od-ic small lilac" aria-hidden="true"><Glyph name="user" size={18} /></span>
+        New clients
+      </h2>
+      {text ? (
+        <div className="od-newclients-text">
+          <p className="od-newclients-main">{text.headline}</p>
+          {text.answers && <p>{text.answers}</p>}
+          {text.links && <p>{text.links}</p>}
+          <p className="od-newclients-before">{text.before}</p>
+        </div>
+      ) : isNeedsUpdate(error) ? (
+        <p className="sub od-newclients-update">
+          New clients will show here once the app’s database update has been run: ask whoever set up the app (see SETUP.md).
+        </p>
+      ) : <ErrorBox error={error} />}
+    </section>
   );
 }
 

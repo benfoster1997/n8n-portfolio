@@ -7,20 +7,79 @@ import { useClientManifest } from '../../components/clientManifest';
 import { Badge, BrandFooter, BrandHero, Heart, ScriptTitle } from '../../components/brand';
 import { AddOnsMenu, InfoBadges, TreatmentMenu, TreatmentRow } from '../../components/public/menu';
 import {
-  Celebration, ChosenTreatment, GroupHead, GroupIcon, NextArrow, PolicyCard, PublicLoading, PublicProblem, RefStub, StickyAction, Steps, Ticket,
+  Celebration, ChosenTreatment, ContactButtons, GroupHead, GroupIcon, NextArrow, NoTimeSuits, PolicyCard, PublicLoading, PublicProblem, RefStub,
+  ShareWithFriend, StickyAction, Steps, Ticket, type ContactWays,
 } from '../../components/public/parts';
 import { ErrorBox, Field, Icon, Spinner, useAction, useLoad } from '../../components/ui';
 import { blankAnswers, validateAnswers } from '../../lib/consultation';
 import { findTreatment } from '../../lib/freeTimes';
+import { bookingTitle } from '../../lib/head';
 import { openDays } from '../../lib/slots';
+import { HEARD_FROM, HEARD_FROM_DETAIL_MAX, LINK_FROM, readSource, takesDetail } from '../../lib/source';
 import { addDays, fmtDayLong, fmtTime, minutesLabel, startOfDayInstant } from '../../lib/time';
-import { friendlyError, isNetworkError, isPlausibleEmail, isPlausiblePhone, money } from '../../lib/text';
-import type { BookingInfo, BusyRange } from '../../lib/types';
+import { friendlyError, isNetworkError, isPlausibleEmail, isPlausiblePhone, money, suggestEmail } from '../../lib/text';
+import type { BookingExtras, BookingInfo, BusyRange, HeardFrom } from '../../lib/types';
 
 type Step = 'service' | 'time' | 'details' | 'done';
 
 /** The database's answers that mean the chosen time can't be booked any more: back to the free times. */
 const TIME_GONE = ['slot_taken', 'too_soon', 'too_far', 'closed', 'outside_hours', 'invalid_time'];
+
+/** Answers that leave nothing to do but get in touch, so her "Message me" buttons go under them. */
+const GET_IN_TOUCH = ['busy_try_later', 'booking_failed', 'too_many_bookings', 'booking_disabled'];
+
+const messageOf = (e: unknown) => (e instanceof Error ? e.message : String((e as { message?: unknown } | null)?.message ?? e));
+
+/**
+ * Where this visit came from: ?from= on her link, or the site that sent them (readSource in lib/source).
+ * Read once, the first time the booking page opens, and kept in the page only: nothing is stored on the
+ * visitor's phone (no cookies or storage, which PECR covers). Reading the privacy notice and coming back
+ * is in-app navigation, so it's still known then.
+ */
+let visitSource: string | null | undefined;
+export function sourceOfVisit(): string | null {
+  if (visitSource === undefined) visitSource = readSource({ search: window.location.search, referrer: document.referrer });
+  return visitSource;
+}
+
+/** The answer picked to begin with when they came through a friend's share or her printed card. They can change it. */
+export function answerFromLink(source: string | null): HeardFrom | null {
+  return source === LINK_FROM.friend ? 'friend' : source === LINK_FROM.card ? 'card' : null;
+}
+
+/**
+ * The optional answers that go with a booking. "How did you hear about me?" is only asked of first-timers,
+ * so it only goes with "Yes, first time", and its few words only with A friend or Other. The offers box
+ * counts only when ticked. createBooking leaves out whatever is blank.
+ */
+export function bookingExtras({ source, firstVisit, heard, detail, offersOk }: {
+  source: string | null; firstVisit: boolean | null; heard: HeardFrom | null; detail: string; offersOk: boolean;
+}): BookingExtras {
+  const asked = firstVisit === true ? heard : null;
+  return {
+    link_source: source,
+    heard_from: asked,
+    heard_from_detail: takesDetail(asked) ? detail.trim() || null : null,
+    first_visit: firstVisit,
+    marketing_ok: offersOk,
+  };
+}
+
+/** A failed booking that's best sorted out by getting in touch (not one with its own next step, like no signal or a time gone). */
+export function needsContact(e: unknown): boolean {
+  if (!e) return false;
+  const msg = messageOf(e);
+  return GET_IN_TOUCH.some((code) => msg.includes(code));
+}
+
+const contactWays = (info: BookingInfo): ContactWays =>
+  ({ instagram: info.instagram_handle, facebook: info.facebook_handle, email: info.contact_email });
+
+/** An email address that, when it won't fit on one line, breaks after its @ first. */
+function Address({ email }: { email: string }) {
+  const at = email.lastIndexOf('@') + 1;
+  return <>{email.slice(0, at)}<wbr />{email.slice(at)}</>;
+}
 
 /**
  * What a failed "Confirm booking" means for the client:
@@ -31,14 +90,16 @@ const TIME_GONE = ['slot_taken', 'too_soon', 'too_far', 'closed', 'outside_hours
  */
 export function bookingFailure(e: unknown): 'no_reply' | 'time_gone' | 'other' {
   if (isNetworkError(e)) return 'no_reply';
-  const msg = e instanceof Error ? e.message : String((e as { message?: unknown } | null)?.message ?? e);
+  const msg = messageOf(e);
   return TIME_GONE.some((code) => msg.includes(code)) ? 'time_gone' : 'other';
 }
 
 export function Book() {
   useClientManifest();
+  const [source] = useState(sourceOfVisit);
   const { data: info, error, loading } = useLoad(() => api.getBookingInfo(), []);
-  useEffect(() => { if (info) document.title = `Book · ${info.business_name}`; }, [info]);
+  // The same title as the page's built-in head, so the default name is never advertised here either.
+  useEffect(() => { if (info) document.title = bookingTitle(info.business_name); }, [info]);
   if (loading) return <PublicLoading />;
   if (!info) {
     return (
@@ -57,16 +118,17 @@ export function Book() {
         <Badge icon="clock" title="Booking paused" titleAs="h2" className="book-paused">
           <p>Online booking is paused at the moment. Please get in touch directly to book.</p>
         </Badge>
+        <ContactButtons {...contactWays(info)} />
         <InfoBadges safety={info.safety_note} />
         <BrandFooter instagram={info.instagram_handle} facebook={info.facebook_handle} />
       </div>
       </>
     );
   }
-  return <BookingFlow info={info} />;
+  return <BookingFlow info={info} source={source} />;
 }
 
-function BookingFlow({ info }: { info: BookingInfo }) {
+function BookingFlow({ info, source }: { info: BookingInfo; source: string | null }) {
   const tz = info.timezone;
   const [params] = useSearchParams();
   // A link for one treatment ("…/book?treatment=biab-infill", from Share free times) opens straight on
@@ -84,6 +146,14 @@ function BookingFlow({ info }: { info: BookingInfo }) {
   const [website, setWebsite] = useState(''); // honeypot: real people never see or fill this
   const [ageOk, setAgeOk] = useState(false);
   const [policyOk, setPolicyOk] = useState(false);
+  // "How did you hear about me?" (first-timers only, optional), with the few words for A friend and Other kept apart.
+  const [heard, setHeard] = useState<HeardFrom | null>(() => answerFromLink(source));
+  const [heardWords, setHeardWords] = useState<Record<'friend' | 'other', string>>({ friend: '', other: '' });
+  // "WhatsApp me about short-notice spaces and offers": optional, and unticked until they tick it.
+  const [offersOk, setOffersOk] = useState(false);
+  // "Did you mean …?" for an email address that looks mistyped, worked out when they leave the field.
+  const [emailHint, setEmailHint] = useState<string | null>(null);
+  const contact = contactWays(info);
   const policy = info.cancellation_policy?.trim() || null;
   const [result, setResult] = useState<{ reference: string; starts_at: string } | null>(null);
   const { busy, error, run, setError } = useAction();
@@ -134,6 +204,9 @@ function BookingFlow({ info }: { info: BookingInfo }) {
           consultation: firstVisit ? answers : null, health_consent: firstVisit ? consent : false,
           signed_name: firstVisit ? signedName.trim() : null,
           policy_accepted: !!policy && policyOk,
+          extras: bookingExtras({
+            source, firstVisit, heard, detail: heard === 'friend' || heard === 'other' ? heardWords[heard] : '', offersOk,
+          }),
         }));
       } catch (e) {
         failed = e;
@@ -203,11 +276,15 @@ function BookingFlow({ info }: { info: BookingInfo }) {
           {timeGone && <div className="notice warn pub-time-gone" role="alert">{timeGone}</div>}
           <ErrorBox error={busyError} />
           {!busyTimes ? <Spinner /> : daysWithSlots.length === 0 ? (
-            <div className="notice">Sorry — there are no free times in the next {info.max_days_ahead} days. Please get in touch directly.</div>
+            <div className="notice stack pub-no-times">
+              <p>Sorry — there are no free times in the next {info.max_days_ahead} days. Please get in touch directly.</p>
+              <ContactButtons {...contact} />
+            </div>
           ) : (
             <>
               <SlotPicker days={daysWithSlots} slotsByDay={slotsByDay} day={day} slot={slot} tz={tz}
                 onDay={(d) => { setDay(d); setSlot(null); }} onSlot={(t) => { setSlot(t); setTimeGone(null); }} />
+              <NoTimeSuits {...contact} />
               <StickyAction when={slot} tz={tz}>
                 <button className="btn primary block" disabled={!slot} onClick={() => setStep('details')}>Continue <NextArrow /></button>
               </StickyAction>
@@ -224,7 +301,23 @@ function BookingFlow({ info }: { info: BookingInfo }) {
           <ScriptTitle className="step-title">Your details</ScriptTitle>
           <section className="pub-group">
             <Field label="Full name"><input type="text" autoComplete="name" value={details.full_name} maxLength={100} onChange={(e) => setDetails({ ...details, full_name: e.target.value })} /></Field>
-            <Field label="Email" hint="Your confirmation is sent here."><input type="email" autoComplete="email" value={details.email} onChange={(e) => setDetails({ ...details, email: e.target.value })} /></Field>
+            <div className="pub-email">
+              <Field label="Email" hint="Your confirmation is sent here.">
+                <input type="email" autoComplete="email" value={details.email}
+                  onChange={(e) => { setDetails({ ...details, email: e.target.value }); setEmailHint(null); }}
+                  onBlur={() => setEmailHint(suggestEmail(details.email))} />
+              </Field>
+              {/* Only ever a suggestion: the address changes only if they tap Use this. */}
+              <div aria-live="polite">
+                {emailHint && (
+                  <p className="pub-email-hint">
+                    <span>Did you mean <b><Address email={emailHint} /></b>?</span>
+                    <button type="button" className="btn small"
+                      onClick={() => { setDetails((d) => ({ ...d, email: emailHint })); setEmailHint(null); }}>Use this</button>
+                  </p>
+                )}
+              </div>
+            </div>
             <Field label="Mobile"><input type="tel" autoComplete="tel" value={details.phone} onChange={(e) => setDetails({ ...details, phone: e.target.value })} /></Field>
             <Field label="Anything to add? (optional)" hint="e.g. colour ideas, or if you need a removal">
               <textarea value={details.notes} maxLength={1000} onChange={(e) => setDetails({ ...details, notes: e.target.value })} />
@@ -243,6 +336,30 @@ function BookingFlow({ info }: { info: BookingInfo }) {
             </fieldset>
           </div>
           {firstVisit && (
+            // Optional, and only asked of first-timers. One answer or none: tapping the chosen one again clears it,
+            // so an answer picked from the link they came through can be taken away. So the chips are toggle
+            // buttons (aria-pressed) in the fieldset's group, not radios, which never clear.
+            <fieldset className="pub-group pub-heard">
+              <legend className="group-head">
+                <GroupIcon name="chat" /><span>How did you hear about me? <span className="pub-optional">(optional)</span></span>
+              </legend>
+              <div className="pub-chips">
+                {HEARD_FROM.map(({ value, label }) => (
+                  <button key={value} type="button" aria-pressed={heard === value}
+                    className={heard === value ? 'pub-chip on' : 'pub-chip'} onClick={() => setHeard(heard === value ? null : value)}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+              {(heard === 'friend' || heard === 'other') && (
+                <Field key={heard} label={heard === 'friend' ? 'Who recommended you? (optional, first name is fine)' : 'Where? (optional)'}>
+                  <input type="text" autoComplete="off" maxLength={HEARD_FROM_DETAIL_MAX} value={heardWords[heard]}
+                    onChange={(e) => setHeardWords({ ...heardWords, [heard]: e.target.value })} />
+                </Field>
+              )}
+            </fieldset>
+          )}
+          {firstVisit && (
             <div className="card stack pub-group pub-health">
               <GroupHead icon="shield" as="h3">Quick health check</GroupHead>
               <p className="sub">So your treatment is safe for you. Only {info.business_name} sees your answers.</p>
@@ -258,6 +375,15 @@ function BookingFlow({ info }: { info: BookingInfo }) {
               </p>
             </section>
           )}
+          {/* In their words, like the ticks below it, but marked optional: those are needed to book, this never is.
+              WhatsApp, as that's how her short-notice list sends, and STOP, as every one of those messages says. */}
+          <div className="pub-group pub-offers">
+            <label className="check">
+              <input type="checkbox" checked={offersOk} onChange={(e) => setOffersOk(e.target.checked)} />
+              <span><span className="pub-optional">Optional:</span> WhatsApp me about <span className="pub-nowrap">short-notice</span> spaces
+                and offers. I can reply STOP any time.</span>
+            </label>
+          </div>
           {policy && (
             <PolicyCard titleAs="h3" className="pub-agree">
               <p className="policy-text">{policy}</p>
@@ -274,6 +400,7 @@ function BookingFlow({ info }: { info: BookingInfo }) {
             </label>
           </div>
           <ErrorBox error={error ? new Error(friendlyError(error)) : null} />
+          {needsContact(error) && <ContactButtons {...contact} />}
           <button className="btn primary block pub-confirm" disabled={busy} onClick={submit}>
             {busy ? 'Booking…' : <>Confirm booking <Heart size={18} className="pub-confirm-heart" /></>}
           </button>
@@ -296,6 +423,7 @@ function BookingFlow({ info }: { info: BookingInfo }) {
             )}
             <li><GroupIcon name="calendar" /><span>Need to change or cancel? Use the link in your confirmation email.</span></li>
           </ul>
+          <ShareWithFriend business={info.business_name} />
           <button className="btn block" onClick={() => window.location.reload()}>Book another appointment</button>
           <BrandFooter {...socials} />
         </div>

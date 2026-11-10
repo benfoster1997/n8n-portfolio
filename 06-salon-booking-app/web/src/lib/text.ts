@@ -1,5 +1,6 @@
 // Small text helpers: phone numbers, money, WhatsApp links, message templates,
-// and the booking page's add-ons menu and social handles.
+// the booking page's add-ons menu and social handles, and checks on what's typed
+// (a review link, an email address that looks mistyped).
 import type { Appointment, Settings } from './types';
 import { fmtDayLong, fmtTime } from './time';
 
@@ -58,6 +59,9 @@ export function firstName(fullName: string | null | undefined): string {
   return (fullName ?? '').trim().split(/\s+/)[0] ?? '';
 }
 
+/** The business name a new install starts with (settings.business_name's default): she hasn't set hers yet. */
+export const DEFAULT_BUSINESS_NAME = 'My Nail Studio';
+
 export const DEFAULT_TEMPLATES = {
   reminder:
     'Hi {first_name}! Just a reminder of your {service} appointment on {date} at {time}. 💅\n\n' +
@@ -69,12 +73,22 @@ export const DEFAULT_TEMPLATES = {
   confirmed:
     "Hi {first_name}, you're booked in for {service} on {date} at {time}. See you soon!\n\n" +
     '{change_note}\n{business}',
+  // After Mark as done. Asks, and offers nothing for it: Google doesn't allow rewarded reviews.
+  review:
+    'Hi {first_name}, thank you so much for coming in! 💅\n\n' +
+    'If you have a minute, a quick Google review would really help me:\n{review_link}\n\n' +
+    '{business}',
 } as const;
 
 export type TemplateKind = keyof typeof DEFAULT_TEMPLATES;
 
+const CUSTOM_TEMPLATE: Record<TemplateKind, 'wa_template_reminder' | 'wa_template_deposit' | 'wa_template_confirmed' | 'wa_template_review'> = {
+  reminder: 'wa_template_reminder', deposit: 'wa_template_deposit', confirmed: 'wa_template_confirmed', review: 'wa_template_review',
+};
+
+/** Her own wording for a message, or the default when she hasn't written one. */
 export function templateFor(kind: TemplateKind, s: Settings): string {
-  const custom = kind === 'reminder' ? s.wa_template_reminder : kind === 'deposit' ? s.wa_template_deposit : s.wa_template_confirmed;
+  const custom = s[CUSTOM_TEMPLATE[kind]];
   return custom && custom.trim() ? custom : DEFAULT_TEMPLATES[kind];
 }
 
@@ -147,6 +161,7 @@ export function fillTemplate(template: string, a: Appointment, s: Settings, now:
     // Can be in the past for an appointment already inside the notice period: {change_note} words that for you.
     change_by: `${fmtDayLong(changeBy, s.timezone)} at ${fmtTime(changeBy, s.timezone)}`,
     change_note: changeNote(a, s, now),
+    review_link: s.review_link ?? '',
   };
   return template.replace(/\{(\w+)\}/g, (whole, key: string) => (key in values ? values[key] : whole));
 }
@@ -154,7 +169,7 @@ export function fillTemplate(template: string, a: Appointment, s: Settings, now:
 export const TEMPLATE_PLACEHOLDERS = [
   '{first_name}', '{name}', '{service}', '{date}', '{time}', '{price}', '{deposit}',
   '{reference}', '{bank_name}', '{sort_code}', '{account_number}', '{business}',
-  '{change_note}', '{manage_link}', '{change_by}',
+  '{change_note}', '{manage_link}', '{change_by}', '{review_link}',
 ];
 
 /** One section of the add-ons menu: a heading (null for lines before the first one), its items and notes. */
@@ -260,6 +275,123 @@ export function socialLink(site: SocialSite, handle: string): string {
   return site === 'instagram' ? `https://www.instagram.com/${h}/` : `https://www.facebook.com/${h}`;
 }
 
+// Her Google review link: Google gives it as g.page/r/…/review, a short maps.app.goo.gl or
+// goo.gl link, or a google.com (or google.co.uk) address such as search.google.com/local/writereview.
+const GOOGLE_HOSTS = /^(?:www\.)?(?:g\.page|maps\.app\.goo\.gl|goo\.gl)$|(?:^|\.)google\.(?:com|co\.uk)$/;
+
+/**
+ * Check a review link before it's saved (trim it first): ok only for an https link with no spaces,
+ * as settings.review_link allows (up to 298 characters). warn when it isn't one of Google's,
+ * so she can check it's the right link: it still saves.
+ */
+export function isReviewLink(url: string | null | undefined): { ok: boolean; warn: boolean } {
+  const t = (url ?? '').trim();
+  if (!/^https:\/\/\S+$/.test(t) || t.length > 298) return { ok: false, warn: false };
+  let host: string;
+  try {
+    host = new URL(t).hostname.toLowerCase();
+  } catch {
+    return { ok: false, warn: false };
+  }
+  return { ok: true, warn: !GOOGLE_HOSTS.test(host) };
+}
+
+// The addresses most clients use, and other real ones close to them: those are never "corrected"
+// into one of the first, and a mistyped one is put right as itself (email.co → email.com, not gmail.com).
+const EMAIL_DOMAINS = ['gmail.com', 'googlemail.com', 'hotmail.com', 'hotmail.co.uk', 'outlook.com', 'live.co.uk',
+  'icloud.com', 'me.com', 'yahoo.com', 'yahoo.co.uk', 'btinternet.com', 'aol.com'];
+const REAL_LOOKALIKES = new Set(['mail.com', 'email.com', 'gmx.com', 'gmx.co.uk', 'mac.com', 'live.com', 'sky.com',
+  'ntlworld.com', 'ymail.com']);
+const KNOWN_DOMAINS = [...EMAIL_DOMAINS, ...REAL_LOOKALIKES];
+/** The endings those have. Any other well-formed one (yahoo.co.in, hotmail.ca, live.co.za) is someone's real address. */
+const KNOWN_ENDINGS = ['com', 'co.uk'];
+/**
+ * A provider's name shorter than this (me, aol, live, gmx…) is never changed, only its ending: one letter
+ * away from one of those is often someone else's real domain. A name typed shorter than it gets one letter
+ * put right at most (gmai → gmail), and one of three letters or fewer none.
+ */
+const SHORTEST_NAME_CORRECTED = 5;
+const lettersToCorrect = (typed: string) => (typed.length >= SHORTEST_NAME_CORRECTED ? 2 : typed.length === SHORTEST_NAME_CORRECTED - 1 ? 1 : 0);
+
+/** "yahoo.co.uk" → { name: "yahoo", ending: "co.uk" }. No dot: all name. */
+function splitDomain(domain: string): { name: string; ending: string | null } {
+  const dot = domain.indexOf('.');
+  return dot < 0 ? { name: domain, ending: null } : { name: domain.slice(0, dot), ending: domain.slice(dot + 1) };
+}
+
+/** How many letters to add, remove or change to turn a into b; with `swaps`, two letters the wrong way round count as one. */
+function editDistance(a: string, b: string, swaps = false): number {
+  const d = Array.from({ length: a.length + 1 }, (_, i) => Array.from({ length: b.length + 1 }, (_, j) => (i ? (j ? 0 : i) : j)));
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      if (swaps && i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) d[i][j] = Math.min(d[i][j], d[i - 2][j - 2] + 1);
+    }
+  }
+  return d[a.length][b.length];
+}
+
+/**
+ * "Did you mean sam@gmail.com?": the address with its domain corrected when it's one letter
+ * away from a common one (two for the longer ones, such as gmial.com), else null. Only the
+ * provider's name (gmial.com) or a mistyped ending (.con, .cm, .co, .couk) is ever put right:
+ * never a domain that's right, a real one that happens to be close (mail.com, gmx.com,
+ * live.com…), or one with another country's ending (yahoo.co.in, hotmail.ca, live.co.za).
+ */
+export function suggestEmail(email: string | null | undefined): string | null {
+  const t = (email ?? '').trim();
+  const at = t.lastIndexOf('@');
+  if (at < 1 || t.indexOf('@') !== at) return null;
+  const domain = t.slice(at + 1).toLowerCase();
+  if (!domain || EMAIL_DOMAINS.includes(domain) || REAL_LOOKALIKES.has(domain)) return null;
+  const { name, ending } = splitDomain(domain);
+  // The domains it could be: how many letters away each is, and how many is close enough.
+  let near: { domain: string; d: number; most: number }[] = [];
+  if (ending !== null && KNOWN_ENDINGS.includes(ending)) {
+    // The ending is right, so only a longer provider's name can be wrong: gmial.com, hotmial.co.uk.
+    near = KNOWN_DOMAINS.map((known) => ({ known, k: splitDomain(known) }))
+      .filter(({ k }) => k.ending === ending && k.name.length >= SHORTEST_NAME_CORRECTED)
+      .map(({ known, k }) => ({ domain: known, d: editDistance(name, k.name), most: lettersToCorrect(name) }));
+  } else if (ending === null || KNOWN_ENDINGS.some((e) => editDistance(ending, e, true) === 1)) {
+    // A mistyped ending (or none, as in gmailcom): the whole domain is compared.
+    near = KNOWN_DOMAINS.map((known) => ({ domain: known, d: editDistance(domain, known), most: known.length >= 9 ? 2 : 1 }));
+  }
+  let best: { domain: string; d: number } | null = null;
+  for (const n of near) if (n.d <= n.most && (!best || n.d < best.d)) best = n;
+  return best ? `${t.slice(0, at)}@${best.domain}` : null;
+}
+
+/**
+ * "Message me" links for the public pages, for the ways she can be reached: an Instagram or
+ * Facebook message, or an email with the subject filled in. Blank (or invalid) ones are left out.
+ */
+export function dmLinks({ instagram, facebook, email }: { instagram?: string | null; facebook?: string | null; email?: string | null }):
+  { instagram?: string; facebook?: string; email?: string } {
+  const out: { instagram?: string; facebook?: string; email?: string } = {};
+  const ig = instagram?.trim();
+  const fb = facebook?.trim();
+  const mail = email?.trim();
+  if (ig && SOCIAL_SITES.instagram.pattern.test(ig)) out.instagram = `https://ig.me/m/${encodeURIComponent(ig)}`;
+  if (fb && SOCIAL_SITES.facebook.pattern.test(fb)) out.facebook = `https://m.me/${encodeURIComponent(fb)}`;
+  if (mail && isPlausibleEmail(mail)) out.email = `mailto:${encodeURI(mail)}?subject=Booking%20enquiry`;
+  return out;
+}
+
+/** The last line of every short-notice message: how to stop them. */
+export const STOP_LINE = "Reply STOP if you'd rather not get these messages.";
+
+/**
+ * A message to the short-notice list (clients who said yes to hearing about spaces and offers):
+ * her text, signed with the business name if it isn't already, then how to stop them.
+ */
+export function shortNoticeMessage(text: string, business: string | null | undefined): string {
+  const body = text.trim();
+  const name = (business ?? '').trim();
+  if (body.endsWith(STOP_LINE)) return body;
+  if (name && body.endsWith(name)) return `${body}\n${STOP_LINE}`;
+  return name ? `${body}\n\n${name}\n${STOP_LINE}` : `${body}\n\n${STOP_LINE}`;
+}
+
 /** Turn rows into a CSV that Excel and Google Sheets open cleanly (UTF-8 with BOM). */
 export function toCsv(rows: (string | number | null | undefined)[][]): string {
   const esc = (v: string | number | null | undefined) => {
@@ -345,6 +477,9 @@ export function friendlyError(e: unknown): string {
     no_email: "This client doesn't have an email address saved.",
     tax_update_needed: 'These figures can’t be saved yet: the database update for the tax estimate hasn’t been run. '
       + 'Ask whoever set up the app to run it (SETUP.md, “Tax to put aside”). Until then, the estimate works from your takings in the app.',
+    // NeedsUpdateError (api/api.ts).
+    growth_update_needed: 'This needs the database update for this version of the app, which hasn’t been run yet. '
+      + 'Ask whoever set up the app to run supabase/updates/2026-11-growth.sql (see SETUP.md). Everything else works as before.',
     appointments_no_overlap: 'That clashes with another appointment (including the clean-up time).',
     clients_email_unique: 'A client with that email address already exists — search for them instead.',
     'Invalid login credentials': 'That email and password don’t match.',

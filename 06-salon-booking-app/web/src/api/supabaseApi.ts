@@ -1,10 +1,11 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import type { Api, FormInfo } from './api';
+import { NeedsUpdateError, type Api, type FormInfo } from './api';
 import type {
   Appointment, ApptHealth, BookingChangeResult, BookingInfo, BusyRange, Client, ClientChange, ClientLite, ClientPhoto, ConsultationForm,
-  EmailLogRow, ManageInfo, OpeningHours, PatchTest, Payment, Service, Session, Settings, TaxYear, TimeOff,
+  EmailLogRow, ManageInfo, NewClientBooking, OpeningHours, PatchTest, Payment, Service, Session, Settings, ShortNoticeClient, TaxYear, TimeOff,
 } from '../lib/types';
 import { emptyTaxYear } from '../lib/tax';
+import { extrasToSend } from '../lib/source';
 
 const PHOTO_BUCKET = 'client-photos';
 const CLIENT_COLS = 'id, full_name, email, phone, phone_e164';
@@ -35,6 +36,9 @@ function shapeAppt(r: ApptRow): Appointment {
   const forms = c?.consultation_forms?.[0]?.count ?? 0;
   return {
     ...a,
+    // Not there until supabase/updates/2026-11-growth.sql has been run: nothing recorded.
+    link_source: a.link_source ?? null, heard_from: a.heard_from ?? null, heard_from_detail: a.heard_from_detail ?? null,
+    first_visit_said: a.first_visit_said ?? null,
     client: c ? { id: c.id, full_name: c.full_name, email: c.email, phone: c.phone, phone_e164: c.phone_e164 } : undefined,
     has_form: forms > 0, has_consent: !!c?.health_consent_at, has_allergies: !!c?.allergies?.trim(),
     starts_at: iso(a.starts_at)!, ends_at: iso(a.ends_at)!, created_at: iso(a.created_at)!,
@@ -62,6 +66,29 @@ function check<T>(res: { data: T; error: { message: string } | null }): T {
 }
 
 /**
+ * Where clients come from, review asks and short-notice spaces came with
+ * supabase/updates/2026-11-growth.sql. Until it has been run, the API says one of its
+ * columns isn't there: PGRST204 ("Could not find the 'review_link' column of 'settings' in
+ * the schema cache") when saving one, 42703 ("column appointments.first_visit_said does
+ * not exist") when reading or filtering on one.
+ */
+const GROWTH_COLUMNS = /\b(link_source|heard_from|heard_from_detail|first_visit_said|marketing_ok_at|marketing_ok_note|review_asked_at|review_link|wa_template_review)\b/;
+function growthColumnMissing(e: { code?: string; message?: string } | null): boolean {
+  return !!e && (e.code === 'PGRST204' || e.code === '42703') && GROWTH_COLUMNS.test(e.message ?? '');
+}
+/** check(), failing with NeedsUpdateError when it's one of those columns that isn't there yet. */
+function checkGrowth<T>(res: { data: T; error: { message: string; code?: string } | null }): T {
+  if (growthColumnMissing(res.error)) throw new NeedsUpdateError();
+  return check(res);
+}
+
+// The same: nothing recorded until the update has been run.
+const shapeSettings = (r: Settings): Settings => ({ ...r, review_link: r.review_link ?? null, wa_template_review: r.wa_template_review ?? null });
+const shapeClient = <C extends Client>(r: C): C => ({
+  ...r, marketing_ok_at: iso(r.marketing_ok_at ?? null), marketing_ok_note: r.marketing_ok_note ?? null, review_asked_at: iso(r.review_asked_at ?? null),
+});
+
+/**
  * The tax estimate's table (public.tax_years) came with the estimate: an install
  * made with an older schema.sql gets it by running supabase/updates/2026-11-tax-estimate.sql.
  * Until that's done the API says the table isn't there: PGRST205 ("Could not find
@@ -76,11 +103,12 @@ const shapeTaxYear = (r: TaxYear): TaxYear => ({ ...r, updated_at: iso(r.updated
 
 // The Supabase API returns at most 1,000 rows per request. Anything that can
 // grow past that (clients, a tax year of payments, a backup) is paged.
-type Ranged = { range(from: number, to: number): PromiseLike<{ data: unknown; error: { message: string } | null }> };
-async function fetchAll<T>(make: () => Ranged): Promise<T[]> {
+type Answer = { data: unknown; error: { message: string; code?: string } | null };
+type Ranged = { range(from: number, to: number): PromiseLike<Answer> };
+async function fetchAll<T>(make: () => Ranged, read: (res: Answer) => unknown = check): Promise<T[]> {
   const out: T[] = [];
   for (let from = 0; ; from += 1000) {
-    const chunk = check(await make().range(from, from + 999)) as T[];
+    const chunk = read(await make().range(from, from + 999)) as T[];
     out.push(...chunk);
     if (chunk.length < 1000) return out;
   }
@@ -106,11 +134,23 @@ export function supabaseApi(url: string, anonKey: string): Api {
       return rows.map((b) => ({ starts_at: iso(b.starts_at)!, ends_at: iso(b.ends_at)! }));
     },
     async createBooking(r) {
-      return check(await sb.rpc('public_create_booking', {
+      type Booked = { reference: string; starts_at: string };
+      const args = {
         p_service_id: r.service_id, p_starts_at: r.starts_at, p_full_name: r.full_name, p_email: r.email,
         p_phone: r.phone, p_notes: r.notes, p_consultation: r.consultation, p_health_consent: r.health_consent,
         p_signed_name: r.signed_name, p_policy_accepted: r.policy_accepted,
-      })) as { reference: string; starts_at: string };
+      };
+      // The optional answers go only when there are some.
+      const extras = extrasToSend(r.extras);
+      if (extras) {
+        const res = await sb.rpc('public_create_booking', { ...args, p_extras: extras });
+        // PGRST202: the API has no booking function that takes p_extras, because the database update
+        // for this version (2026-11-growth.sql) hasn't been run. The call never reached the database,
+        // so nothing was booked: book once more without the answers. Anything else stands, including
+        // a lost reply, which may have booked.
+        if (res.error?.code !== 'PGRST202') return check(res) as Booked;
+      }
+      return check(await sb.rpc('public_create_booking', args)) as Booked;
     },
     async getForm(token) {
       return (check(await sb.rpc('public_get_form', { p_token: token })) as FormInfo | null) ?? null;
@@ -182,10 +222,10 @@ export function supabaseApi(url: string, anonKey: string): Api {
 
     // --- settings -----------------------------------------------------------------
     async getSettings() {
-      return check(await sb.from('settings').select('*').eq('id', 1).single()) as Settings;
+      return shapeSettings(check(await sb.from('settings').select('*').eq('id', 1).single()) as Settings);
     },
     async updateSettings(patch) {
-      return check(await sb.from('settings').update(patch).eq('id', 1).select('*').single()) as Settings;
+      return shapeSettings(checkGrowth(await sb.from('settings').update(patch).eq('id', 1).select('*').single()) as Settings);
     },
     async listOpeningHours() {
       const rows = check(await sb.from('opening_hours').select('*').order('weekday')) as OpeningHours[];
@@ -240,7 +280,7 @@ export function supabaseApi(url: string, anonKey: string): Api {
       return shapeApptDetail(check(await sb.from('appointments').insert(row).select(APPT_DETAIL_SELECT).single()) as ApptRow);
     },
     async updateAppointment(id, patch) {
-      return shapeApptDetail(check(await sb.from('appointments').update(patch).eq('id', id).select(APPT_DETAIL_SELECT).single()) as ApptRow);
+      return shapeApptDetail(checkGrowth(await sb.from('appointments').update(patch).eq('id', id).select(APPT_DETAIL_SELECT).single()) as ApptRow);
     },
     async markDepositPaid(id, method) {
       check(await sb.rpc('owner_mark_deposit_paid', { p_appointment_id: id, p_method: method }));
@@ -296,16 +336,17 @@ export function supabaseApi(url: string, anonKey: string): Api {
         if (!cur) by.set(v.client_id, { last: v.starts_at, n: 1 });
         else { cur.n += 1; if (v.starts_at > cur.last) cur.last = v.starts_at; }
       }
-      return clients.map((c) => ({ ...c, last_visit: by.get(c.id)?.last ?? null, visits: by.get(c.id)?.n ?? 0 }));
+      return clients.map((c) => shapeClient({ ...c, last_visit: by.get(c.id)?.last ?? null, visits: by.get(c.id)?.n ?? 0 }));
     },
     async getClient(id) {
-      return check(await sb.from('clients').select('*').eq('id', id).maybeSingle()) as Client | null;
+      const c = check(await sb.from('clients').select('*').eq('id', id).maybeSingle()) as Client | null;
+      return c ? shapeClient(c) : null;
     },
     async createClient(c) {
-      return check(await sb.from('clients').insert(c).select('*').single()) as Client;
+      return shapeClient(check(await sb.from('clients').insert(c).select('*').single()) as Client);
     },
     async updateClient(id, patch) {
-      return check(await sb.from('clients').update(patch).eq('id', id).select('*').single()) as Client;
+      return shapeClient(checkGrowth(await sb.from('clients').update(patch).eq('id', id).select('*').single()) as Client);
     },
     async deleteClient(id) {
       const photos = check(await sb.from('client_photos').select('storage_path').eq('client_id', id)) as { storage_path: string }[];
@@ -392,6 +433,27 @@ export function supabaseApi(url: string, anonKey: string): Api {
         .select('*').single();
       if (taxTableMissing(res.error)) throw new Error('tax_update_needed');
       return shapeTaxYear(check(res) as TaxYear);
+    },
+
+    // --- where clients come from, and short-notice spaces ------------------------------
+    async listNewClientBookings(fromIso, toIso) {
+      type Row = Omit<NewClientBooking, 'full_name'> & { client: { full_name: string } | null };
+      const rows = await fetchAll<Row>(() => sb.from('appointments')
+        .select('id, client_id, status, created_at, link_source, heard_from, heard_from_detail, client:clients(full_name)')
+        .gte('created_at', fromIso).lt('created_at', toIso)
+        // Online, when they said it was their first visit, or by the database's own rule (is_new_client) when
+        // there's no answer: booked before this version, or before the database update. Her own bookings, for a new client.
+        .or('and(source.eq.online,first_visit_said.is.true),and(source.eq.online,first_visit_said.is.null,is_new_client.is.true),'
+          + 'and(source.eq.owner,is_new_client.is.true)')
+        .order('created_at').order('id'), checkGrowth);
+      return rows.map(({ client, ...a }) => ({ ...a, created_at: iso(a.created_at)!, full_name: client?.full_name ?? null }));
+    },
+    async listShortNoticeClients() {
+      const rows = await fetchAll<ShortNoticeClient>(() => sb.from('clients')
+        .select('id, full_name, phone_e164, marketing_ok_at, marketing_ok_note')
+        .not('marketing_ok_at', 'is', null).not('phone_e164', 'is', null)
+        .order('full_name').order('id'), checkGrowth);
+      return rows.map((c) => ({ ...c, marketing_ok_at: iso(c.marketing_ok_at)! }));
     },
 
     async exportAll() {

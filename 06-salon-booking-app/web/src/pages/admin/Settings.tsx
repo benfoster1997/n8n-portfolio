@@ -1,7 +1,8 @@
 import { useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { api, supabaseKey, supabaseUrl } from '../../api';
+import { api, isNeedsUpdate, supabaseKey, supabaseUrl } from '../../api';
 import { resetDemo } from '../../api/demoApi';
+import { Star } from '../../components/appts';
 import { useOwner } from '../../components/owner';
 import { BlockTimeSheet } from './Diary';
 import { ErrorBox, Field, Icon, Sheet, Spinner, TopBar, useAction, useLoad, useToast } from '../../components/ui';
@@ -9,9 +10,10 @@ import { BrandIcon, Heart, LemonSlice, ScriptTitle, Strapline } from '../../comp
 import { Glyph } from './Clients';
 import { AddOnsMenu } from '../../components/public/menu';
 import {
-  DEFAULT_TEMPLATES, TEMPLATE_PLACEHOLDERS, checkHandle, friendlyError, isPlausibleEmail, money, parseMenu, parsePounds,
-  socialLink, type SocialSite,
+  DEFAULT_BUSINESS_NAME, DEFAULT_TEMPLATES, TEMPLATE_PLACEHOLDERS, checkHandle, friendlyError, isPlausibleEmail, isReviewLink, money,
+  parseMenu, parsePounds, socialLink, type SocialSite,
 } from '../../lib/text';
+import { isDefaultBusinessName, OWN_LINKS, ownLink, siteBase } from '../../lib/growth';
 import { WEEKDAY_NAMES, fmtDay, fmtDayTime, fmtTime, minutesLabel, todayInZone } from '../../lib/time';
 import { downloadFile, fileSize, isAbort, saveFile } from '../../lib/files';
 import { lastBackupText, readLastBackup, rememberBackup } from '../../lib/backup';
@@ -20,7 +22,7 @@ import type { OpeningHours, Service, Settings as S } from '../../lib/types';
 type Group = 'business' | 'bookings' | 'messages' | 'data';
 const SECTIONS: { to: string; label: string; sub: string; icon: ReactNode; group: Group }[] = [
   { to: 'business', label: 'Business details', sub: 'Name, welcome line, area, contact details', icon: <Glyph name="store" />, group: 'business' },
-  { to: 'booking-page', label: 'Booking page', sub: 'Tagline, strapline, add-ons, safety, socials', icon: <BrandIcon name="sparkle" size={20} />, group: 'business' },
+  { to: 'booking-page', label: 'Booking page', sub: 'Tagline, add-ons, socials, your links, reviews', icon: <BrandIcon name="sparkle" size={20} />, group: 'business' },
   { to: 'hours', label: 'Opening hours', sub: 'When clients can book', icon: <Glyph name="clock" />, group: 'business' },
   { to: 'services', label: 'Treatments & prices', sub: 'What clients can book', icon: <Glyph name="polish" />, group: 'business' },
   { to: 'time-off', label: 'Time off', sub: 'Holidays and blocked time', icon: <Glyph name="calendarOff" />, group: 'business' },
@@ -83,15 +85,52 @@ export function SettingsHome() {
   );
 }
 
-/** Shared form shell for the simple settings pages. */
+/** This version's new settings: saving one fails with NeedsUpdateError until supabase/updates/2026-11-growth.sql has been run. */
+const GROWTH_SETTINGS: (keyof S)[] = ['review_link', 'wa_template_review'];
+
+/**
+ * Save a page of settings. This version's new settings go only when they've changed, and if the database
+ * update for them hasn't been run, the rest of the page is saved without them: `left` says which weren't
+ * saved. Anything else that goes wrong fails as before. Exported for the tests.
+ */
+export async function saveSettings(update: (patch: Partial<S>) => Promise<S>, patch: Partial<S>, current: S): Promise<{ saved: S; left: (keyof S)[] }> {
+  const without = (keys: (keyof S)[]) => Object.fromEntries(Object.entries(patch).filter(([k]) => !keys.includes(k as keyof S))) as Partial<S>;
+  const send = without(GROWTH_SETTINGS.filter((k) => k in patch && patch[k] === current[k]));
+  try {
+    return { saved: await update(send), left: [] };
+  } catch (e) {
+    const left = GROWTH_SETTINGS.filter((k) => k in send);
+    if (!isNeedsUpdate(e) || !left.length) throw e;
+    const rest = without(GROWTH_SETTINGS);
+    return { saved: Object.keys(rest).length ? await update(rest) : current, left };
+  }
+}
+
+/** Shared form shell for the simple settings pages. `left`: what the last save couldn't save yet (saveSettings). */
 function useSettingsForm<K extends keyof S>(keys: K[]) {
   const { settings, setSettings } = useOwner();
   const [draft, setDraft] = useState(() => Object.fromEntries(keys.map((k) => [k, settings[k]])) as Pick<S, K>);
   const { busy, error, run, setError } = useAction();
+  const [left, setLeft] = useState<(keyof S)[]>([]);
   const toast = useToast();
-  const save = (patch: Partial<S> = draft) => run(async () => { setSettings(await api.updateSettings(patch)); toast('Saved'); });
+  const save = (patch: Partial<S> = draft) => run(async () => {
+    const r = await saveSettings((p) => api.updateSettings(p), patch, settings);
+    setSettings(r.saved);
+    setLeft(r.left);
+    toast(r.left.length ? 'Everything else is saved' : 'Saved');
+  });
   const set = <T extends K>(k: T, v: S[T]) => setDraft((d) => ({ ...d, [k]: v }));
-  return { draft, set, save, busy, error, setError };
+  return { draft, set, save, busy, error, setError, left };
+}
+
+/** Saved apart from one of this version's new settings, because the database update for it hasn't been run. */
+function UpdateNeeded({ what }: { what: string }) {
+  return (
+    <p className="notice warn od-update-needed" role="alert">
+      Everything else is saved. {what} can’t be saved until the database update for this version has been run: ask whoever set up
+      the app to run supabase/updates/2026-11-growth.sql (see SETUP.md).
+    </p>
+  );
 }
 
 function Page({ title, children }: { title: string; children: ReactNode }) {
@@ -117,17 +156,36 @@ const txt = (v: string | null | undefined) => v ?? '';
 export function BusinessSettings() {
   const f = useSettingsForm(['business_name', 'legal_name', 'booking_intro', 'location_note', 'address', 'owner_email', 'owner_phone', 'public_site_url', 'booking_enabled']);
   const d = f.draft;
+  const { settings } = useOwner();
+  // Still the name a new install starts with, so that's what her booking page says.
+  const defaultName = isDefaultBusinessName(settings.business_name);
+  // Saved with a new name: the booking page has it straight away, but Google and link previews only once
+  // the app is next built (the page head, lib/head), so she's told.
+  const [renamed, setRenamed] = useState(false);
   async function submit() {
     if (!d.business_name.trim()) return f.setError(new Error('Enter your business name.'));
     if (d.owner_email && !isPlausibleEmail(d.owner_email)) return f.setError(new Error('Check your email address.'));
     if (d.public_site_url && !/^(https:\/\/[^\s/]+|http:\/\/(localhost|127\.0\.0\.1)(:\d+)?)/i.test(d.public_site_url.trim()))
       return f.setError(new Error('The web address must start with https:// — tap “Use …” below to fill it in.'));
-    await f.save({ ...d, business_name: d.business_name.trim(), public_site_url: d.public_site_url ? d.public_site_url.trim().replace(/\/$/, '') : null });
+    const name = d.business_name.trim();
+    const changed = name !== settings.business_name.trim();
+    if (await f.save({ ...d, business_name: name, public_site_url: d.public_site_url ? d.public_site_url.trim().replace(/\/$/, '') : null })) {
+      if (changed) setRenamed(true);
+    }
   }
   return (
     <Page title="Business details">
       <SetCard icon={<Glyph name="store" size={18} />} title="Your business">
         <Field label="Business name"><input type="text" value={d.business_name} maxLength={80} onChange={(e) => f.set('business_name', e.target.value)} /></Field>
+        {defaultName && (
+          <p className="notice warn od-name-note">Your booking page still says {DEFAULT_BUSINESS_NAME}. Put your own business name here.</p>
+        )}
+        {renamed && !defaultName && (
+          <p className="notice od-renamed-note" role="status">
+            Your booking page shows the new name now. Google and link previews show it after the next app update: ask whoever set
+            up the app to redeploy it.
+          </p>
+        )}
         <Field label="Your legal name" hint="Shown in the privacy notice as the person responsible for client data.">
           <input type="text" autoComplete="name" value={txt(d.legal_name)} maxLength={100} onChange={(e) => f.set('legal_name', e.target.value)} />
         </Field>
@@ -168,11 +226,13 @@ const SOCIAL_FIELDS: { site: SocialSite; key: HandleKey; label: string }[] = [
 const MENU_EXAMPLE = 'Nail art\nSimple nail art | 50p per nail\n> Lots of colours counts as detailed. Just ask!\nExtras\nChrome powder | £5';
 
 export function BookingPageSettings() {
-  const f = useSettingsForm(['tagline', 'strapline', 'extras_menu', 'safety_note', 'instagram_handle', 'facebook_handle']);
+  const f = useSettingsForm(['tagline', 'strapline', 'extras_menu', 'safety_note', 'instagram_handle', 'facebook_handle', 'review_link']);
   const d = f.draft;
   // A price typed without its "|" turns the line into a heading: say so before it goes live.
   const priceAsHeading = parseMenu(d.extras_menu).find((x) => x.title && /£\s?\d|\d\s?p\b/i.test(x.title))?.title;
   const tidy = (v: string | null) => v?.trim() || null;
+  const reviewLink = tidy(d.review_link);
+  const review = isReviewLink(reviewLink);
   async function submit() {
     const handles = {} as Pick<S, HandleKey>;
     for (const x of SOCIAL_FIELDS) {
@@ -180,8 +240,13 @@ export function BookingPageSettings() {
       if (r.error) return f.setError(new Error(r.error));
       handles[x.key] = r.handle;
     }
+    if (reviewLink && !review.ok) {
+      return f.setError(new Error(reviewLink.length > 298 ? 'That review link is too long. Copy it again from your Business Profile.'
+        : 'Check your Google review link: it should start with https:// and have no spaces.'));
+    }
     const saved = await f.save({
       tagline: tidy(d.tagline), strapline: tidy(d.strapline), extras_menu: tidy(d.extras_menu), safety_note: tidy(d.safety_note), ...handles,
+      review_link: reviewLink,
     });
     // Show what was kept: "@name" or a pasted link becomes just the handle.
     if (saved) for (const x of SOCIAL_FIELDS) f.set(x.key, handles[x.key]);
@@ -239,10 +304,62 @@ export function BookingPageSettings() {
           );
         })}
       </SetCard>
+
+      <YourLinks />
+
+      <SetCard icon={<Star />} title="Google reviews">
+        <Field label="Your Google review link"
+          hint="In Google Maps, open your Business Profile, tap Ask for reviews (or Get more reviews), then copy the link. It usually starts https://g.page/r/">
+          <input type="text" inputMode="url" value={txt(d.review_link)} autoCapitalize="none" autoCorrect="off" spellCheck={false}
+            placeholder="https://g.page/r/…" onChange={(e) => f.set('review_link', e.target.value)} />
+        </Field>
+        {review.ok && review.warn && (
+          <div className="notice warn">That isn’t a Google address. Check it’s the link from your Business Profile: it still saves.</div>
+        )}
+        {review.ok && (
+          <a className="od-text-link od-review-test" href={reviewLink!} target="_blank" rel="noreferrer">Test it<Icon name="chev" size={16} /></a>
+        )}
+        <p className="sub od-set-note">Once you’ve marked a visit as done, you can send it on WhatsApp in your review request wording (Settings → WhatsApp messages).</p>
+      </SetCard>
+      {f.left.includes('review_link') && <UpdateNeeded what="Your Google review link" />}
       <ErrorBox error={f.error} />
       <button className="btn primary block" disabled={f.busy} onClick={submit}>{f.busy ? 'Saving…' : 'Save'}</button>
       <Link className="btn block" to="/book">Preview booking page</Link>
     </Page>
+  );
+}
+
+/**
+ * Her booking link for each place she puts it, each with its own ?from=, so Money can show which ones
+ * bring new clients. Copy puts one on the clipboard (or shows it to copy, where that isn't allowed).
+ */
+function YourLinks() {
+  const { settings: s } = useOwner();
+  const toast = useToast();
+  const base = siteBase(s.public_site_url);
+  async function copy(url: string) {
+    try { await navigator.clipboard.writeText(url); toast('Link copied'); } catch { window.prompt('Copy this link:', url); }
+  }
+  return (
+    <SetCard icon={<Icon name="link" size={18} />} title="Your links" className="od-links-card"
+      intro="Use a different link in each place, and Money shows which ones bring new clients.">
+      <ul className="od-links">
+        {OWN_LINKS.map((l) => {
+          const url = ownLink(base, l.from);
+          return (
+            <li key={l.from} className="od-link">
+              <span className="od-link-text">
+                <span className="od-link-place">{l.place}</span>
+                <span className="od-link-url">{url.replace(/^https?:\/\//, '')}</span>
+              </span>
+              <button type="button" className="btn small od-link-copy" onClick={() => copy(url)}>
+                <Icon name="copy" size={17} /> Copy<span className="visually-hidden"> your {l.place} link</span>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </SetCard>
   );
 }
 
@@ -524,18 +641,25 @@ export function TimeOffSettings() {
   );
 }
 
+type TemplateKey = 'wa_template_reminder' | 'wa_template_deposit' | 'wa_template_confirmed' | 'wa_template_review';
+
 export function MessageSettings() {
-  const f = useSettingsForm(['wa_template_reminder', 'wa_template_deposit', 'wa_template_confirmed']);
+  const f = useSettingsForm(['wa_template_reminder', 'wa_template_deposit', 'wa_template_confirmed', 'wa_template_review']);
   const d = f.draft;
-  const box = (k: 'wa_template_reminder' | 'wa_template_deposit' | 'wa_template_confirmed', label: string, def: string, long = false, when?: string) => (
+  const box = (k: TemplateKey, label: string, def: string, long = false, when?: string, more?: ReactNode) => (
     <section className={`card od-template${long ? ' od-template-long' : ''}`}>
       <Field label={label}>
         <textarea value={d[k] ?? def} maxLength={1000} onChange={(e) => f.set(k, e.target.value)} />
         <button className="btn ghost small" style={{ alignSelf: 'flex-start' }} onClick={() => f.set(k, null)}>Reset to default</button>
       </Field>
       {when && <p className="sub od-template-when">{when}</p>}
+      {more}
     </section>
   );
+  // Her own review wording without the link in it sends no link.
+  const reviewWithoutLink = !!d.wa_template_review && !d.wa_template_review.includes('{review_link}');
+  /** Her own wording, or null when it's the default (so a better default reaches her later). */
+  const own = (k: TemplateKey, def: string) => (d[k] && d[k] !== def ? d[k] : null);
   return (
     <Page title="WhatsApp messages">
       <section className="card stack od-set-card od-placeholders">
@@ -554,12 +678,24 @@ export function MessageSettings() {
       {box('wa_template_deposit', 'Deposit request', DEFAULT_TEMPLATES.deposit, true)}
       {box('wa_template_confirmed', 'Booking confirmed', DEFAULT_TEMPLATES.confirmed, false,
         'Offered when you add an appointment for a client with no email address.')}
+      {box('wa_template_review', 'Review request', DEFAULT_TEMPLATES.review, false,
+        'Offered once you mark a visit as done. {review_link} is your Google review link, from Settings → Booking page.', <>
+          {reviewWithoutLink && (
+            <p className="notice warn od-template-warn">This wording has no {'{review_link}'} in it, so it won’t send your link.</p>
+          )}
+          <p className="od-template-rules">
+            Ask every client the same way, and only send it once they’ve agreed to get the link. Never offer anything for a review, and
+            don’t only ask the clients you think loved it: Google’s rules forbid both.
+          </p>
+        </>)}
+      {f.left.includes('wa_template_review') && <UpdateNeeded what="Your review request wording" />}
       <ErrorBox error={f.error} />
       <button className="btn primary block" disabled={f.busy}
         onClick={() => f.save({
-          wa_template_reminder: d.wa_template_reminder && d.wa_template_reminder !== DEFAULT_TEMPLATES.reminder ? d.wa_template_reminder : null,
-          wa_template_deposit: d.wa_template_deposit && d.wa_template_deposit !== DEFAULT_TEMPLATES.deposit ? d.wa_template_deposit : null,
-          wa_template_confirmed: d.wa_template_confirmed && d.wa_template_confirmed !== DEFAULT_TEMPLATES.confirmed ? d.wa_template_confirmed : null,
+          wa_template_reminder: own('wa_template_reminder', DEFAULT_TEMPLATES.reminder),
+          wa_template_deposit: own('wa_template_deposit', DEFAULT_TEMPLATES.deposit),
+          wa_template_confirmed: own('wa_template_confirmed', DEFAULT_TEMPLATES.confirmed),
+          wa_template_review: own('wa_template_review', DEFAULT_TEMPLATES.review),
         })}>
         {f.busy ? 'Saving…' : 'Save'}
       </button>

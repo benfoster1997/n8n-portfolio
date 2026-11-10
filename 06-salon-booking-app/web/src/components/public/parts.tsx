@@ -1,11 +1,15 @@
 // Pieces shared by the client pages (booking and manage-your-booking): the step
 // indicator, the chosen-treatment summary, the appointment "ticket", the policy
-// card, the celebration picture and the loading/problem states.
+// card, the celebration picture, the loading/problem states, the "Message me"
+// links and Share with a friend.
 // Styles are in styles/public.css. Decorative SVG is aria-hidden throughout.
-import { forwardRef, useId, type ReactNode } from 'react';
+import { forwardRef, useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { Blossom, BrandIcon, Heart, Lemon, LemonSlice, PolishBottle, ScriptTitle, Sprig } from '../brand';
+import { Icon } from '../ui';
+import { shareOrCopy, type ShareOutcome } from '../../lib/share';
+import { LINK_FROM } from '../../lib/source';
 import { fmt, minutesLabel } from '../../lib/time';
-import { money } from '../../lib/text';
+import { dmLinks, money } from '../../lib/text';
 
 const cx = (...c: (string | false | null | undefined)[]) => c.filter(Boolean).join(' ');
 
@@ -177,6 +181,8 @@ const GROUP_ICONS = {
   mail: <><rect x="3" y="5" width="18" height="14" rx="2.6" /><path d="M3.6 6.6l8.4 6.4 8.4-6.4" /></>,
   calendar: <><rect x="3.5" y="5" width="17" height="15.5" rx="3" /><path d="M3.5 9.8h17M8.2 2.8v4M15.8 2.8v4" /><path d="M9 15l2 2 4-4.2" /></>,
   form: <><rect x="5" y="3.8" width="14" height="17" rx="2.6" /><path d="M9 3.8V3h6v.8M8.6 10h6.8M8.6 13.6h6.8M8.6 17.2h4" /></>,
+  // A speech bubble with a heart: "How did you hear about me?"
+  chat: <><path d="M5.6 4.6h12.8A2.6 2.6 0 0 1 21 7.2v7.6a2.6 2.6 0 0 1-2.6 2.6h-6.6l-4.4 3.4v-3.4H5.6A2.6 2.6 0 0 1 3 14.8V7.2a2.6 2.6 0 0 1 2.6-2.6Z" /><path d="M12 14.1c-2-1.5-3.5-2.8-3.5-4.4 0-1.1.8-1.9 1.8-1.9.7 0 1.4.4 1.7 1.1.3-.7 1-1.1 1.7-1.1 1 0 1.8.8 1.8 1.9 0 1.6-1.5 2.9-3.5 4.4Z" /></>,
 } as const;
 export type GroupIconName = keyof typeof GROUP_ICONS;
 
@@ -261,6 +267,118 @@ export function PublicProblem({ title, titleAs = 'h1', children }: { title: stri
         <ScriptTitle as={titleAs} className="pub-problem-title">{title}</ScriptTitle>
         <div className="stack pub-problem-body">{children}</div>
       </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------- getting in touch */
+
+/** The ways a client can message her, as the booking page knows them (BookingInfo's handles and contact_email). */
+export interface ContactWays {
+  instagram?: string | null;
+  facebook?: string | null;
+  email?: string | null;
+}
+
+export type ContactKind = 'instagram' | 'facebook' | 'email';
+
+const CONTACT_LABEL: Record<ContactKind, string> = {
+  instagram: 'Message me on Instagram',
+  facebook: 'Message me on Facebook',
+  email: 'Email',
+};
+
+/**
+ * Her "Message me" links, Instagram first, then Facebook, then email (dmLinks in lib/text):
+ * blank or invalid ones are left out. Never a phone number: the booking page doesn't show it.
+ */
+export function contactLinks(ways: ContactWays): { kind: ContactKind; href: string; label: string }[] {
+  const links = dmLinks(ways);
+  return (['instagram', 'facebook', 'email'] as const)
+    .flatMap((kind) => (links[kind] ? [{ kind, href: links[kind]!, label: CONTACT_LABEL[kind] }] : []));
+}
+
+function ContactIcon({ kind }: { kind: ContactKind }) {
+  return kind === 'email' ? <Icon name="mail" size={20} /> : <BrandIcon name={kind} size={20} strokeWidth={2} />;
+}
+
+/**
+ * A way to reach her wherever the page can't book them in (booking paused, no free times, a
+ * booking that didn't go through): up to three buttons, or nothing when she has none set.
+ */
+export function ContactButtons({ className, ...ways }: ContactWays & { className?: string }) {
+  const links = contactLinks(ways);
+  if (!links.length) return null;
+  return (
+    <div className={cx('pub-contact', className)}>
+      {links.map((l) => (
+        <a key={l.kind} className="btn pub-contact-btn" href={l.href} target="_blank" rel="noreferrer">
+          <ContactIcon kind={l.kind} />{l.label}
+        </a>
+      ))}
+    </div>
+  );
+}
+
+/** The same links, as they read at the end of a sentence. */
+const CONTACT_ASK: Record<ContactKind, string> = { ...CONTACT_LABEL, email: 'Email me' };
+
+/** Under the free times: "Can’t see a time that suits? Message me on Instagram" (or Facebook, or email). Nothing when there's no way. */
+export function NoTimeSuits(ways: ContactWays) {
+  const first = contactLinks(ways)[0];
+  if (!first) return null;
+  return (
+    <p className="sub pub-suits">
+      <span>Can’t see a time that suits?</span> <a href={first.href} target="_blank" rel="noreferrer">{CONTACT_ASK[first.kind]}</a>
+    </p>
+  );
+}
+
+/* ---------------------------------------------- share with a friend */
+
+/** Her booking link as a client passes it on, so she can see who came that way (LINK_FROM.friend). */
+export const friendLink = (origin: string) => `${origin.replace(/\/+$/, '')}/book?from=${LINK_FROM.friend}`;
+
+/**
+ * "Share with a friend": the phone's share sheet with her booking link, or the link copied where
+ * there isn't one. Only her business name and the link go: no words written for the client, so
+ * anything they add is their own. Where it can be neither shared nor copied, as in some apps' own
+ * browsers (Instagram's, say), the link is shown on the page to copy, with Send on WhatsApp: never
+ * a pop-up box, which those browsers may not show, so the tap would seem to do nothing.
+ */
+export function ShareWithFriend({ business }: { business: string }) {
+  const [outcome, setOutcome] = useState<{ result: ShareOutcome; link: string } | null>(null);
+  async function share() {
+    const link = friendLink(window.location.origin);
+    setOutcome({ result: await shareOrCopy({ title: business, url: link }, undefined, () => {}), link });
+  }
+  return (
+    <div className="pub-share">
+      <button type="button" className="btn block pub-share-btn" onClick={share}>
+        Share with a friend<Heart size={17} className="pub-share-heart" />
+      </button>
+      <p className="pub-share-note" role="status">{outcome?.result === 'copied' ? 'Link copied' : ''}</p>
+      {outcome?.result === 'prompt' && <ShareByHand link={outcome.link} />}
+    </div>
+  );
+}
+
+/** The link to copy by hand (picked out ready, as it opens), or send on WhatsApp. */
+function ShareByHand({ link }: { link: string }) {
+  const box = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    box.current?.focus();
+    box.current?.select();
+  }, []);
+  return (
+    <div className="stack pub-share-hand">
+      <label className="field">
+        <span>Press and hold the link to copy it</span>
+        <input ref={box} type="text" readOnly value={link} onFocus={(e) => e.currentTarget.select()} />
+      </label>
+      <a className="btn wa block" href={`https://wa.me/?text=${encodeURIComponent(link)}`} target="_blank" rel="noreferrer">
+        <Icon name="whatsapp" size={20} /> Send on WhatsApp
+      </a>
     </div>
   );
 }

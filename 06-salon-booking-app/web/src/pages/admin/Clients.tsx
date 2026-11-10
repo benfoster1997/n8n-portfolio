@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../../api';
 import { useOwner } from '../../components/owner';
 import { ErrorBox, Field, Icon, Sheet, Spinner, TopBar, useAction, useLoad } from '../../components/ui';
@@ -68,7 +68,9 @@ export function Glyph({ name, size = 20 }: { name: keyof typeof GLYPHS | string;
 export function Clients() {
   const { settings: s } = useOwner();
   const { data, error, loading } = useLoad(() => api.listClients(), []);
-  const [q, setQ] = useState('');
+  // "?q=Sam" (a friend's name on an appointment's Found you): start out searching for it.
+  const [params] = useSearchParams();
+  const [q, setQ] = useState(() => params.get('q') ?? '');
   const [adding, setAdding] = useState(false);
   const [stale, setStale] = useState(false);
   const needle = q.trim().toLowerCase();
